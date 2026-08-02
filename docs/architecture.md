@@ -32,7 +32,9 @@ StudyBox keeps a local persisted audit log under `data/`. The log records applia
 
 When remote sync is added, the Pi should continue operating locally during the meeting and upload finalized session bundles afterward. A bundle should include the completed mixed-audio recording, the audit log entries for that recording session, and metadata such as start time, end time, duration, and file name. Uploads should use a retry queue so travel, unplugging, or a network change does not interrupt the meeting or lose the session package.
 
-The current implementation includes the local queue and mock sync path. When the Zoom meeting is stopped and the recording is finished, StudyBox writes a session bundle under `STUDYBOX_BACKUP_DIR`, records it in `data/backup-queue.json`, and marks it uploaded to the configured mock target. Local development defaults to `data/backup-bundles/`; Hetzner should use `/srv/studybox-backups`; the Pi should later use `/var/lib/studybox/backups` as its local queue before pushing to Hetzner. The real Hetzner repo implementation should replace the uploader behind `BackupSyncService` while keeping the same bundle format.
+The current implementation includes the local queue and a transport boundary. When the Zoom meeting is stopped and the recording is finished, StudyBox writes a session bundle under `STUDYBOX_BACKUP_DIR`, records it in `data/backup-queue.json`, and syncs pending bundles. Local development defaults to mock sync under `data/backup-bundles/`; Hetzner should store received bundles under `/srv/studybox-backups`; the Pi should later use `/var/lib/studybox/backups` as its local queue before pushing to Hetzner.
+
+For the Pi, set `STUDYBOX_BACKUP_MODE=rsync` and provide `STUDYBOX_BACKUP_HOST`, `STUDYBOX_BACKUP_USER`, `STUDYBOX_BACKUP_REMOTE_DIR`, `STUDYBOX_BACKUP_SSH_KEY`, and optionally `STUDYBOX_BACKUP_PORT`. The rsync uploader uses `rsync -az --partial` over SSH and marks bundles failed instead of blocking meeting controls when the network is unavailable.
 
 ## Development
 

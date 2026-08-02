@@ -62,7 +62,14 @@ export class StudyBoxAppliance {
       queuePath: projectPath("data", "backup-queue.json"),
       bundleDir: process.env.STUDYBOX_BACKUP_DIR ?? projectPath("data", "backup-bundles"),
       target: process.env.STUDYBOX_BACKUP_REPO ?? "hetzner:studybox-backup",
-      mode: process.env.STUDYBOX_BACKUP_MODE === "hetzner-repo" ? "hetzner-repo" : "mock"
+      mode: process.env.STUDYBOX_BACKUP_MODE === "rsync" ? "rsync" : "mock",
+      rsync: {
+        host: process.env.STUDYBOX_BACKUP_HOST,
+        user: process.env.STUDYBOX_BACKUP_USER,
+        remoteDir: process.env.STUDYBOX_BACKUP_REMOTE_DIR,
+        sshKeyPath: process.env.STUDYBOX_BACKUP_SSH_KEY,
+        port: process.env.STUDYBOX_BACKUP_PORT ? Number(process.env.STUDYBOX_BACKUP_PORT) : undefined
+      }
     });
     this.meeting = zoomConfig.meetingMode === "runner"
       ? new ZoomMeetingService(

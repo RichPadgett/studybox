@@ -230,7 +230,7 @@ export interface BackupBundle {
 }
 
 export interface BackupSyncState {
-  mode: "mock" | "hetzner-repo";
+  mode: "mock" | "rsync";
   target: string;
   pendingCount: number;
   uploadedCount: number;

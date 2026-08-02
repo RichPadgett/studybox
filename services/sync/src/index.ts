@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { BackupBundle, BackupSyncService, BackupSyncState, LogEntry, Recording, RecordingDownload } from "@studybox/shared";
@@ -7,6 +8,13 @@ export interface MockBackupSyncServiceOptions {
   bundleDir: string;
   target: string;
   mode?: BackupSyncState["mode"];
+  rsync?: {
+    host?: string;
+    user?: string;
+    remoteDir?: string;
+    sshKeyPath?: string;
+    port?: number;
+  };
 }
 
 export class MockBackupSyncService implements BackupSyncService {
@@ -72,25 +80,31 @@ export class MockBackupSyncService implements BackupSyncService {
   }
 
   async syncPending(): Promise<BackupSyncState> {
-    const now = new Date().toISOString();
-    const bundles = this.state.bundles.map((bundle) => {
+    const bundles: BackupBundle[] = [];
+    for (const bundle of this.state.bundles) {
       if (bundle.status !== "pending" && bundle.status !== "failed") {
-        return bundle;
+        bundles.push(bundle);
+        continue;
       }
 
-      return {
+      const uploading = {
         ...bundle,
-        status: "uploaded" as const,
-        lastAttemptAt: now,
-        uploadedAt: now,
+        status: "uploading" as const,
+        lastAttemptAt: new Date().toISOString(),
         error: undefined
       };
-    });
+      this.state = recalculate({ ...this.state, bundles: replaceBundle(this.state.bundles, uploading) });
+      await this.save();
+
+      bundles.push(await this.uploadBundle(uploading));
+    }
 
     this.state = recalculate({
       ...this.state,
       bundles,
-      lastEvent: "Pending backup bundles synced to mock Hetzner repo"
+      lastEvent: this.options.mode === "rsync"
+        ? "Pending backup bundles synced with rsync"
+        : "Pending backup bundles synced to mock Hetzner repo"
     });
     await this.save();
     return this.getState();
@@ -108,6 +122,101 @@ export class MockBackupSyncService implements BackupSyncService {
     await mkdir(dirname(this.options.queuePath), { recursive: true });
     await writeFile(this.options.queuePath, JSON.stringify(this.state, null, 2));
   }
+
+  private async uploadBundle(bundle: BackupBundle): Promise<BackupBundle> {
+    if (this.options.mode !== "rsync") {
+      return markUploaded(bundle);
+    }
+
+    try {
+      await runRsync({
+        sourceDir: join(this.options.bundleDir, bundle.id),
+        host: requireConfig(this.options.rsync?.host, "STUDYBOX_BACKUP_HOST"),
+        user: requireConfig(this.options.rsync?.user, "STUDYBOX_BACKUP_USER"),
+        remoteDir: requireConfig(this.options.rsync?.remoteDir, "STUDYBOX_BACKUP_REMOTE_DIR"),
+        sshKeyPath: this.options.rsync?.sshKeyPath,
+        port: this.options.rsync?.port
+      });
+      return markUploaded(bundle);
+    } catch (error) {
+      return {
+        ...bundle,
+        status: "failed",
+        error: error instanceof Error ? error.message : "Backup upload failed"
+      };
+    }
+  }
+}
+
+interface RsyncInput {
+  sourceDir: string;
+  host: string;
+  user: string;
+  remoteDir: string;
+  sshKeyPath?: string;
+  port?: number;
+}
+
+async function runRsync(input: RsyncInput): Promise<void> {
+  const sshArgs = ["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new"];
+  if (input.sshKeyPath) {
+    sshArgs.push("-i", input.sshKeyPath);
+  }
+  if (input.port) {
+    sshArgs.push("-p", input.port.toString());
+  }
+
+  const args = [
+    "-az",
+    "--partial",
+    "--delete",
+    "-e",
+    sshArgs.join(" "),
+    `${input.sourceDir}/`,
+    `${input.user}@${input.host}:${trimTrailingSlash(input.remoteDir)}/${input.sourceDir.split("/").at(-1)}/`
+  ];
+
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn("rsync", args, { stdio: ["ignore", "pipe", "pipe"] });
+    let stderr = "";
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      reject(new Error(stderr.trim() || `rsync exited with code ${code ?? "unknown"}`));
+    });
+  });
+}
+
+function requireConfig(value: string | undefined, name: string): string {
+  if (!value) {
+    throw new Error(`${name} is required for rsync backup mode`);
+  }
+  return value;
+}
+
+function markUploaded(bundle: BackupBundle): BackupBundle {
+  const now = new Date().toISOString();
+  return {
+    ...bundle,
+    status: "uploaded",
+    lastAttemptAt: bundle.lastAttemptAt ?? now,
+    uploadedAt: now,
+    error: undefined
+  };
+}
+
+function replaceBundle(bundles: BackupBundle[], replacement: BackupBundle): BackupBundle[] {
+  return bundles.map((bundle) => bundle.id === replacement.id ? replacement : bundle);
+}
+
+function trimTrailingSlash(value: string): string {
+  return value.replace(/\/+$/, "");
 }
 
 function emptyState(target: string, mode: BackupSyncState["mode"]): BackupSyncState {
