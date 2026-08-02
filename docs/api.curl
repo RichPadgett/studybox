@@ -101,6 +101,9 @@ curl --request GET 'http://localhost:4000/api/podcast/recordings/rec-001/downloa
   --header 'Authorization: Bearer paste-admin-token' \
   --output bible-study-YYYY-MM-DD-HH-MM.wav
 
+curl --request POST 'http://localhost:4000/api/backup/sync' \
+  --header 'Authorization: Bearer paste-admin-token'
+
 curl --request PUT 'http://localhost:4000/api/settings' \
   --header 'Authorization: Bearer paste-admin-token' \
   --header 'Content-Type: application/json' \

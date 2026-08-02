@@ -5,8 +5,10 @@ import { MissingZoomRunnerClient, MockMeetingService, ZoomMeetingService } from 
 import { MockOledDisplay } from "@studybox/oled";
 import { MockPodcastService } from "@studybox/podcast";
 import { MockSchedulerService } from "@studybox/scheduler";
-import type { LogEntry, LogLevel, LogResult, LogSource, MeetingService, OledPageId, RecordingDownload, StudyBoxSettings, StudyBoxSnapshot, SystemMetrics, SystemStatus } from "@studybox/shared";
+import { MockBackupSyncService } from "@studybox/sync";
+import type { BackupSyncService, LogEntry, LogLevel, LogResult, LogSource, MeetingService, OledPageId, Recording, RecordingDownload, StudyBoxSettings, StudyBoxSnapshot, SystemMetrics, SystemStatus } from "@studybox/shared";
 import { LogStore } from "./logStore.js";
+import { projectPath } from "./paths.js";
 import { SettingsStore } from "./settingsStore.js";
 import { getZoomConfig, getZoomRuntimeStatus } from "./zoomConfig.js";
 import { ZoomRunnerProcessClient } from "./zoomRunnerProcessClient.js";
@@ -25,6 +27,7 @@ export class StudyBoxAppliance {
   readonly meeting: MeetingService;
   readonly podcast = new MockPodcastService();
   readonly scheduler = new MockSchedulerService();
+  readonly backup: BackupSyncService;
   readonly audio = new MockAudioDevice();
   readonly leds = new MockLedController();
   readonly oled = new MockOledDisplay(
@@ -48,12 +51,19 @@ export class StudyBoxAppliance {
       await this.executeCurrentPageAction();
     }
   );
+  private finalizedRecordingId?: string;
 
   constructor(
     private readonly settingsStore: SettingsStore,
     private readonly logStore: LogStore
   ) {
     const zoomConfig = getZoomConfig();
+    this.backup = new MockBackupSyncService({
+      queuePath: projectPath("data", "backup-queue.json"),
+      bundleDir: projectPath("data", "backup-bundles"),
+      target: process.env.STUDYBOX_BACKUP_REPO ?? "hetzner:studybox-backup",
+      mode: process.env.STUDYBOX_BACKUP_MODE === "hetzner-repo" ? "hetzner-repo" : "mock"
+    });
     this.meeting = zoomConfig.meetingMode === "runner"
       ? new ZoomMeetingService(
           zoomConfig.runnerCommand
@@ -66,6 +76,7 @@ export class StudyBoxAppliance {
   async initialize(): Promise<void> {
     await this.settingsStore.load();
     await this.logStore.load();
+    await this.backup.load();
     await this.oled.render(this.oled.getCurrentPage());
     await this.syncLeds();
     await this.log({
@@ -83,6 +94,7 @@ export class StudyBoxAppliance {
       meeting: this.meeting.getState(),
       zoom: getZoomRuntimeStatus(),
       podcast: this.podcast.getState(),
+      backup: this.backup.getState(),
       oled: {
         currentPageId: this.oled.getCurrentPage().id,
         pages: this.oled.getPages()
@@ -127,6 +139,7 @@ export class StudyBoxAppliance {
   async endMeeting(context: ActionContext = {}): Promise<StudyBoxSnapshot> {
     await this.meeting.endMeeting();
     await this.logAction("meeting.end", "Meeting ended", context);
+    await this.queueBackupIfSessionFinalized(context);
     await this.syncLeds();
     return this.snapshot();
   }
@@ -181,8 +194,13 @@ export class StudyBoxAppliance {
   }
 
   async stopRecording(context: ActionContext = {}): Promise<StudyBoxSnapshot> {
+    const activeRecordingId = this.podcast.getState().activeRecording?.id;
     await this.podcast.stopRecording();
+    if (activeRecordingId) {
+      this.finalizedRecordingId = activeRecordingId;
+    }
     await this.logAction("podcast.recording.finish", "Recording finished", context);
+    await this.queueBackupIfSessionFinalized(context);
     await this.syncLeds();
     return this.snapshot();
   }
@@ -193,6 +211,19 @@ export class StudyBoxAppliance {
       await this.logAction("podcast.recording.download", `Recording download prepared: ${download.fileName}`, context, { recordingId, fileName: download.fileName });
     }
     return download;
+  }
+
+  async syncBackups(context: ActionContext = {}): Promise<StudyBoxSnapshot> {
+    await this.backup.syncPending();
+    await this.log({
+      source: "backup",
+      actor: context.actor,
+      level: "info",
+      action: "backup.sync.manual",
+      result: "success",
+      message: `Backup sync triggered for ${this.backup.getState().target}`
+    });
+    return this.snapshot();
   }
 
   async recordAudit(context: AuditContext & { source: LogSource; level: LogLevel; message: string; result?: LogResult }): Promise<StudyBoxSnapshot> {
@@ -282,6 +313,70 @@ export class StudyBoxAppliance {
       result: "success",
       message,
       details
+    });
+  }
+
+  private async queueBackupIfSessionFinalized(context: ActionContext = {}): Promise<void> {
+    const meeting = this.meeting.getState();
+    const podcast = this.podcast.getState();
+    const latestRecording = podcast.recordings[0];
+    if (meeting.status !== "idle" || podcast.status !== "idle" || !latestRecording?.endedAt || latestRecording.id !== this.finalizedRecordingId) {
+      return;
+    }
+
+    if (this.backup.getState().bundles.some((bundle) => bundle.recordingId === latestRecording.id)) {
+      return;
+    }
+
+    const download = await this.podcast.getRecordingDownload(latestRecording.id);
+    if (!download) {
+      await this.log({
+        source: context.source ?? "system",
+        actor: context.actor,
+        level: "warn",
+        action: "backup.bundle.create",
+        result: "failure",
+        message: "Backup bundle could not be created because recording audio was unavailable",
+        details: { recordingId: latestRecording.id }
+      });
+      return;
+    }
+
+    const bundle = await this.backup.createBundle({
+      recording: latestRecording,
+      download,
+      logs: this.logsForRecording(latestRecording),
+      meetingEndedAt: new Date().toISOString()
+    });
+
+    await this.log({
+      source: context.source ?? "system",
+      actor: context.actor,
+      level: "info",
+      action: "backup.bundle.create",
+      result: "success",
+      message: `Backup bundle queued: ${bundle.fileName}`,
+      details: { bundleId: bundle.id, recordingId: latestRecording.id, target: bundle.target }
+    });
+
+    await this.backup.syncPending();
+    this.finalizedRecordingId = undefined;
+    await this.log({
+      source: "backup",
+      level: "info",
+      action: "backup.bundle.sync",
+      result: "success",
+      message: `Backup bundle synced to ${bundle.target}`,
+      details: { bundleId: bundle.id, recordingId: latestRecording.id }
+    });
+  }
+
+  private logsForRecording(recording: Recording): LogEntry[] {
+    const startedAtMs = Date.parse(recording.startedAt);
+    const endedAtMs = Date.parse(recording.endedAt ?? new Date().toISOString());
+    return this.logStore.get(500).filter((log) => {
+      const timestampMs = Date.parse(log.timestamp);
+      return timestampMs >= startedAtMs && timestampMs <= endedAtMs + 60_000;
     });
   }
 

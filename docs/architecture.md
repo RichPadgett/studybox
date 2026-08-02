@@ -32,6 +32,8 @@ StudyBox keeps a local persisted audit log under `data/`. The log records applia
 
 When remote sync is added, the Pi should continue operating locally during the meeting and upload finalized session bundles afterward. A bundle should include the completed mixed-audio recording, the audit log entries for that recording session, and metadata such as start time, end time, duration, and file name. Uploads should use a retry queue so travel, unplugging, or a network change does not interrupt the meeting or lose the session package.
 
+The current implementation includes the local queue and mock sync path. When the Zoom meeting is stopped and the recording is finished, StudyBox writes a session bundle under `data/backup-bundles/`, records it in `data/backup-queue.json`, and marks it uploaded to the configured mock target. The real Hetzner repo implementation should replace the uploader behind `BackupSyncService` while keeping the same bundle format.
+
 ## Development
 
 ```bash

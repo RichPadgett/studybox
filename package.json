@@ -11,7 +11,7 @@
   ],
   "scripts": {
     "dev": "concurrently -n api,web -c cyan,magenta \"npm run dev -w @studybox/api\" \"npm run dev -w @studybox/web\"",
-    "build": "npm run build -w @studybox/shared && npm run build -w @studybox/meeting && npm run build -w @studybox/podcast && npm run build -w @studybox/scheduler && npm run build -w @studybox/gpio && npm run build -w @studybox/oled && npm run build -w @studybox/led && npm run build -w @studybox/buttons && npm run build -w @studybox/audio && npm run build -w @studybox/zoom-runner-mock && npm run build -w @studybox/api && npm run build -w @studybox/web",
+    "build": "npm run build -w @studybox/shared && npm run build -w @studybox/meeting && npm run build -w @studybox/podcast && npm run build -w @studybox/scheduler && npm run build -w @studybox/sync && npm run build -w @studybox/gpio && npm run build -w @studybox/oled && npm run build -w @studybox/led && npm run build -w @studybox/buttons && npm run build -w @studybox/audio && npm run build -w @studybox/zoom-runner-mock && npm run build -w @studybox/api && npm run build -w @studybox/web",
     "typecheck": "npm run build"
   },
   "devDependencies": {

@@ -2,6 +2,7 @@ import type { AdminSession, LogEntry, StudyBoxSettings, StudyBoxSnapshot, ZoomDe
 import {
   Activity,
   AudioLines,
+  CloudUpload,
   ClipboardList,
   Disc3,
   Download,
@@ -12,6 +13,7 @@ import {
   MonitorDot,
   Network,
   Radio,
+  RefreshCw,
   Save,
   ShieldCheck,
   Settings,
@@ -27,6 +29,7 @@ const navItems = [
   { id: "podcast", label: "Podcast", icon: Mic },
   { id: "audio", label: "Audio", icon: AudioLines },
   { id: "recordings", label: "Recordings", icon: Disc3 },
+  { id: "backup", label: "Backup", icon: CloudUpload },
   { id: "settings", label: "Settings", icon: Settings },
   { id: "diagnostics", label: "Diagnostics", icon: Activity },
   { id: "logs", label: "Logs", icon: ClipboardList },
@@ -182,6 +185,7 @@ export function App() {
             {activeNav === "podcast" ? <Podcast snapshot={snapshot} run={run} /> : null}
             {activeNav === "audio" ? <Audio snapshot={snapshot} /> : null}
             {activeNav === "recordings" ? <Recordings snapshot={snapshot} adminUnlocked={adminUnlocked} setError={setError} lockAdmin={lockAdmin} /> : null}
+            {activeNav === "backup" ? <BackupView snapshot={snapshot} run={run} adminUnlocked={adminUnlocked} /> : null}
             {activeNav === "settings" ? <SettingsView snapshot={snapshot} saving={saving} save={persistSettings} adminUnlocked={adminUnlocked} lockAdmin={lockAdmin} /> : null}
             {activeNav === "diagnostics" ? <Diagnostics snapshot={snapshot} /> : null}
             {activeNav === "logs" ? <Logs logs={snapshot.logs} /> : null}
@@ -354,6 +358,35 @@ function Recordings({ snapshot, adminUnlocked, setError, lockAdmin }: { snapshot
   );
 }
 
+function BackupView({ snapshot, run, adminUnlocked }: { snapshot: StudyBoxSnapshot; run: (path: string) => Promise<void>; adminUnlocked: boolean }) {
+  return (
+    <div className="stack">
+      <div className="metricGrid compactMetrics">
+        <Metric label="Target" value={snapshot.backup.target} detail={snapshot.backup.mode} />
+        <Metric label="Pending" value={snapshot.backup.pendingCount.toString()} detail="waiting to upload" />
+        <Metric label="Uploaded" value={snapshot.backup.uploadedCount.toString()} detail="synced bundles" />
+        <Metric label="Failed" value={snapshot.backup.failedCount.toString()} detail="needs retry" />
+      </div>
+      <div className="toolbar">
+        <Command icon={<RefreshCw size={17} />} label="Retry Sync" onClick={() => run("/api/backup/sync")} disabled={!adminUnlocked} />
+      </div>
+      <Panel title="Session Bundles">
+        <List empty="No bundles yet">
+          {snapshot.backup.bundles.map((bundle) => (
+            <li key={bundle.id}>
+              <span className="listMain">
+                <span>{bundle.recordingTitle}</span>
+                <small>{bundle.fileName} · {bundle.status} · {bundle.target}</small>
+                <small>{new Date(bundle.createdAt).toLocaleString()} · {bundle.logEntryCount} log entries</small>
+              </span>
+            </li>
+          ))}
+        </List>
+      </Panel>
+    </div>
+  );
+}
+
 function SettingsView({ snapshot, saving, save, adminUnlocked, lockAdmin }: { snapshot: StudyBoxSnapshot; saving: boolean; save: (settings: StudyBoxSettings) => Promise<void>; adminUnlocked: boolean; lockAdmin: () => void }) {
   const [draft, setDraft] = useState(snapshot.settings);
   const [deviceAuthorization, setDeviceAuthorization] = useState<ZoomDeviceAuthorization>();
@@ -507,6 +540,7 @@ function Diagnostics({ snapshot }: { snapshot: StudyBoxSnapshot }) {
         <Metric label="SDK Arch" value={snapshot.zoom.sdkArch} detail="Pi target is linux-arm64" />
         <Metric label="Webhook" value={snapshot.zoom.webhookSecretConfigured ? "Configured" : "Missing"} detail="event verification token" />
         <Metric label="Runner" value={snapshot.zoom.runnerAvailable ? "Available" : "Missing"} detail="native process bridge" />
+        <Metric label="Backup" value={`${snapshot.backup.pendingCount} pending`} detail={snapshot.backup.lastEvent ?? snapshot.backup.target} />
       </div>
     </div>
   );

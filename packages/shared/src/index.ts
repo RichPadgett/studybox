@@ -130,7 +130,7 @@ export interface StudyBoxSettings {
   oled: OledSettings;
 }
 
-export type LogSource = "system" | "web" | "button" | "meeting" | "podcast" | "hal" | "scheduler" | "zoom-webhook" | "zoom-runner";
+export type LogSource = "system" | "web" | "button" | "meeting" | "podcast" | "backup" | "hal" | "scheduler" | "zoom-webhook" | "zoom-runner";
 export type LogLevel = "info" | "warn" | "error";
 export type LogResult = "success" | "failure";
 
@@ -151,6 +151,7 @@ export interface StudyBoxSnapshot {
   meeting: MeetingState;
   zoom: ZoomRuntimeStatus;
   podcast: PodcastState;
+  backup: BackupSyncState;
   oled: {
     currentPageId: OledPageId;
     pages: OledPage[];
@@ -207,6 +208,47 @@ export interface ZoomZakStatus {
   available: boolean;
   expiresAt?: string;
   tokenLength?: number;
+}
+
+export type BackupBundleStatus = "pending" | "uploading" | "uploaded" | "failed";
+
+export interface BackupBundle {
+  id: string;
+  recordingId: string;
+  recordingTitle: string;
+  fileName: string;
+  meetingEndedAt: string;
+  recordingStartedAt: string;
+  recordingEndedAt: string;
+  createdAt: string;
+  status: BackupBundleStatus;
+  target: string;
+  logEntryCount: number;
+  lastAttemptAt?: string;
+  uploadedAt?: string;
+  error?: string;
+}
+
+export interface BackupSyncState {
+  mode: "mock" | "hetzner-repo";
+  target: string;
+  pendingCount: number;
+  uploadedCount: number;
+  failedCount: number;
+  bundles: BackupBundle[];
+  lastEvent?: string;
+}
+
+export interface BackupSyncService {
+  load(): Promise<BackupSyncState>;
+  getState(): BackupSyncState;
+  createBundle(input: {
+    recording: Recording;
+    download: RecordingDownload;
+    logs: LogEntry[];
+    meetingEndedAt: string;
+  }): Promise<BackupBundle>;
+  syncPending(): Promise<BackupSyncState>;
 }
 
 export interface MeetingService {

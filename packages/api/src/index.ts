@@ -314,6 +314,14 @@ app.get("/api/podcast/recordings/:recordingId/download", requireAdmin, async (re
   }
 });
 
+app.post("/api/backup/sync", requireAdmin, async (_request, response, next) => {
+  try {
+    response.json(await appliance.syncBackups(webAdminContext));
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.put("/api/settings", requireAdmin, async (request, response, next) => {
   try {
     response.json(await appliance.updateSettings(request.body, webAdminContext));
