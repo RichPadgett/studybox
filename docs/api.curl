@@ -1,0 +1,58 @@
+# StudyBox API curl requests
+# Base URL: http://localhost:4000
+
+curl --request GET 'http://localhost:4000/api/snapshot'
+
+curl --request POST 'http://localhost:4000/api/buttons/page'
+
+curl --request POST 'http://localhost:4000/api/buttons/action'
+
+curl --request POST 'http://localhost:4000/api/meeting/start'
+
+curl --request POST 'http://localhost:4000/api/meeting/end'
+
+curl --request POST 'http://localhost:4000/api/meeting/waiting/w1/admit'
+
+curl --request POST 'http://localhost:4000/api/meeting/raised-hands/p3/dismiss'
+
+curl --request POST 'http://localhost:4000/api/podcast/start'
+
+curl --request POST 'http://localhost:4000/api/podcast/pause'
+
+curl --request POST 'http://localhost:4000/api/podcast/resume'
+
+curl --request POST 'http://localhost:4000/api/podcast/stop'
+
+curl --request PUT 'http://localhost:4000/api/settings' \
+  --header 'Content-Type: application/json' \
+  --data '{
+    "schedule": {
+      "dayOfWeek": "Saturday",
+      "time": "11:00",
+      "timezone": "America/New_York",
+      "autoStartMeeting": true,
+      "autoStartRecording": true
+    },
+    "zoom": {
+      "meetingNumber": "123456789",
+      "displayName": "StudyBox",
+      "sdkSecretConfigured": false
+    },
+    "audio": {
+      "inputDevice": "DJI Mic Receiver (Mock)",
+      "gain": 70,
+      "monitorEnabled": false
+    },
+    "wifi": {
+      "ssid": "StudyBox-WiFi",
+      "configured": true
+    },
+    "cloudflare": {
+      "tunnelEnabled": false,
+      "hostname": ""
+    },
+    "oled": {
+      "brightness": 80,
+      "rotate180": false
+    }
+  }'

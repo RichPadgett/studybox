@@ -1,0 +1,21 @@
+{
+  "name": "studybox",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "services/*",
+    "hal/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -n api,web -c cyan,magenta \"npm run dev -w @studybox/api\" \"npm run dev -w @studybox/web\"",
+    "build": "npm run build -w @studybox/shared && npm run build -w @studybox/meeting && npm run build -w @studybox/podcast && npm run build -w @studybox/scheduler && npm run build -w @studybox/gpio && npm run build -w @studybox/oled && npm run build -w @studybox/led && npm run build -w @studybox/buttons && npm run build -w @studybox/audio && npm run build -w @studybox/api && npm run build -w @studybox/web",
+    "typecheck": "npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "concurrently": "^9.1.2",
+    "typescript": "^5.7.2"
+  }
+}

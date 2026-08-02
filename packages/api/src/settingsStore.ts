@@ -1,0 +1,63 @@
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
+import type { StudyBoxSettings } from "@studybox/shared";
+
+const settingsPath = resolve(process.cwd(), "data/settings.json");
+
+export const defaultSettings: StudyBoxSettings = {
+  schedule: {
+    dayOfWeek: "Saturday",
+    time: "11:00",
+    timezone: "America/New_York",
+    autoStartMeeting: true,
+    autoStartRecording: true
+  },
+  zoom: {
+    meetingNumber: "",
+    displayName: "StudyBox",
+    sdkSecretConfigured: false
+  },
+  audio: {
+    inputDevice: "DJI Mic Receiver (Mock)",
+    gain: 70,
+    monitorEnabled: false
+  },
+  wifi: {
+    ssid: "",
+    configured: false
+  },
+  cloudflare: {
+    tunnelEnabled: false,
+    hostname: ""
+  },
+  oled: {
+    brightness: 80,
+    rotate180: false
+  }
+};
+
+export class SettingsStore {
+  private settings = defaultSettings;
+
+  async load(): Promise<StudyBoxSettings> {
+    try {
+      const raw = await readFile(settingsPath, "utf8");
+      this.settings = { ...defaultSettings, ...JSON.parse(raw) } as StudyBoxSettings;
+    } catch {
+      await this.save(defaultSettings);
+    }
+
+    return this.settings;
+  }
+
+  get(): StudyBoxSettings {
+    return this.settings;
+  }
+
+  async save(settings: StudyBoxSettings): Promise<StudyBoxSettings> {
+    this.settings = settings;
+    await mkdir(dirname(settingsPath), { recursive: true });
+    await writeFile(settingsPath, JSON.stringify(settings, null, 2));
+    return this.settings;
+  }
+}

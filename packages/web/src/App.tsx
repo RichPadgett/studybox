@@ -1,0 +1,394 @@
+import type { LogEntry, OledPageId, StudyBoxSettings, StudyBoxSnapshot } from "@studybox/shared";
+import {
+  Activity,
+  AudioLines,
+  CalendarClock,
+  ClipboardList,
+  Disc3,
+  Gauge,
+  Hand,
+  Mic,
+  MonitorDot,
+  Network,
+  Radio,
+  Save,
+  Settings,
+  Square,
+  Users,
+  Wifi
+} from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { getSnapshot, postAction, saveSettings } from "./api.js";
+
+const navItems = [
+  { id: "dashboard", label: "Dashboard", icon: Gauge },
+  { id: "meeting", label: "Meeting", icon: Users },
+  { id: "podcast", label: "Podcast", icon: Mic },
+  { id: "audio", label: "Audio", icon: AudioLines },
+  { id: "recordings", label: "Recordings", icon: Disc3 },
+  { id: "settings", label: "Settings", icon: Settings },
+  { id: "diagnostics", label: "Diagnostics", icon: Activity },
+  { id: "logs", label: "Logs", icon: ClipboardList },
+  { id: "network", label: "Network", icon: Network }
+] as const;
+
+type NavId = (typeof navItems)[number]["id"];
+
+export function App() {
+  const [snapshot, setSnapshot] = useState<StudyBoxSnapshot>();
+  const [activeNav, setActiveNav] = useState<NavId>("dashboard");
+  const [error, setError] = useState<string>();
+  const [saving, setSaving] = useState(false);
+
+  async function refresh() {
+    try {
+      setSnapshot(await getSnapshot());
+      setError(undefined);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Unable to reach StudyBox API");
+    }
+  }
+
+  async function run(path: string) {
+    try {
+      setSnapshot(await postAction(path));
+      setError(undefined);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Command failed");
+    }
+  }
+
+  async function persistSettings(settings: StudyBoxSettings) {
+    setSaving(true);
+    try {
+      await saveSettings(settings);
+      await refresh();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Settings save failed");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  useEffect(() => {
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 3000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  if (!snapshot) {
+    return (
+      <main className="loading">
+        <MonitorDot size={28} />
+        <span>{error ?? "Connecting to StudyBox..."}</span>
+      </main>
+    );
+  }
+
+  return (
+    <div className="appShell">
+      <aside className="sidebar">
+        <div className="brand">
+          <Radio size={24} />
+          <div>
+            <strong>StudyBox</strong>
+            <span>Mock Appliance</span>
+          </div>
+        </div>
+        <nav>
+          {navItems.map((item) => {
+            const Icon = item.icon;
+            return (
+              <button className={activeNav === item.id ? "active" : ""} key={item.id} onClick={() => setActiveNav(item.id)} title={item.label}>
+                <Icon size={18} />
+                <span>{item.label}</span>
+              </button>
+            );
+          })}
+        </nav>
+      </aside>
+
+      <main className="main">
+        <header className="topbar">
+          <div>
+            <h1>{navItems.find((item) => item.id === activeNav)?.label}</h1>
+            <p>{statusCopy(snapshot)}</p>
+          </div>
+          <StatusPill status={snapshot.systemStatus} />
+        </header>
+
+        {error ? <div className="errorBanner">{error}</div> : null}
+
+        <section className="contentGrid">
+          <div className="primaryPane">
+            {activeNav === "dashboard" ? <Dashboard snapshot={snapshot} run={run} /> : null}
+            {activeNav === "meeting" ? <Meeting snapshot={snapshot} run={run} /> : null}
+            {activeNav === "podcast" ? <Podcast snapshot={snapshot} run={run} /> : null}
+            {activeNav === "audio" ? <Audio snapshot={snapshot} /> : null}
+            {activeNav === "recordings" ? <Recordings snapshot={snapshot} /> : null}
+            {activeNav === "settings" ? <SettingsView snapshot={snapshot} saving={saving} save={persistSettings} /> : null}
+            {activeNav === "diagnostics" ? <Diagnostics snapshot={snapshot} /> : null}
+            {activeNav === "logs" ? <Logs logs={snapshot.logs} /> : null}
+            {activeNav === "network" ? <NetworkView snapshot={snapshot} /> : null}
+          </div>
+
+          <aside className="appliancePane">
+            <OledSimulator snapshot={snapshot} run={run} />
+            <LedPanel snapshot={snapshot} />
+          </aside>
+        </section>
+      </main>
+    </div>
+  );
+}
+
+function Dashboard({ snapshot, run }: { snapshot: StudyBoxSnapshot; run: (path: string) => Promise<void> }) {
+  return (
+    <div className="stack">
+      <div className="metricGrid">
+        <Metric label="Meeting" value={snapshot.meeting.status} detail={`${snapshot.meeting.participants.length} participants`} />
+        <Metric label="Waiting" value={snapshot.meeting.waitingRoom.length.toString()} detail={`${snapshot.meeting.raisedHands.length} raised hands`} />
+        <Metric label="Podcast" value={snapshot.podcast.status} detail={formatDuration(snapshot.podcast.elapsedSeconds)} />
+        <Metric label="Next Meeting" value={`${snapshot.settings.schedule.dayOfWeek}`} detail={snapshot.settings.schedule.time} />
+      </div>
+      <div className="toolbar">
+        <Command icon={<Users size={17} />} label={snapshot.meeting.status === "live" ? "End Meeting" : "Start Meeting"} onClick={() => run(snapshot.meeting.status === "live" ? "/api/meeting/end" : "/api/meeting/start")} />
+        <Command icon={<Mic size={17} />} label={podcastPrimaryAction(snapshot)} onClick={() => run(podcastPrimaryPath(snapshot))} />
+        <Command icon={<Square size={17} />} label="Stop Recording" onClick={() => run("/api/podcast/stop")} disabled={snapshot.podcast.status === "idle"} />
+      </div>
+      <Meeting snapshot={snapshot} run={run} compact />
+    </div>
+  );
+}
+
+function Meeting({ snapshot, run, compact = false }: { snapshot: StudyBoxSnapshot; run: (path: string) => Promise<void>; compact?: boolean }) {
+  return (
+    <div className="stack">
+      {!compact ? (
+        <div className="toolbar">
+          <Command icon={<Users size={17} />} label={snapshot.meeting.status === "live" ? "End Meeting" : "Start Meeting"} onClick={() => run(snapshot.meeting.status === "live" ? "/api/meeting/end" : "/api/meeting/start")} />
+        </div>
+      ) : null}
+      <div className="twoColumn">
+        <Panel title="Participants">
+          <List>
+            {snapshot.meeting.participants.map((participant) => (
+              <li key={participant.id}>
+                <span>{participant.displayName}</span>
+                {participant.status === "raised-hand" ? (
+                  <button className="inlineButton" onClick={() => run(`/api/meeting/raised-hands/${participant.id}/dismiss`)}>
+                    <Hand size={14} /> Clear
+                  </button>
+                ) : (
+                  <small>Joined</small>
+                )}
+              </li>
+            ))}
+          </List>
+        </Panel>
+        <Panel title="Waiting Room">
+          <List empty="No one waiting">
+            {snapshot.meeting.waitingRoom.map((participant) => (
+              <li key={participant.id}>
+                <span>{participant.displayName}</span>
+                <button className="inlineButton" onClick={() => run(`/api/meeting/waiting/${participant.id}/admit`)}>
+                  Admit
+                </button>
+              </li>
+            ))}
+          </List>
+        </Panel>
+      </div>
+    </div>
+  );
+}
+
+function Podcast({ snapshot, run }: { snapshot: StudyBoxSnapshot; run: (path: string) => Promise<void> }) {
+  return (
+    <div className="stack">
+      <div className="recordingSurface">
+        <span>{snapshot.podcast.status}</span>
+        <strong>{formatDuration(snapshot.podcast.elapsedSeconds)}</strong>
+      </div>
+      <div className="toolbar">
+        <Command icon={<Mic size={17} />} label={podcastPrimaryAction(snapshot)} onClick={() => run(podcastPrimaryPath(snapshot))} />
+        <Command icon={<Square size={17} />} label="Stop Recording" onClick={() => run("/api/podcast/stop")} disabled={snapshot.podcast.status === "idle"} />
+      </div>
+    </div>
+  );
+}
+
+function Audio({ snapshot }: { snapshot: StudyBoxSnapshot }) {
+  return (
+    <div className="stack">
+      <Panel title="Input">
+        <div className="formGrid">
+          <label>Device<input value={snapshot.settings.audio.inputDevice} readOnly /></label>
+          <label>Gain<input value={`${snapshot.settings.audio.gain}%`} readOnly /></label>
+          <label>Monitor<input value={snapshot.settings.audio.monitorEnabled ? "Enabled" : "Disabled"} readOnly /></label>
+        </div>
+      </Panel>
+      <Panel title="Level">
+        <div className="levelMeter"><span style={{ width: `${snapshot.metrics.cpuPercent + 20}%` }} /></div>
+      </Panel>
+    </div>
+  );
+}
+
+function Recordings({ snapshot }: { snapshot: StudyBoxSnapshot }) {
+  return (
+    <Panel title="Recordings">
+      <List empty="No recordings">
+        {snapshot.podcast.recordings.map((recording) => (
+          <li key={recording.id}>
+            <span>{recording.title}</span>
+            <small>{formatDuration(recording.durationSeconds)} · {formatBytes(recording.sizeBytes)}</small>
+          </li>
+        ))}
+      </List>
+    </Panel>
+  );
+}
+
+function SettingsView({ snapshot, saving, save }: { snapshot: StudyBoxSnapshot; saving: boolean; save: (settings: StudyBoxSettings) => Promise<void> }) {
+  const [draft, setDraft] = useState(snapshot.settings);
+
+  useEffect(() => setDraft(snapshot.settings), [snapshot.settings]);
+
+  return (
+    <div className="stack">
+      <Panel title="Schedule">
+        <div className="formGrid">
+          <label>Day<input value={draft.schedule.dayOfWeek} onChange={(event) => setDraft({ ...draft, schedule: { ...draft.schedule, dayOfWeek: event.target.value as StudyBoxSettings["schedule"]["dayOfWeek"] } })} /></label>
+          <label>Time<input type="time" value={draft.schedule.time} onChange={(event) => setDraft({ ...draft, schedule: { ...draft.schedule, time: event.target.value } })} /></label>
+          <label>Timezone<input value={draft.schedule.timezone} onChange={(event) => setDraft({ ...draft, schedule: { ...draft.schedule, timezone: event.target.value } })} /></label>
+        </div>
+      </Panel>
+      <Panel title="Zoom">
+        <div className="formGrid">
+          <label>Meeting Number<input value={draft.zoom.meetingNumber} onChange={(event) => setDraft({ ...draft, zoom: { ...draft.zoom, meetingNumber: event.target.value } })} /></label>
+          <label>Display Name<input value={draft.zoom.displayName} onChange={(event) => setDraft({ ...draft, zoom: { ...draft.zoom, displayName: event.target.value } })} /></label>
+        </div>
+      </Panel>
+      <div className="toolbar">
+        <Command icon={<Save size={17} />} label={saving ? "Saving" : "Save Settings"} onClick={() => save(draft)} disabled={saving} />
+      </div>
+    </div>
+  );
+}
+
+function Diagnostics({ snapshot }: { snapshot: StudyBoxSnapshot }) {
+  return (
+    <div className="metricGrid">
+      <Metric label="CPU" value={`${snapshot.metrics.cpuPercent}%`} detail="mock telemetry" />
+      <Metric label="SSD" value={`${snapshot.metrics.ssdPercent}%`} detail="NVMe storage" />
+      <Metric label="WiFi" value={snapshot.metrics.wifiConnected ? "Connected" : "Offline"} detail={snapshot.settings.wifi.ssid || "Ethernet preferred"} />
+      <Metric label="Temperature" value={`${snapshot.metrics.temperatureC}C`} detail="Pi active cooler" />
+    </div>
+  );
+}
+
+function Logs({ logs }: { logs: LogEntry[] }) {
+  return (
+    <Panel title="Logs">
+      <List empty="No logs yet">
+        {logs.map((log) => (
+          <li key={log.id}>
+            <span>{log.message}</span>
+            <small>{log.source} · {new Date(log.timestamp).toLocaleTimeString()}</small>
+          </li>
+        ))}
+      </List>
+    </Panel>
+  );
+}
+
+function NetworkView({ snapshot }: { snapshot: StudyBoxSnapshot }) {
+  return (
+    <div className="metricGrid">
+      <Metric label="WiFi" value={snapshot.settings.wifi.configured ? snapshot.settings.wifi.ssid : "Not configured"} detail={snapshot.metrics.wifiConnected ? "Connected" : "Offline"} />
+      <Metric label="Tunnel" value={snapshot.settings.cloudflare.tunnelEnabled ? "Enabled" : "Disabled"} detail={snapshot.settings.cloudflare.hostname || "No hostname"} />
+      <Metric label="Access" value="Local" detail="Cloudflare Tunnel later" />
+      <Metric label="API" value="Online" detail="localhost:4000" />
+    </div>
+  );
+}
+
+function OledSimulator({ snapshot, run }: { snapshot: StudyBoxSnapshot; run: (path: string) => Promise<void> }) {
+  const currentPage = useMemo(() => snapshot.oled.pages.find((page) => page.id === snapshot.oled.currentPageId) ?? snapshot.oled.pages[0], [snapshot]);
+
+  return (
+    <Panel title="OLED">
+      <div className="oled">
+        <strong>{currentPage.title}</strong>
+        {currentPage.lines.map((line) => <span key={line}>{line}</span>)}
+        {currentPage.actionLabel ? <em>{currentPage.actionLabel}</em> : null}
+      </div>
+      <div className="buttonRow">
+        <button onClick={() => run("/api/buttons/page")}>PAGE</button>
+        <button onClick={() => run("/api/buttons/action")}>ACTION</button>
+      </div>
+    </Panel>
+  );
+}
+
+function LedPanel({ snapshot }: { snapshot: StudyBoxSnapshot }) {
+  const systemColor = snapshot.systemStatus === "ready" ? "green" : snapshot.systemStatus === "meeting-live" ? "blue" : snapshot.systemStatus === "attention" ? "yellow" : "red";
+  return (
+    <Panel title="LEDs">
+      <div className="ledRows">
+        <span><i className={`led ${systemColor}`} />System {systemColor}</span>
+        <span><i className={`led ${snapshot.podcast.status === "recording" ? "red" : "off"}`} />REC {snapshot.podcast.status}</span>
+      </div>
+    </Panel>
+  );
+}
+
+function Panel({ title, children }: { title: string; children: React.ReactNode }) {
+  return <section className="panel"><h2>{title}</h2>{children}</section>;
+}
+
+function Metric({ label, value, detail }: { label: string; value: string; detail: string }) {
+  return <div className="metric"><span>{label}</span><strong>{value}</strong><small>{detail}</small></div>;
+}
+
+function Command({ icon, label, onClick, disabled = false }: { icon: React.ReactNode; label: string; onClick: () => void; disabled?: boolean }) {
+  return <button className="command" onClick={onClick} disabled={disabled}>{icon}<span>{label}</span></button>;
+}
+
+function List({ children, empty = "Empty" }: { children: React.ReactNode; empty?: string }) {
+  return <ul className="list">{Array.isArray(children) && children.length === 0 ? <li><small>{empty}</small></li> : children}</ul>;
+}
+
+function StatusPill({ status }: { status: string }) {
+  return <span className={`statusPill ${status}`}>{status}</span>;
+}
+
+function statusCopy(snapshot: StudyBoxSnapshot): string {
+  if (snapshot.systemStatus === "attention") return "Waiting room or raised hand needs attention";
+  if (snapshot.meeting.status === "live") return "Meeting is live";
+  return "Ready for the next scheduled study";
+}
+
+function podcastPrimaryAction(snapshot: StudyBoxSnapshot): string {
+  if (snapshot.podcast.status === "recording") return "Pause Recording";
+  if (snapshot.podcast.status === "paused") return "Resume Recording";
+  return "Start Recording";
+}
+
+function podcastPrimaryPath(snapshot: StudyBoxSnapshot): string {
+  if (snapshot.podcast.status === "recording") return "/api/podcast/pause";
+  if (snapshot.podcast.status === "paused") return "/api/podcast/resume";
+  return "/api/podcast/start";
+}
+
+function formatDuration(seconds: number): string {
+  const hours = Math.floor(seconds / 3600).toString().padStart(2, "0");
+  const minutes = Math.floor((seconds % 3600) / 60).toString().padStart(2, "0");
+  const remainingSeconds = Math.floor(seconds % 60).toString().padStart(2, "0");
+  return `${hours}:${minutes}:${remainingSeconds}`;
+}
+
+function formatBytes(bytes: number): string {
+  return `${(bytes / 1_000_000).toFixed(1)} MB`;
+}
