@@ -1,4 +1,4 @@
-import type { LogEntry, OledPageId, StudyBoxSettings, StudyBoxSnapshot } from "@studybox/shared";
+import type { LogEntry, OledPageId, StudyBoxSettings, StudyBoxSnapshot, ZoomDeviceAuthorization } from "@studybox/shared";
 import {
   Activity,
   AudioLines,
@@ -18,7 +18,7 @@ import {
   Wifi
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { getSnapshot, postAction, saveSettings } from "./api.js";
+import { getSnapshot, pollZoomDeviceToken, postAction, refreshZoomToken, saveSettings, startZoomDeviceAuthorization } from "./api.js";
 
 const navItems = [
   { id: "dashboard", label: "Dashboard", icon: Gauge },
@@ -252,8 +252,29 @@ function Recordings({ snapshot }: { snapshot: StudyBoxSnapshot }) {
 
 function SettingsView({ snapshot, saving, save }: { snapshot: StudyBoxSnapshot; saving: boolean; save: (settings: StudyBoxSettings) => Promise<void> }) {
   const [draft, setDraft] = useState(snapshot.settings);
+  const [deviceAuthorization, setDeviceAuthorization] = useState<ZoomDeviceAuthorization>();
+  const [authMessage, setAuthMessage] = useState<string>();
 
   useEffect(() => setDraft(snapshot.settings), [snapshot.settings]);
+
+  async function startDeviceAuthorization() {
+    setAuthMessage(undefined);
+    setDeviceAuthorization(await startZoomDeviceAuthorization());
+  }
+
+  async function completeDeviceAuthorization() {
+    if (!deviceAuthorization) {
+      return;
+    }
+
+    const status = await pollZoomDeviceToken(deviceAuthorization.deviceCode);
+    setAuthMessage(status.authorized ? "Zoom account authorized" : "Authorization pending");
+  }
+
+  async function refreshAuthorization() {
+    const status = await refreshZoomToken();
+    setAuthMessage(status.authorized ? "Zoom token refreshed" : "Zoom authorization expired");
+  }
 
   return (
     <div className="stack">
@@ -277,6 +298,25 @@ function SettingsView({ snapshot, saving, save }: { snapshot: StudyBoxSnapshot; 
           <Metric label="SDK Arch" value={snapshot.zoom.sdkArch} detail="target package" />
           <Metric label="Credentials" value={snapshot.zoom.configured ? "Ready" : "Missing"} detail="Client ID and secret" />
           <Metric label="Runner" value={snapshot.zoom.runnerAvailable ? "Available" : "Missing"} detail={snapshot.zoom.runnerPath ?? "Not configured"} />
+        </div>
+      </Panel>
+      <Panel title="Zoom Account">
+        <div className="metricGrid compactMetrics">
+          <Metric label="Authorized" value={snapshot.zoom.oauth.authorized ? "Yes" : "No"} detail={snapshot.zoom.oauth.expiresAt ? new Date(snapshot.zoom.oauth.expiresAt).toLocaleString() : "Device OAuth not completed"} />
+          <Metric label="User" value={snapshot.zoom.oauth.user?.displayName ?? "Unknown"} detail={snapshot.zoom.oauth.user?.email ?? "No Zoom user stored"} />
+        </div>
+        {deviceAuthorization ? (
+          <div className="deviceAuth">
+            <label>User Code<input value={deviceAuthorization.userCode} readOnly /></label>
+            <a href={deviceAuthorization.verificationUriComplete} target="_blank" rel="noreferrer">Open Zoom Authorization</a>
+            <small>Expires {new Date(deviceAuthorization.expiresAt).toLocaleTimeString()}</small>
+          </div>
+        ) : null}
+        {authMessage ? <p className="inlineNotice">{authMessage}</p> : null}
+        <div className="toolbar">
+          <Command icon={<Settings size={17} />} label="Start Device OAuth" onClick={() => void startDeviceAuthorization()} disabled={!snapshot.zoom.configured} />
+          <Command icon={<Save size={17} />} label="Poll Authorization" onClick={() => void completeDeviceAuthorization()} disabled={!deviceAuthorization} />
+          <Command icon={<Activity size={17} />} label="Refresh Token" onClick={() => void refreshAuthorization()} disabled={!snapshot.zoom.oauth.authorized} />
         </div>
       </Panel>
       <div className="toolbar">

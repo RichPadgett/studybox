@@ -1,6 +1,8 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { ZoomRuntimeStatus } from "@studybox/shared";
+import { projectPath } from "./paths.js";
+import { ZoomOAuthStore } from "./zoomOAuthStore.js";
 
 export interface ZoomConfig {
   clientId?: string;
@@ -14,6 +16,7 @@ export interface ZoomConfig {
 }
 
 export function getZoomConfig(): ZoomConfig {
+  loadDotEnv();
   return {
     clientId: readEnv("ZOOM_CLIENT_ID"),
     clientSecret: readEnv("ZOOM_CLIENT_SECRET"),
@@ -27,9 +30,10 @@ export function getZoomConfig(): ZoomConfig {
 }
 
 export function getZoomRuntimeStatus(config = getZoomConfig()): ZoomRuntimeStatus {
-  const runnerPath = config.runnerPath ? resolve(process.cwd(), config.runnerPath) : undefined;
+  const runnerPath = config.runnerPath ? resolve(projectPath(), config.runnerPath) : undefined;
   const clientIdConfigured = Boolean(config.clientId);
   const clientSecretConfigured = Boolean(config.clientSecret);
+  const oauthStore = new ZoomOAuthStore();
 
   return {
     mode: config.meetingMode,
@@ -40,7 +44,8 @@ export function getZoomRuntimeStatus(config = getZoomConfig()): ZoomRuntimeStatu
     redirectUri: config.redirectUri,
     runnerPath,
     runnerAvailable: runnerPath ? existsSync(runnerPath) : false,
-    sdkArch: config.sdkArch
+    sdkArch: config.sdkArch,
+    oauth: oauthStore.getStatus()
   };
 }
 
@@ -55,4 +60,35 @@ function parseSdkArch(value: string | undefined): ZoomConfig["sdkArch"] {
   }
 
   return "unknown";
+}
+
+let envLoaded = false;
+
+function loadDotEnv(): void {
+  if (envLoaded) {
+    return;
+  }
+
+  envLoaded = true;
+  const path = projectPath(".env");
+  if (!existsSync(path)) {
+    return;
+  }
+
+  const lines = readFileSync(path, "utf8").split(/\r?\n/);
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) {
+      continue;
+    }
+
+    const separatorIndex = trimmed.indexOf("=");
+    if (separatorIndex === -1) {
+      continue;
+    }
+
+    const key = trimmed.slice(0, separatorIndex).trim();
+    const value = trimmed.slice(separatorIndex + 1).trim().replace(/^["']|["']$/g, "");
+    process.env[key] ??= value;
+  }
 }

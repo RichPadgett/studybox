@@ -137,7 +137,32 @@ export interface ZoomRuntimeStatus {
   runnerPath?: string;
   runnerAvailable: boolean;
   sdkArch: "linux-arm64" | "linux-x86_64" | "unknown";
+  oauth: ZoomOAuthStatus;
   lastError?: string;
+}
+
+export interface ZoomOAuthStatus {
+  authorized: boolean;
+  expiresAt?: string;
+  scopes?: string[];
+  user?: ZoomUserProfile;
+}
+
+export interface ZoomUserProfile {
+  id: string;
+  accountId?: string;
+  displayName?: string;
+  email?: string;
+}
+
+export interface ZoomDeviceAuthorization {
+  deviceCode: string;
+  userCode: string;
+  verificationUri: string;
+  verificationUriComplete: string;
+  expiresIn: number;
+  interval: number;
+  expiresAt: string;
 }
 
 export interface MeetingService {

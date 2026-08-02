@@ -1,8 +1,9 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { dirname } from "node:path";
 import type { StudyBoxSettings } from "@studybox/shared";
+import { projectPath } from "./paths.js";
 
-const settingsPath = resolve(process.cwd(), "data/settings.json");
+const settingsPath = projectPath("data/settings.json");
 
 export const defaultSettings: StudyBoxSettings = {
   schedule: {

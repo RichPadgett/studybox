@@ -1,4 +1,4 @@
-import type { StudyBoxSettings, StudyBoxSnapshot } from "@studybox/shared";
+import type { StudyBoxSettings, StudyBoxSnapshot, ZoomDeviceAuthorization, ZoomOAuthStatus } from "@studybox/shared";
 
 export async function getSnapshot(): Promise<StudyBoxSnapshot> {
   return request<StudyBoxSnapshot>("/api/snapshot");
@@ -14,6 +14,22 @@ export async function saveSettings(settings: StudyBoxSettings): Promise<StudyBox
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(settings)
   });
+}
+
+export async function startZoomDeviceAuthorization(): Promise<ZoomDeviceAuthorization> {
+  return request<ZoomDeviceAuthorization>("/api/zoom/device-authorization", { method: "POST" });
+}
+
+export async function pollZoomDeviceToken(deviceCode: string): Promise<ZoomOAuthStatus> {
+  return request<ZoomOAuthStatus>("/api/zoom/device-token", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ deviceCode })
+  });
+}
+
+export async function refreshZoomToken(): Promise<ZoomOAuthStatus> {
+  return request<ZoomOAuthStatus>("/api/zoom/refresh-token", { method: "POST" });
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
