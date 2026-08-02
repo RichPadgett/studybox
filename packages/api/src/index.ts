@@ -1,6 +1,6 @@
 import cors from "cors";
 import express from "express";
-import { createAdminSession, requireAdmin } from "./adminAuth.js";
+import { createAdminSession, getAdminSession, requireAdmin } from "./adminAuth.js";
 import { StudyBoxAppliance } from "./appliance.js";
 import { SettingsStore } from "./settingsStore.js";
 import { getZoomConfig, getZoomRuntimeStatus } from "./zoomConfig.js";
@@ -32,6 +32,10 @@ app.post("/api/admin/login", (request, response, next) => {
   } catch (error) {
     response.status(401).json({ error: error instanceof Error ? error.message : "Invalid admin PIN" });
   }
+});
+
+app.get("/api/admin/session", requireAdmin, (request, response) => {
+  response.json(getAdminSession(request));
 });
 
 app.get("/api/zoom/status", (_request, response) => {

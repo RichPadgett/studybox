@@ -1,20 +1,38 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import type express from "express";
 import { projectPath } from "./paths.js";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import type { AdminSession } from "@studybox/shared";
 
-const sessions = new Map<string, number>();
+interface StoredAdminSession {
+  expiresAtMs: number;
+  buildId: string;
+}
+
+interface AdminSessionFile {
+  sessions: Record<string, StoredAdminSession>;
+}
+
+const sessions = new Map<string, StoredAdminSession>();
 const sessionDurationMs = 12 * 60 * 60 * 1000;
+const sessionFilePath = projectPath("data", "admin-sessions.json");
+const currentBuildId = getCurrentBuildId();
+let sessionsLoaded = false;
 
 export function createAdminSession(pin: string): AdminSession {
+  loadSessionsOnce();
   if (!verifyPin(pin)) {
     throw new Error("Invalid admin PIN");
   }
 
   const token = randomBytes(32).toString("base64url");
   const expiresAtMs = Date.now() + sessionDurationMs;
-  sessions.set(token, expiresAtMs);
+  sessions.set(token, {
+    expiresAtMs,
+    buildId: currentBuildId
+  });
+  saveSessions();
 
   return {
     token,
@@ -23,6 +41,7 @@ export function createAdminSession(pin: string): AdminSession {
 }
 
 export function requireAdmin(request: express.Request, response: express.Response, next: express.NextFunction): void {
+  loadSessionsOnce();
   const header = request.header("authorization");
   const token = header?.startsWith("Bearer ") ? header.slice("Bearer ".length) : undefined;
   if (!token) {
@@ -30,16 +49,40 @@ export function requireAdmin(request: express.Request, response: express.Respons
     return;
   }
 
-  const expiresAtMs = sessions.get(token);
-  if (!expiresAtMs || expiresAtMs <= Date.now()) {
-    if (expiresAtMs) {
+  const session = sessions.get(token);
+  if (!session || session.expiresAtMs <= Date.now() || session.buildId !== currentBuildId) {
+    if (session) {
       sessions.delete(token);
+      saveSessions();
     }
     response.status(401).json({ error: "Admin session expired" });
     return;
   }
 
   next();
+}
+
+export function getAdminSession(request: express.Request): AdminSession | undefined {
+  loadSessionsOnce();
+  const header = request.header("authorization");
+  const token = header?.startsWith("Bearer ") ? header.slice("Bearer ".length) : undefined;
+  if (!token) {
+    return undefined;
+  }
+
+  const session = sessions.get(token);
+  if (!session || session.expiresAtMs <= Date.now() || session.buildId !== currentBuildId) {
+    if (session) {
+      sessions.delete(token);
+      saveSessions();
+    }
+    return undefined;
+  }
+
+  return {
+    token,
+    expiresAt: new Date(session.expiresAtMs).toISOString()
+  };
 }
 
 function verifyPin(pin: string): boolean {
@@ -83,4 +126,45 @@ function loadDotEnvOnce(): void {
     const value = trimmed.slice(separatorIndex + 1).trim().replace(/^["']|["']$/g, "");
     process.env[key] ??= value;
   }
+}
+
+function loadSessionsOnce(): void {
+  if (sessionsLoaded) {
+    return;
+  }
+
+  sessionsLoaded = true;
+  if (!existsSync(sessionFilePath)) {
+    return;
+  }
+
+  try {
+    const parsed = JSON.parse(readFileSync(sessionFilePath, "utf8")) as AdminSessionFile;
+    for (const [token, session] of Object.entries(parsed.sessions ?? {})) {
+      if (session.expiresAtMs > Date.now() && session.buildId === currentBuildId) {
+        sessions.set(token, session);
+      }
+    }
+  } catch {
+    sessions.clear();
+  }
+  saveSessions();
+}
+
+function saveSessions(): void {
+  mkdirSync(dirname(sessionFilePath), { recursive: true });
+  const activeSessions = Object.fromEntries(
+    Array.from(sessions.entries()).filter(([, session]) => session.expiresAtMs > Date.now() && session.buildId === currentBuildId)
+  );
+  writeFileSync(sessionFilePath, JSON.stringify({ sessions: activeSessions }, null, 2));
+}
+
+function getCurrentBuildId(): string {
+  const buildPath = projectPath("packages", "api", "dist", "index.js");
+  if (existsSync(buildPath)) {
+    const stats = statSync(buildPath);
+    return `${stats.size}:${Math.trunc(stats.mtimeMs)}`;
+  }
+
+  return "dev";
 }

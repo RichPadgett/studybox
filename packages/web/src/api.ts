@@ -2,6 +2,15 @@ import type { AdminSession, StudyBoxSettings, StudyBoxSnapshot, ZoomDeviceAuthor
 
 let adminToken: string | undefined;
 
+export class ApiError extends Error {
+  constructor(
+    readonly status: number,
+    message: string
+  ) {
+    super(message);
+  }
+}
+
 export function setAdminToken(token?: string): void {
   adminToken = token;
 }
@@ -12,6 +21,10 @@ export async function loginAdmin(pin: string): Promise<AdminSession> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ pin })
   });
+}
+
+export async function validateAdminSession(): Promise<AdminSession> {
+  return request<AdminSession>("/api/admin/session");
 }
 
 export async function getSnapshot(): Promise<StudyBoxSnapshot> {
@@ -51,7 +64,7 @@ export async function downloadRecording(recordingId: string): Promise<void> {
     headers: authorizedHeaders()
   });
   if (!response.ok) {
-    throw new Error(await response.text());
+    throw await createApiError(response);
   }
 
   const blob = await response.blob();
@@ -70,7 +83,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = authorizedHeaders(init?.headers);
   const response = await fetch(path, { ...init, headers });
   if (!response.ok) {
-    throw new Error(await response.text());
+    throw await createApiError(response);
   }
 
   return response.json() as Promise<T>;
@@ -87,4 +100,14 @@ function authorizedHeaders(headersInit?: HeadersInit): Headers {
 function getDownloadFileName(contentDisposition: string | null): string | undefined {
   const match = contentDisposition?.match(/filename="?(?<fileName>[^";]+)"?/);
   return match?.groups?.fileName;
+}
+
+async function createApiError(response: Response): Promise<ApiError> {
+  const body = await response.text();
+  try {
+    const parsed = JSON.parse(body) as { error?: string };
+    return new ApiError(response.status, parsed.error ?? body);
+  } catch {
+    return new ApiError(response.status, body);
+  }
 }

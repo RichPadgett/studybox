@@ -19,7 +19,7 @@ import {
   Users
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { downloadRecording, getSnapshot, loginAdmin, pollZoomDeviceToken, postAction, refreshZoomToken, saveSettings, setAdminToken, startZoomDeviceAuthorization } from "./api.js";
+import { ApiError, downloadRecording, getSnapshot, loginAdmin, pollZoomDeviceToken, postAction, refreshZoomToken, saveSettings, setAdminToken, startZoomDeviceAuthorization, validateAdminSession } from "./api.js";
 
 const navItems = [
   { id: "dashboard", label: "Dashboard", icon: Gauge },
@@ -63,6 +63,9 @@ export function App() {
       setSnapshot(await postAction(path));
       setError(undefined);
     } catch (caught) {
+      if (isAdminAuthError(caught)) {
+        lockAdmin();
+      }
       setError(caught instanceof Error ? caught.message : "Command failed");
     }
   }
@@ -78,6 +81,9 @@ export function App() {
       await saveSettings(settings);
       await refresh();
     } catch (caught) {
+      if (isAdminAuthError(caught)) {
+        lockAdmin();
+      }
       setError(caught instanceof Error ? caught.message : "Settings save failed");
     } finally {
       setSaving(false);
@@ -106,7 +112,14 @@ export function App() {
     const stored = readStoredAdminSession();
     if (stored) {
       setAdminToken(stored.token);
-      setAdminSession(stored);
+      void validateAdminSession()
+        .then((session) => {
+          setAdminSession(session);
+          window.localStorage.setItem(adminSessionStorageKey, JSON.stringify(session));
+        })
+        .catch(() => {
+          lockAdmin();
+        });
     }
   }, []);
 
@@ -168,8 +181,8 @@ export function App() {
             {activeNav === "meeting" ? <Meeting snapshot={snapshot} run={run} /> : null}
             {activeNav === "podcast" ? <Podcast snapshot={snapshot} run={run} /> : null}
             {activeNav === "audio" ? <Audio snapshot={snapshot} /> : null}
-            {activeNav === "recordings" ? <Recordings snapshot={snapshot} adminUnlocked={adminUnlocked} setError={setError} /> : null}
-            {activeNav === "settings" ? <SettingsView snapshot={snapshot} saving={saving} save={persistSettings} adminUnlocked={adminUnlocked} /> : null}
+            {activeNav === "recordings" ? <Recordings snapshot={snapshot} adminUnlocked={adminUnlocked} setError={setError} lockAdmin={lockAdmin} /> : null}
+            {activeNav === "settings" ? <SettingsView snapshot={snapshot} saving={saving} save={persistSettings} adminUnlocked={adminUnlocked} lockAdmin={lockAdmin} /> : null}
             {activeNav === "diagnostics" ? <Diagnostics snapshot={snapshot} /> : null}
             {activeNav === "logs" ? <Logs logs={snapshot.logs} /> : null}
             {activeNav === "network" ? <NetworkView snapshot={snapshot} /> : null}
@@ -304,7 +317,7 @@ function Audio({ snapshot }: { snapshot: StudyBoxSnapshot }) {
   );
 }
 
-function Recordings({ snapshot, adminUnlocked, setError }: { snapshot: StudyBoxSnapshot; adminUnlocked: boolean; setError: (error?: string) => void }) {
+function Recordings({ snapshot, adminUnlocked, setError, lockAdmin }: { snapshot: StudyBoxSnapshot; adminUnlocked: boolean; setError: (error?: string) => void; lockAdmin: () => void }) {
   async function download(recordingId: string) {
     if (!adminUnlocked) {
       setError("Enter the admin PIN before downloading recordings.");
@@ -315,6 +328,9 @@ function Recordings({ snapshot, adminUnlocked, setError }: { snapshot: StudyBoxS
       await downloadRecording(recordingId);
       setError(undefined);
     } catch (caught) {
+      if (isAdminAuthError(caught)) {
+        lockAdmin();
+      }
       setError(caught instanceof Error ? caught.message : "Recording download failed");
     }
   }
@@ -338,7 +354,7 @@ function Recordings({ snapshot, adminUnlocked, setError }: { snapshot: StudyBoxS
   );
 }
 
-function SettingsView({ snapshot, saving, save, adminUnlocked }: { snapshot: StudyBoxSnapshot; saving: boolean; save: (settings: StudyBoxSettings) => Promise<void>; adminUnlocked: boolean }) {
+function SettingsView({ snapshot, saving, save, adminUnlocked, lockAdmin }: { snapshot: StudyBoxSnapshot; saving: boolean; save: (settings: StudyBoxSettings) => Promise<void>; adminUnlocked: boolean; lockAdmin: () => void }) {
   const [draft, setDraft] = useState(snapshot.settings);
   const [deviceAuthorization, setDeviceAuthorization] = useState<ZoomDeviceAuthorization>();
   const [authMessage, setAuthMessage] = useState<string>();
@@ -350,6 +366,9 @@ function SettingsView({ snapshot, saving, save, adminUnlocked }: { snapshot: Stu
       setAuthMessage(undefined);
       setDeviceAuthorization(await startZoomDeviceAuthorization());
     } catch (caught) {
+      if (isAdminAuthError(caught)) {
+        lockAdmin();
+      }
       setAuthMessage(caught instanceof Error ? caught.message : "Unable to start Zoom authorization");
     }
   }
@@ -363,6 +382,9 @@ function SettingsView({ snapshot, saving, save, adminUnlocked }: { snapshot: Stu
       const status = await pollZoomDeviceToken(deviceAuthorization.deviceCode);
       setAuthMessage(status.authorized ? "Zoom account authorized" : "Authorization pending");
     } catch (caught) {
+      if (isAdminAuthError(caught)) {
+        lockAdmin();
+      }
       setAuthMessage(caught instanceof Error ? caught.message : "Unable to poll Zoom authorization");
     }
   }
@@ -372,6 +394,9 @@ function SettingsView({ snapshot, saving, save, adminUnlocked }: { snapshot: Stu
       const status = await refreshZoomToken();
       setAuthMessage(status.authorized ? "Zoom token refreshed" : "Zoom authorization expired");
     } catch (caught) {
+      if (isAdminAuthError(caught)) {
+        lockAdmin();
+      }
       setAuthMessage(caught instanceof Error ? caught.message : "Unable to refresh Zoom authorization");
     }
   }
@@ -594,6 +619,10 @@ function formatBytes(bytes: number): string {
 
 function isAdminSessionActive(session?: AdminSession): boolean {
   return Boolean(session?.token && Date.parse(session.expiresAt) > Date.now());
+}
+
+function isAdminAuthError(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 401;
 }
 
 function readStoredAdminSession(): AdminSession | undefined {
