@@ -42,7 +42,11 @@ app.post("/api/zoom/device-token", async (request, response, next) => {
 
     const client = new ZoomOAuthClient(getZoomConfig());
     const token = await client.pollDeviceToken(deviceCode);
-    token.user = await client.getCurrentUser(token.accessToken, token.apiUrl);
+    try {
+      token.user = await client.getCurrentUser(token.accessToken, token.apiUrl);
+    } catch {
+      token.user = undefined;
+    }
     await zoomOAuthStore.save(token);
     response.json(zoomOAuthStore.getStatus());
   } catch (error) {
@@ -60,7 +64,11 @@ app.post("/api/zoom/refresh-token", async (_request, response, next) => {
 
     const client = new ZoomOAuthClient(getZoomConfig());
     const token = await client.refreshToken(currentToken.refreshToken);
-    token.user = await client.getCurrentUser(token.accessToken, token.apiUrl);
+    try {
+      token.user = await client.getCurrentUser(token.accessToken, token.apiUrl);
+    } catch {
+      token.user = currentToken.user;
+    }
     await zoomOAuthStore.save(token);
     response.json(zoomOAuthStore.getStatus());
   } catch (error) {
