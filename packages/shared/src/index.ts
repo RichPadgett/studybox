@@ -165,6 +165,12 @@ export interface ZoomDeviceAuthorization {
   expiresAt: string;
 }
 
+export interface ZoomZakStatus {
+  available: boolean;
+  expiresAt?: string;
+  tokenLength?: number;
+}
+
 export interface MeetingService {
   getState(): MeetingState;
   startMeeting(): Promise<MeetingState>;

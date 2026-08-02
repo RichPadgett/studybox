@@ -105,6 +105,17 @@ export class ZoomOAuthClient {
     };
   }
 
+  async getZak(accessToken: string, apiUrl = "https://api.zoom.us"): Promise<string> {
+    const response = await fetch(`${apiUrl}/v2/users/me/zak`, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`
+      }
+    });
+
+    const body = await parseZoomResponse<{ token: string }>(response);
+    return body.token;
+  }
+
   private toTokenSet(body: ZoomTokenResponse): ZoomOAuthTokenSet {
     return {
       accessToken: body.access_token,

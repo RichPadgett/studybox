@@ -6,6 +6,7 @@ import { getZoomConfig, getZoomRuntimeStatus } from "./zoomConfig.js";
 import { ZoomOAuthClient } from "./zoomOAuthClient.js";
 import { ZoomOAuthStore } from "./zoomOAuthStore.js";
 import { createZoomSdkJwt } from "./zoomSdkJwt.js";
+import { ZoomZakService } from "./zoomZakService.js";
 
 const port = Number(process.env.PORT ?? 4000);
 const app = express();
@@ -71,6 +72,14 @@ app.post("/api/zoom/refresh-token", async (_request, response, next) => {
     }
     await zoomOAuthStore.save(token);
     response.json(zoomOAuthStore.getStatus());
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/zoom/zak/status", async (_request, response, next) => {
+  try {
+    response.json(await new ZoomZakService().getZakStatus());
   } catch (error) {
     next(error);
   }

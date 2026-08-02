@@ -19,6 +19,8 @@ curl --request POST 'http://localhost:4000/api/zoom/device-token' \
 
 curl --request POST 'http://localhost:4000/api/zoom/refresh-token'
 
+curl --request GET 'http://localhost:4000/api/zoom/zak/status'
+
 # Appliance controls.
 
 curl --request POST 'http://localhost:4000/api/buttons/page'
