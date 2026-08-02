@@ -39,6 +39,15 @@ export interface Recording {
   endedAt?: string;
   durationSeconds: number;
   sizeBytes: number;
+  downloadFileName?: string;
+  downloadMimeType?: string;
+}
+
+export interface RecordingDownload {
+  recording: Recording;
+  fileName: string;
+  mimeType: string;
+  contentBase64: string;
 }
 
 export interface PodcastState {
@@ -210,6 +219,7 @@ export interface PodcastService {
   resumeRecording(): Promise<PodcastState>;
   stopRecording(): Promise<PodcastState>;
   listRecordings(): Promise<Recording[]>;
+  getRecordingDownload(recordingId: string): Promise<RecordingDownload | undefined>;
 }
 
 export interface SchedulerService {

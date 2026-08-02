@@ -4,6 +4,7 @@ import {
   AudioLines,
   ClipboardList,
   Disc3,
+  Download,
   Gauge,
   Hand,
   KeyRound,
@@ -18,7 +19,7 @@ import {
   Users
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { getSnapshot, loginAdmin, pollZoomDeviceToken, postAction, refreshZoomToken, saveSettings, setAdminToken, startZoomDeviceAuthorization } from "./api.js";
+import { downloadRecording, getSnapshot, loginAdmin, pollZoomDeviceToken, postAction, refreshZoomToken, saveSettings, setAdminToken, startZoomDeviceAuthorization } from "./api.js";
 
 const navItems = [
   { id: "dashboard", label: "Dashboard", icon: Gauge },
@@ -167,7 +168,7 @@ export function App() {
             {activeNav === "meeting" ? <Meeting snapshot={snapshot} run={run} /> : null}
             {activeNav === "podcast" ? <Podcast snapshot={snapshot} run={run} /> : null}
             {activeNav === "audio" ? <Audio snapshot={snapshot} /> : null}
-            {activeNav === "recordings" ? <Recordings snapshot={snapshot} /> : null}
+            {activeNav === "recordings" ? <Recordings snapshot={snapshot} adminUnlocked={adminUnlocked} setError={setError} /> : null}
             {activeNav === "settings" ? <SettingsView snapshot={snapshot} saving={saving} save={persistSettings} adminUnlocked={adminUnlocked} /> : null}
             {activeNav === "diagnostics" ? <Diagnostics snapshot={snapshot} /> : null}
             {activeNav === "logs" ? <Logs logs={snapshot.logs} /> : null}
@@ -196,7 +197,7 @@ function Dashboard({ snapshot, run }: { snapshot: StudyBoxSnapshot; run: (path: 
       <div className="toolbar">
         <Command icon={<Users size={17} />} label={snapshot.meeting.status === "live" ? "End Meeting" : "Start Meeting"} onClick={() => run(snapshot.meeting.status === "live" ? "/api/meeting/end" : "/api/meeting/start")} />
         <Command icon={<Mic size={17} />} label={podcastPrimaryAction(snapshot)} onClick={() => run(podcastPrimaryPath(snapshot))} />
-        <Command icon={<Square size={17} />} label="Stop Recording" onClick={() => run("/api/podcast/stop")} disabled={snapshot.podcast.status === "idle"} />
+        <Command icon={<Square size={17} />} label="Finish Recording" onClick={() => run("/api/podcast/stop")} disabled={snapshot.podcast.status === "idle"} />
       </div>
       <Meeting snapshot={snapshot} run={run} compact />
     </div>
@@ -280,7 +281,7 @@ function Podcast({ snapshot, run }: { snapshot: StudyBoxSnapshot; run: (path: st
       </div>
       <div className="toolbar">
         <Command icon={<Mic size={17} />} label={podcastPrimaryAction(snapshot)} onClick={() => run(podcastPrimaryPath(snapshot))} />
-        <Command icon={<Square size={17} />} label="Stop Recording" onClick={() => run("/api/podcast/stop")} disabled={snapshot.podcast.status === "idle"} />
+        <Command icon={<Square size={17} />} label="Finish Recording" onClick={() => run("/api/podcast/stop")} disabled={snapshot.podcast.status === "idle"} />
       </div>
     </div>
   );
@@ -303,14 +304,33 @@ function Audio({ snapshot }: { snapshot: StudyBoxSnapshot }) {
   );
 }
 
-function Recordings({ snapshot }: { snapshot: StudyBoxSnapshot }) {
+function Recordings({ snapshot, adminUnlocked, setError }: { snapshot: StudyBoxSnapshot; adminUnlocked: boolean; setError: (error?: string) => void }) {
+  async function download(recordingId: string) {
+    if (!adminUnlocked) {
+      setError("Enter the admin PIN before downloading recordings.");
+      return;
+    }
+
+    try {
+      await downloadRecording(recordingId);
+      setError(undefined);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Recording download failed");
+    }
+  }
+
   return (
     <Panel title="Recordings">
       <List empty="No recordings">
         {snapshot.podcast.recordings.map((recording) => (
           <li key={recording.id}>
-            <span>{recording.title}</span>
-            <small>{formatDuration(recording.durationSeconds)} · {formatBytes(recording.sizeBytes)}</small>
+            <span className="listMain">
+              <span>{recording.title}</span>
+              <small>{formatDuration(recording.durationSeconds)} · {formatBytes(recording.sizeBytes)}</small>
+            </span>
+            <button className="inlineButton" onClick={() => void download(recording.id)} disabled={!adminUnlocked}>
+              <Download size={14} /> Download
+            </button>
           </li>
         ))}
       </List>

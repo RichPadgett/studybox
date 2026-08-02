@@ -18,6 +18,14 @@ The React app talks only to the Express API. The API owns service orchestration,
 
 The UI never imports GPIO, OLED, Zoom, podcast, or scheduler implementations directly. That separation is intentional: real ARM64 hardware and Zoom work should replace implementations behind existing interfaces rather than changing UI behavior.
 
+## Recording Lifecycle
+
+Podcast recording is independent from the Zoom meeting lifecycle. A single Zoom meeting may contain multiple audio recording sessions.
+
+Within one recording session, pause and resume continue writing to the same logical audio file. The recording is not available for download until the operator finishes it. Finishing a recording closes that file and adds it to the Recordings page. The next start creates a new audio file, even if the Zoom meeting is still live.
+
+The web admin downloads recordings through the API. The UI should never read local audio files directly; the real recorder should replace the mock download implementation behind `PodcastService`.
+
 ## Development
 
 ```bash

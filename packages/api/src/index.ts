@@ -230,6 +230,25 @@ app.post("/api/podcast/stop", requireAdmin, async (_request, response, next) => 
   }
 });
 
+app.get("/api/podcast/recordings/:recordingId/download", requireAdmin, async (request, response, next) => {
+  try {
+    const download = await appliance.getRecordingDownload(request.params.recordingId);
+    if (!download) {
+      response.status(404).json({ error: "Recording not found" });
+      return;
+    }
+
+    const content = Buffer.from(download.contentBase64, "base64");
+    response
+      .setHeader("Content-Type", download.mimeType)
+      .setHeader("Content-Length", content.length.toString())
+      .setHeader("Content-Disposition", `attachment; filename="${download.fileName}"`)
+      .send(content);
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.put("/api/settings", requireAdmin, async (request, response, next) => {
   try {
     response.json(await appliance.updateSettings(request.body));

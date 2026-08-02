@@ -5,7 +5,7 @@ import { MissingZoomRunnerClient, MockMeetingService, ZoomMeetingService } from 
 import { MockOledDisplay } from "@studybox/oled";
 import { MockPodcastService } from "@studybox/podcast";
 import { MockSchedulerService } from "@studybox/scheduler";
-import type { LogEntry, MeetingService, OledPageId, StudyBoxSettings, StudyBoxSnapshot, SystemMetrics, SystemStatus } from "@studybox/shared";
+import type { LogEntry, MeetingService, OledPageId, RecordingDownload, StudyBoxSettings, StudyBoxSnapshot, SystemMetrics, SystemStatus } from "@studybox/shared";
 import { SettingsStore } from "./settingsStore.js";
 import { getZoomConfig, getZoomRuntimeStatus } from "./zoomConfig.js";
 import { ZoomRunnerProcessClient } from "./zoomRunnerProcessClient.js";
@@ -152,6 +152,14 @@ export class StudyBoxAppliance {
     this.log("podcast", "info", "Recording stopped");
     await this.syncLeds();
     return this.snapshot();
+  }
+
+  async getRecordingDownload(recordingId: string): Promise<RecordingDownload | undefined> {
+    const download = await this.podcast.getRecordingDownload(recordingId);
+    if (download) {
+      this.log("podcast", "info", `Recording download prepared: ${download.fileName}`);
+    }
+    return download;
   }
 
   recordExternalLog(source: LogEntry["source"], level: LogEntry["level"], message: string): StudyBoxSnapshot {

@@ -46,16 +46,45 @@ export async function refreshZoomToken(): Promise<ZoomOAuthStatus> {
   return request<ZoomOAuthStatus>("/api/zoom/refresh-token", { method: "POST" });
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const headers = new Headers(init?.headers);
-  if (adminToken) {
-    headers.set("Authorization", `Bearer ${adminToken}`);
+export async function downloadRecording(recordingId: string): Promise<void> {
+  const response = await fetch(`/api/podcast/recordings/${encodeURIComponent(recordingId)}/download`, {
+    headers: authorizedHeaders()
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
   }
 
+  const blob = await response.blob();
+  const fileName = getDownloadFileName(response.headers.get("Content-Disposition")) ?? `${recordingId}.wav`;
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers = authorizedHeaders(init?.headers);
   const response = await fetch(path, { ...init, headers });
   if (!response.ok) {
     throw new Error(await response.text());
   }
 
   return response.json() as Promise<T>;
+}
+
+function authorizedHeaders(headersInit?: HeadersInit): Headers {
+  const headers = new Headers(headersInit);
+  if (adminToken) {
+    headers.set("Authorization", `Bearer ${adminToken}`);
+  }
+  return headers;
+}
+
+function getDownloadFileName(contentDisposition: string | null): string | undefined {
+  const match = contentDisposition?.match(/filename="?(?<fileName>[^";]+)"?/);
+  return match?.groups?.fileName;
 }

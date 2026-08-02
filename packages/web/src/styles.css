@@ -274,7 +274,8 @@ h1 {
   padding: 0 13px;
 }
 
-.command:disabled {
+.command:disabled,
+.inlineButton:disabled {
   background: #9caaa3;
   cursor: not-allowed;
 }
@@ -307,6 +308,12 @@ h1 {
 
 .list small {
   color: #65766d;
+}
+
+.listMain {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
 }
 
 .inlineButton {
