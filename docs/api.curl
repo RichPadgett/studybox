@@ -21,6 +21,16 @@ curl --request POST 'http://localhost:4000/api/zoom/refresh-token'
 
 curl --request GET 'http://localhost:4000/api/zoom/zak/status'
 
+curl --request POST 'http://localhost:4000/api/zoom/webhooks' \
+  --header 'Content-Type: application/json' \
+  --data '{
+    "event": "endpoint.url_validation",
+    "event_ts": 1785690000000,
+    "payload": {
+      "plainToken": "local-validation-test"
+    }
+  }'
+
 # Appliance controls.
 
 curl --request POST 'http://localhost:4000/api/buttons/page'
@@ -37,9 +47,17 @@ curl --request POST 'http://localhost:4000/api/meeting/waiting/w1/admit'
 
 curl --request POST 'http://localhost:4000/api/meeting/raised-hands/p3/dismiss'
 
+curl --request POST 'http://localhost:4000/api/meeting/raised-hands/p3/allow'
+
+curl --request POST 'http://localhost:4000/api/meeting/participants/p3/mute'
+
 curl --request POST 'http://localhost:4000/api/meeting/waiting/runner-w1/admit'
 
 curl --request POST 'http://localhost:4000/api/meeting/raised-hands/runner-p2/dismiss'
+
+curl --request POST 'http://localhost:4000/api/meeting/raised-hands/runner-p2/allow'
+
+curl --request POST 'http://localhost:4000/api/meeting/participants/runner-p2/mute'
 
 curl --request POST 'http://localhost:4000/api/podcast/start'
 

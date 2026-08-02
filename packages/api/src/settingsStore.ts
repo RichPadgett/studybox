@@ -13,6 +13,12 @@ export const defaultSettings: StudyBoxSettings = {
     autoStartMeeting: true,
     autoStartRecording: true
   },
+  moderation: {
+    mode: "moderated",
+    joinMuted: true,
+    raiseHandRequired: true,
+    assistantApprovesSpeakers: true
+  },
   zoom: {
     meetingNumber: "",
     displayName: "StudyBox",

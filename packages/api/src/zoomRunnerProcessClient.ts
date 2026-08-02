@@ -1,6 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface } from "node:readline";
-import type { MeetingState, ZoomRunnerCommand, ZoomRunnerResponse } from "@studybox/shared";
+import type { MeetingModerationMode, MeetingState, ZoomRunnerCommand, ZoomRunnerResponse } from "@studybox/shared";
 import type { ZoomMeetingRunnerClient } from "@studybox/meeting";
 import { projectPath } from "./paths.js";
 
@@ -15,6 +15,7 @@ export class ZoomRunnerProcessClient implements ZoomMeetingRunnerClient {
   private state: MeetingState = {
     status: "idle",
     title: "Weekly Bible Study",
+    moderationMode: "moderated",
     participants: [],
     waitingRoom: [],
     raisedHands: [],
@@ -38,6 +39,18 @@ export class ZoomRunnerProcessClient implements ZoomMeetingRunnerClient {
 
   async dismissRaisedHand(participantId: string): Promise<void> {
     await this.send({ id: createId(), type: "dismissRaisedHand", participantId });
+  }
+
+  async allowParticipantToSpeak(participantId: string): Promise<void> {
+    await this.send({ id: createId(), type: "allowParticipantToSpeak", participantId });
+  }
+
+  async muteParticipant(participantId: string): Promise<void> {
+    await this.send({ id: createId(), type: "muteParticipant", participantId });
+  }
+
+  async setModerationMode(mode: MeetingModerationMode): Promise<void> {
+    await this.send({ id: createId(), type: "setModerationMode", mode });
   }
 
   async getState(): Promise<MeetingState> {

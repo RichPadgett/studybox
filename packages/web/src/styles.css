@@ -261,6 +261,17 @@ h1 {
   padding: 0 9px;
 }
 
+.inlineButton.secondary {
+  background: #66766e;
+}
+
+.inlineActions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
 .recordingSurface {
   align-items: center;
   background: #ffffff;

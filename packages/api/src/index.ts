@@ -7,6 +7,7 @@ import { ZoomOAuthClient } from "./zoomOAuthClient.js";
 import { ZoomOAuthStore } from "./zoomOAuthStore.js";
 import { createZoomSdkJwt } from "./zoomSdkJwt.js";
 import { ZoomZakService } from "./zoomZakService.js";
+import { createValidationResponse, toWebhookRecord, verifyZoomWebhookSignature, webhookRecordToLog, type ZoomWebhookBody } from "./zoomWebhook.js";
 
 const port = Number(process.env.PORT ?? 4000);
 const app = express();
@@ -14,7 +15,11 @@ const appliance = new StudyBoxAppliance(new SettingsStore());
 const zoomOAuthStore = new ZoomOAuthStore();
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({
+  verify: (request, _response, buffer) => {
+    (request as express.Request & { rawBody?: string }).rawBody = buffer.toString("utf8");
+  }
+}));
 
 app.get("/api/snapshot", (_request, response) => {
   response.json(appliance.snapshot());
@@ -22,6 +27,30 @@ app.get("/api/snapshot", (_request, response) => {
 
 app.get("/api/zoom/status", (_request, response) => {
   response.json(getZoomRuntimeStatus());
+});
+
+app.post("/api/zoom/webhooks", (request, response, next) => {
+  try {
+    const body = request.body as ZoomWebhookBody;
+    const config = getZoomConfig();
+
+    if (body.event === "endpoint.url_validation") {
+      response.json(createValidationResponse(body, config));
+      return;
+    }
+
+    const rawBody = (request as express.Request & { rawBody?: string }).rawBody ?? JSON.stringify(request.body);
+    if (!verifyZoomWebhookSignature(request.headers, rawBody, config)) {
+      response.status(401).json({ error: "Invalid Zoom webhook signature" });
+      return;
+    }
+
+    const log = webhookRecordToLog(toWebhookRecord(body));
+    appliance.recordExternalLog(log.source, log.level, log.message);
+    response.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
 });
 
 app.post("/api/zoom/device-authorization", async (_request, response, next) => {
@@ -139,6 +168,22 @@ app.post("/api/meeting/waiting/:participantId/admit", async (request, response, 
 app.post("/api/meeting/raised-hands/:participantId/dismiss", async (request, response, next) => {
   try {
     response.json(await appliance.dismissRaisedHand(request.params.participantId));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/meeting/raised-hands/:participantId/allow", async (request, response, next) => {
+  try {
+    response.json(await appliance.allowParticipantToSpeak(request.params.participantId));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/meeting/participants/:participantId/mute", async (request, response, next) => {
+  try {
+    response.json(await appliance.muteParticipant(request.params.participantId));
   } catch (error) {
     next(error);
   }

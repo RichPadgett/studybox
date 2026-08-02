@@ -6,21 +6,29 @@ export type RecLedState = "solid" | "blinking" | "off";
 
 export type ParticipantStatus = "joined" | "waiting" | "raised-hand";
 
+export type ParticipantAudioState = "muted" | "allowed-to-speak" | "speaking";
+
+export type MeetingModerationMode = "moderated" | "open" | "trusted-speakers";
+
 export interface Participant {
   id: string;
   displayName: string;
   status: ParticipantStatus;
+  audioState?: ParticipantAudioState;
+  trustedSpeaker?: boolean;
   joinedAt?: string;
 }
 
 export interface MeetingState {
   status: "idle" | "starting" | "live" | "ending" | "error";
   title: string;
+  moderationMode: MeetingModerationMode;
   meetingId?: string;
   startedAt?: string;
   participants: Participant[];
   waitingRoom: Participant[];
   raisedHands: Participant[];
+  activeSpeaker?: Participant;
   lastEvent?: string;
 }
 
@@ -65,6 +73,13 @@ export interface MeetingSchedule {
   autoStartRecording: boolean;
 }
 
+export interface MeetingModerationSettings {
+  mode: MeetingModerationMode;
+  joinMuted: boolean;
+  raiseHandRequired: boolean;
+  assistantApprovesSpeakers: boolean;
+}
+
 export interface ZoomSettings {
   meetingNumber: string;
   displayName: string;
@@ -98,6 +113,7 @@ export interface WifiSettings {
 
 export interface StudyBoxSettings {
   schedule: MeetingSchedule;
+  moderation: MeetingModerationSettings;
   zoom: ZoomSettings;
   audio: AudioSettings;
   wifi: WifiSettings;
@@ -177,6 +193,9 @@ export interface MeetingService {
   endMeeting(): Promise<MeetingState>;
   admitParticipant(participantId: string): Promise<MeetingState>;
   dismissRaisedHand(participantId: string): Promise<MeetingState>;
+  allowParticipantToSpeak(participantId: string): Promise<MeetingState>;
+  muteParticipant(participantId: string): Promise<MeetingState>;
+  setModerationMode(mode: MeetingModerationMode): Promise<MeetingState>;
 }
 
 export interface PodcastService {
@@ -220,6 +239,9 @@ export type ZoomRunnerCommand =
   | { id: string; type: "endMeeting" }
   | { id: string; type: "admitParticipant"; participantId: string }
   | { id: string; type: "dismissRaisedHand"; participantId: string }
+  | { id: string; type: "allowParticipantToSpeak"; participantId: string }
+  | { id: string; type: "muteParticipant"; participantId: string }
+  | { id: string; type: "setModerationMode"; mode: MeetingModerationMode }
   | { id: string; type: "getState" };
 
 export type ZoomRunnerResponse =

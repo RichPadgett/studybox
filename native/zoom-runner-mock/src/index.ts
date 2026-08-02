@@ -3,8 +3,8 @@ import { createInterface } from "node:readline";
 import type { MeetingState, Participant, ZoomRunnerCommand, ZoomRunnerEvent, ZoomRunnerResponse } from "@studybox/shared";
 
 const initialParticipants: Participant[] = [
-  { id: "runner-p1", displayName: "Runner Mary", status: "joined", joinedAt: new Date().toISOString() },
-  { id: "runner-p2", displayName: "Runner David", status: "raised-hand", joinedAt: new Date().toISOString() }
+  { id: "runner-p1", displayName: "Runner Mary", status: "joined", audioState: "muted", joinedAt: new Date().toISOString() },
+  { id: "runner-p2", displayName: "Runner David", status: "raised-hand", audioState: "muted", joinedAt: new Date().toISOString() }
 ];
 
 const initialWaitingRoom: Participant[] = [
@@ -14,6 +14,7 @@ const initialWaitingRoom: Participant[] = [
 let state: MeetingState = {
   status: "idle",
   title: "Weekly Bible Study",
+  moderationMode: "moderated",
   participants: [],
   waitingRoom: [],
   raisedHands: [],
@@ -75,6 +76,7 @@ async function execute(command: ZoomRunnerCommand): Promise<ZoomRunnerResponse> 
       participants: [],
       waitingRoom: [],
       raisedHands: [],
+      activeSpeaker: undefined,
       lastEvent: "Mock runner ended meeting"
     };
     emit({ type: "meeting.state", state });
@@ -104,6 +106,53 @@ async function execute(command: ZoomRunnerCommand): Promise<ZoomRunnerResponse> 
       ),
       raisedHands: state.raisedHands.filter((participant) => participant.id !== command.participantId),
       lastEvent: "Raised hand dismissed by mock runner"
+    };
+    emit({ type: "meeting.state", state });
+    return { id: command.id, ok: true, state };
+  }
+
+  if (command.type === "allowParticipantToSpeak") {
+    const participant = state.participants.find((item) => item.id === command.participantId);
+    if (participant) {
+      const speaker: Participant = {
+        ...participant,
+        status: "joined",
+        audioState: "allowed-to-speak"
+      };
+      state = {
+        ...state,
+        participants: state.participants.map((item) => item.id === command.participantId ? speaker : item),
+        raisedHands: state.raisedHands.filter((item) => item.id !== command.participantId),
+        activeSpeaker: speaker,
+        lastEvent: `${participant.displayName} allowed to speak by mock runner`
+      };
+      emit({ type: "meeting.state", state });
+    }
+    return { id: command.id, ok: true, state };
+  }
+
+  if (command.type === "muteParticipant") {
+    const participant = state.participants.find((item) => item.id === command.participantId);
+    state = {
+      ...state,
+      participants: state.participants.map((item) => item.id === command.participantId ? { ...item, audioState: "muted" } : item),
+      activeSpeaker: state.activeSpeaker?.id === command.participantId ? undefined : state.activeSpeaker,
+      lastEvent: participant ? `${participant.displayName} muted by mock runner` : "Participant muted by mock runner"
+    };
+    emit({ type: "meeting.state", state });
+    return { id: command.id, ok: true, state };
+  }
+
+  if (command.type === "setModerationMode") {
+    state = {
+      ...state,
+      moderationMode: command.mode,
+      participants: state.participants.map((participant) => ({
+        ...participant,
+        audioState: command.mode === "open" || participant.trustedSpeaker ? "allowed-to-speak" : "muted"
+      })),
+      activeSpeaker: undefined,
+      lastEvent: `Moderation mode set to ${command.mode} by mock runner`
     };
     emit({ type: "meeting.state", state });
     return { id: command.id, ok: true, state };

@@ -112,6 +112,20 @@ export class StudyBoxAppliance {
     return this.snapshot();
   }
 
+  async allowParticipantToSpeak(participantId: string): Promise<StudyBoxSnapshot> {
+    await this.meeting.allowParticipantToSpeak(participantId);
+    this.log("meeting", "info", "Participant allowed to speak");
+    await this.syncLeds();
+    return this.snapshot();
+  }
+
+  async muteParticipant(participantId: string): Promise<StudyBoxSnapshot> {
+    await this.meeting.muteParticipant(participantId);
+    this.log("meeting", "info", "Participant muted");
+    await this.syncLeds();
+    return this.snapshot();
+  }
+
   async startRecording(): Promise<StudyBoxSnapshot> {
     await this.podcast.startRecording();
     this.log("podcast", "info", "Recording started");
@@ -140,10 +154,26 @@ export class StudyBoxAppliance {
     return this.snapshot();
   }
 
+  recordExternalLog(source: LogEntry["source"], level: LogEntry["level"], message: string): StudyBoxSnapshot {
+    this.log(source, level, message);
+    return this.snapshot();
+  }
+
   private async executeCurrentPageAction(): Promise<void> {
     const pageId: OledPageId = this.oled.getCurrentPage().id;
+    const meeting = this.meeting.getState();
+    if (meeting.activeSpeaker) {
+      await this.muteParticipant(meeting.activeSpeaker.id);
+      return;
+    }
+
+    if (meeting.raisedHands[0]) {
+      await this.allowParticipantToSpeak(meeting.raisedHands[0].id);
+      return;
+    }
+
     if (pageId === "meeting") {
-      if (this.meeting.getState().status === "live") {
+      if (meeting.status === "live") {
         await this.endMeeting();
       } else {
         await this.startMeeting();

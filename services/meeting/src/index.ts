@@ -1,9 +1,9 @@
-import type { MeetingService, MeetingState, Participant } from "@studybox/shared";
+import type { MeetingModerationMode, MeetingService, MeetingState, Participant } from "@studybox/shared";
 
 const initialParticipants: Participant[] = [
-  { id: "p1", displayName: "Mary Johnson", status: "joined", joinedAt: new Date().toISOString() },
-  { id: "p2", displayName: "David Lee", status: "joined", joinedAt: new Date().toISOString() },
-  { id: "p3", displayName: "Anna Smith", status: "raised-hand", joinedAt: new Date().toISOString() }
+  { id: "p1", displayName: "Mary Johnson", status: "joined", audioState: "muted", joinedAt: new Date().toISOString() },
+  { id: "p2", displayName: "David Lee", status: "joined", audioState: "muted", joinedAt: new Date().toISOString() },
+  { id: "p3", displayName: "Anna Smith", status: "raised-hand", audioState: "muted", joinedAt: new Date().toISOString() }
 ];
 
 const initialWaitingRoom: Participant[] = [
@@ -14,6 +14,7 @@ export class MockMeetingService implements MeetingService {
   private state: MeetingState = {
     status: "idle",
     title: "Weekly Bible Study",
+    moderationMode: "moderated",
     participants: [],
     waitingRoom: [],
     raisedHands: [],
@@ -48,6 +49,7 @@ export class MockMeetingService implements MeetingService {
       participants: [],
       waitingRoom: [],
       raisedHands: [],
+      activeSpeaker: undefined,
       lastEvent: "Meeting ended"
     };
     return this.state;
@@ -62,6 +64,7 @@ export class MockMeetingService implements MeetingService {
     const admitted: Participant = {
       ...participant,
       status: "joined",
+      audioState: this.state.moderationMode === "open" ? "allowed-to-speak" : "muted",
       joinedAt: new Date().toISOString()
     };
 
@@ -85,6 +88,53 @@ export class MockMeetingService implements MeetingService {
     };
     return this.state;
   }
+
+  async allowParticipantToSpeak(participantId: string): Promise<MeetingState> {
+    const participant = this.state.participants.find((item) => item.id === participantId);
+    if (!participant) {
+      return this.state;
+    }
+
+    const speaker: Participant = {
+      ...participant,
+      status: "joined",
+      audioState: "allowed-to-speak"
+    };
+
+    this.state = {
+      ...this.state,
+      participants: this.state.participants.map((item) => item.id === participantId ? speaker : { ...item, audioState: item.audioState === "speaking" ? "muted" : item.audioState }),
+      raisedHands: this.state.raisedHands.filter((item) => item.id !== participantId),
+      activeSpeaker: speaker,
+      lastEvent: `${participant.displayName} allowed to speak`
+    };
+    return this.state;
+  }
+
+  async muteParticipant(participantId: string): Promise<MeetingState> {
+    const participant = this.state.participants.find((item) => item.id === participantId);
+    this.state = {
+      ...this.state,
+      participants: this.state.participants.map((item) => item.id === participantId ? { ...item, audioState: "muted" } : item),
+      activeSpeaker: this.state.activeSpeaker?.id === participantId ? undefined : this.state.activeSpeaker,
+      lastEvent: participant ? `${participant.displayName} muted` : "Participant muted"
+    };
+    return this.state;
+  }
+
+  async setModerationMode(mode: MeetingModerationMode): Promise<MeetingState> {
+    this.state = {
+      ...this.state,
+      moderationMode: mode,
+      participants: this.state.participants.map((participant) => ({
+        ...participant,
+        audioState: mode === "open" || participant.trustedSpeaker ? "allowed-to-speak" : "muted"
+      })),
+      activeSpeaker: undefined,
+      lastEvent: `Moderation mode set to ${mode}`
+    };
+    return this.state;
+  }
 }
 
 export interface ZoomMeetingRunnerClient {
@@ -92,6 +142,9 @@ export interface ZoomMeetingRunnerClient {
   endMeeting(): Promise<void>;
   admitParticipant(participantId: string): Promise<void>;
   dismissRaisedHand(participantId: string): Promise<void>;
+  allowParticipantToSpeak(participantId: string): Promise<void>;
+  muteParticipant(participantId: string): Promise<void>;
+  setModerationMode(mode: MeetingModerationMode): Promise<void>;
   getState(): Promise<MeetingState>;
 }
 
@@ -99,6 +152,7 @@ export class ZoomMeetingService implements MeetingService {
   private state: MeetingState = {
     status: "idle",
     title: "Weekly Bible Study",
+    moderationMode: "moderated",
     participants: [],
     waitingRoom: [],
     raisedHands: [],
@@ -141,6 +195,21 @@ export class ZoomMeetingService implements MeetingService {
     return this.refreshState();
   }
 
+  async allowParticipantToSpeak(participantId: string): Promise<MeetingState> {
+    await this.runner.allowParticipantToSpeak(participantId);
+    return this.refreshState();
+  }
+
+  async muteParticipant(participantId: string): Promise<MeetingState> {
+    await this.runner.muteParticipant(participantId);
+    return this.refreshState();
+  }
+
+  async setModerationMode(mode: MeetingModerationMode): Promise<MeetingState> {
+    await this.runner.setModerationMode(mode);
+    return this.refreshState();
+  }
+
   private async refreshState(): Promise<MeetingState> {
     this.state = await this.runner.getState();
     return this.state;
@@ -164,10 +233,23 @@ export class MissingZoomRunnerClient implements ZoomMeetingRunnerClient {
     throw new Error("Zoom runner is not available. Build and configure the ARM64 Meeting SDK runner first.");
   }
 
+  async allowParticipantToSpeak(_participantId: string): Promise<void> {
+    throw new Error("Zoom runner is not available. Build and configure the ARM64 Meeting SDK runner first.");
+  }
+
+  async muteParticipant(_participantId: string): Promise<void> {
+    throw new Error("Zoom runner is not available. Build and configure the ARM64 Meeting SDK runner first.");
+  }
+
+  async setModerationMode(_mode: MeetingModerationMode): Promise<void> {
+    throw new Error("Zoom runner is not available. Build and configure the ARM64 Meeting SDK runner first.");
+  }
+
   async getState(): Promise<MeetingState> {
     return {
       status: "error",
       title: "Weekly Bible Study",
+      moderationMode: "moderated",
       participants: [],
       waitingRoom: [],
       raisedHands: [],

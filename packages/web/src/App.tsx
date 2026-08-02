@@ -164,6 +164,15 @@ function Dashboard({ snapshot, run }: { snapshot: StudyBoxSnapshot; run: (path: 
 function Meeting({ snapshot, run, compact = false }: { snapshot: StudyBoxSnapshot; run: (path: string) => Promise<void>; compact?: boolean }) {
   return (
     <div className="stack">
+      <div className="metricGrid compactMetrics">
+        <Metric label="Moderation" value={snapshot.meeting.moderationMode} detail="default meeting mode" />
+        <Metric label="Remote Speaker" value={snapshot.meeting.activeSpeaker?.displayName ?? "None"} detail={snapshot.meeting.activeSpeaker ? "ACTION mutes speaker" : "raised hand required"} />
+      </div>
+      {snapshot.meeting.activeSpeaker ? (
+        <div className="toolbar">
+          <Command icon={<Mic size={17} />} label={`Mute ${snapshot.meeting.activeSpeaker.displayName}`} onClick={() => run(`/api/meeting/participants/${snapshot.meeting.activeSpeaker?.id}/mute`)} />
+        </div>
+      ) : null}
       {!compact ? (
         <div className="toolbar">
           <Command icon={<Users size={17} />} label={snapshot.meeting.status === "live" ? "End Meeting" : "Start Meeting"} onClick={() => run(snapshot.meeting.status === "live" ? "/api/meeting/end" : "/api/meeting/start")} />
@@ -176,17 +185,22 @@ function Meeting({ snapshot, run, compact = false }: { snapshot: StudyBoxSnapsho
               <li key={participant.id}>
                 <span>{participant.displayName}</span>
                 {participant.status === "raised-hand" ? (
-                  <button className="inlineButton" onClick={() => run(`/api/meeting/raised-hands/${participant.id}/dismiss`)}>
-                    <Hand size={14} /> Clear
-                  </button>
+                  <span className="inlineActions">
+                    <button className="inlineButton" onClick={() => run(`/api/meeting/raised-hands/${participant.id}/allow`)}>
+                      <Mic size={14} /> Allow
+                    </button>
+                    <button className="inlineButton secondary" onClick={() => run(`/api/meeting/raised-hands/${participant.id}/dismiss`)}>
+                      <Hand size={14} /> Clear
+                    </button>
+                  </span>
                 ) : (
-                  <small>Joined</small>
+                  <small>{participant.audioState ?? "joined"}</small>
                 )}
               </li>
             ))}
           </List>
         </Panel>
-        <Panel title="Waiting Room">
+      <Panel title="Waiting Room">
           <List empty="No one waiting">
             {snapshot.meeting.waitingRoom.map((participant) => (
               <li key={participant.id}>
@@ -197,7 +211,19 @@ function Meeting({ snapshot, run, compact = false }: { snapshot: StudyBoxSnapsho
               </li>
             ))}
           </List>
-        </Panel>
+      </Panel>
+      <Panel title="Raised Hands">
+        <List empty="No raised hands">
+          {snapshot.meeting.raisedHands.map((participant) => (
+            <li key={participant.id}>
+              <span>{participant.displayName}</span>
+              <button className="inlineButton" onClick={() => run(`/api/meeting/raised-hands/${participant.id}/allow`)}>
+                Allow to Speak
+              </button>
+            </li>
+          ))}
+        </List>
+      </Panel>
       </div>
     </div>
   );
