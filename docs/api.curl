@@ -99,7 +99,7 @@ curl --request POST 'http://localhost:4000/api/podcast/stop' \
 
 curl --request GET 'http://localhost:4000/api/podcast/recordings/rec-001/download' \
   --header 'Authorization: Bearer paste-admin-token' \
-  --output bible-study-recording.wav
+  --output bible-study-YYYY-MM-DD-HH-MM.wav
 
 curl --request PUT 'http://localhost:4000/api/settings' \
   --header 'Authorization: Bearer paste-admin-token' \

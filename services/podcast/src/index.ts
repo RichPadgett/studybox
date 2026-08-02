@@ -1,5 +1,7 @@
 import type { PodcastService, PodcastState, Recording, RecordingDownload } from "@studybox/shared";
 
+const previousRecordingStartedAt = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+
 export class MockPodcastService implements PodcastService {
   private state: PodcastState = {
     status: "idle",
@@ -7,12 +9,12 @@ export class MockPodcastService implements PodcastService {
     recordings: [
       {
         id: "rec-001",
-        title: "Bible Study - Previous Week",
-        startedAt: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
+        title: formatRecordingTitle(previousRecordingStartedAt),
+        startedAt: previousRecordingStartedAt,
         endedAt: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000 + 4_200_000).toISOString(),
         durationSeconds: 4200,
         sizeBytes: 86_500_000,
-        downloadFileName: "bible-study-previous-week.wav",
+        downloadFileName: formatRecordingFileName(previousRecordingStartedAt),
         downloadMimeType: "audio/wav"
       }
     ],
@@ -34,10 +36,11 @@ export class MockPodcastService implements PodcastService {
       return this.getState();
     }
 
+    const startedAt = new Date().toISOString();
     const recording: Recording = {
       id: `rec-${Date.now()}`,
-      title: "Bible Study Recording",
-      startedAt: new Date().toISOString(),
+      title: formatRecordingTitle(startedAt),
+      startedAt,
       durationSeconds: 0,
       sizeBytes: 0
     };
@@ -95,7 +98,7 @@ export class MockPodcastService implements PodcastService {
       endedAt: new Date().toISOString(),
       durationSeconds,
       sizeBytes: Math.max(1, durationSeconds) * 21_000,
-      downloadFileName: `${slugify(this.state.activeRecording.title)}-${new Date().toISOString().slice(0, 10)}.wav`,
+      downloadFileName: formatRecordingFileName(this.state.activeRecording.startedAt),
       downloadMimeType: "audio/wav"
     };
 
@@ -124,7 +127,7 @@ export class MockPodcastService implements PodcastService {
 
     return {
       recording,
-      fileName: recording.downloadFileName ?? `${slugify(recording.title)}.wav`,
+      fileName: recording.downloadFileName ?? formatRecordingFileName(recording.startedAt),
       mimeType: recording.downloadMimeType ?? "audio/wav",
       contentBase64: createSilentWavBase64()
     };
@@ -139,11 +142,28 @@ export class MockPodcastService implements PodcastService {
   }
 }
 
-function slugify(value: string): string {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "") || "recording";
+function formatRecordingTitle(startedAt: string): string {
+  const date = new Date(startedAt);
+  const datePart = date.toLocaleDateString("en-US", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric"
+  });
+  const timePart = date.toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit"
+  });
+  return `Bible Study ${datePart} ${timePart}`;
+}
+
+function formatRecordingFileName(startedAt: string): string {
+  const date = new Date(startedAt);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hour = String(date.getHours()).padStart(2, "0");
+  const minute = String(date.getMinutes()).padStart(2, "0");
+  return `bible-study-${year}-${month}-${day}-${hour}-${minute}.wav`;
 }
 
 function createSilentWavBase64(): string {
