@@ -86,3 +86,92 @@ export class MockMeetingService implements MeetingService {
     return this.state;
   }
 }
+
+export interface ZoomMeetingRunnerClient {
+  startMeeting(): Promise<void>;
+  endMeeting(): Promise<void>;
+  admitParticipant(participantId: string): Promise<void>;
+  dismissRaisedHand(participantId: string): Promise<void>;
+  getState(): Promise<MeetingState>;
+}
+
+export class ZoomMeetingService implements MeetingService {
+  private state: MeetingState = {
+    status: "idle",
+    title: "Weekly Bible Study",
+    participants: [],
+    waitingRoom: [],
+    raisedHands: [],
+    lastEvent: "Zoom runner adapter initialized"
+  };
+
+  constructor(private readonly runner: ZoomMeetingRunnerClient) {}
+
+  getState(): MeetingState {
+    return this.state;
+  }
+
+  async startMeeting(): Promise<MeetingState> {
+    this.state = {
+      ...this.state,
+      status: "starting",
+      lastEvent: "Starting Zoom meeting through runner"
+    };
+    await this.runner.startMeeting();
+    return this.refreshState();
+  }
+
+  async endMeeting(): Promise<MeetingState> {
+    this.state = {
+      ...this.state,
+      status: "ending",
+      lastEvent: "Ending Zoom meeting through runner"
+    };
+    await this.runner.endMeeting();
+    return this.refreshState();
+  }
+
+  async admitParticipant(participantId: string): Promise<MeetingState> {
+    await this.runner.admitParticipant(participantId);
+    return this.refreshState();
+  }
+
+  async dismissRaisedHand(participantId: string): Promise<MeetingState> {
+    await this.runner.dismissRaisedHand(participantId);
+    return this.refreshState();
+  }
+
+  private async refreshState(): Promise<MeetingState> {
+    this.state = await this.runner.getState();
+    return this.state;
+  }
+}
+
+export class MissingZoomRunnerClient implements ZoomMeetingRunnerClient {
+  async startMeeting(): Promise<void> {
+    throw new Error("Zoom runner is not available. Build and configure the ARM64 Meeting SDK runner first.");
+  }
+
+  async endMeeting(): Promise<void> {
+    throw new Error("Zoom runner is not available. Build and configure the ARM64 Meeting SDK runner first.");
+  }
+
+  async admitParticipant(_participantId: string): Promise<void> {
+    throw new Error("Zoom runner is not available. Build and configure the ARM64 Meeting SDK runner first.");
+  }
+
+  async dismissRaisedHand(_participantId: string): Promise<void> {
+    throw new Error("Zoom runner is not available. Build and configure the ARM64 Meeting SDK runner first.");
+  }
+
+  async getState(): Promise<MeetingState> {
+    return {
+      status: "error",
+      title: "Weekly Bible Study",
+      participants: [],
+      waitingRoom: [],
+      raisedHands: [],
+      lastEvent: "Zoom runner missing"
+    };
+  }
+}

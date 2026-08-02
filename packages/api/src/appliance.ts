@@ -1,15 +1,16 @@
 import { MockAudioDevice } from "@studybox/audio";
 import { MockButtonController } from "@studybox/buttons";
 import { MockLedController } from "@studybox/led";
-import { MockMeetingService } from "@studybox/meeting";
+import { MissingZoomRunnerClient, MockMeetingService, ZoomMeetingService } from "@studybox/meeting";
 import { MockOledDisplay } from "@studybox/oled";
 import { MockPodcastService } from "@studybox/podcast";
 import { MockSchedulerService } from "@studybox/scheduler";
-import type { LogEntry, OledPageId, StudyBoxSettings, StudyBoxSnapshot, SystemMetrics, SystemStatus } from "@studybox/shared";
+import type { LogEntry, MeetingService, OledPageId, StudyBoxSettings, StudyBoxSnapshot, SystemMetrics, SystemStatus } from "@studybox/shared";
 import { SettingsStore } from "./settingsStore.js";
+import { getZoomConfig, getZoomRuntimeStatus } from "./zoomConfig.js";
 
 export class StudyBoxAppliance {
-  readonly meeting = new MockMeetingService();
+  readonly meeting: MeetingService;
   readonly podcast = new MockPodcastService();
   readonly scheduler = new MockSchedulerService();
   readonly audio = new MockAudioDevice();
@@ -31,7 +32,10 @@ export class StudyBoxAppliance {
 
   private logs: LogEntry[] = [];
 
-  constructor(private readonly settingsStore: SettingsStore) {}
+  constructor(private readonly settingsStore: SettingsStore) {
+    const zoomConfig = getZoomConfig();
+    this.meeting = zoomConfig.meetingMode === "runner" ? new ZoomMeetingService(new MissingZoomRunnerClient()) : new MockMeetingService();
+  }
 
   async initialize(): Promise<void> {
     await this.settingsStore.load();
@@ -44,6 +48,7 @@ export class StudyBoxAppliance {
     return {
       systemStatus: this.getSystemStatus(),
       meeting: this.meeting.getState(),
+      zoom: getZoomRuntimeStatus(),
       podcast: this.podcast.getState(),
       oled: {
         currentPageId: this.oled.getCurrentPage().id,

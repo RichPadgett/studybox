@@ -15,7 +15,11 @@ export const defaultSettings: StudyBoxSettings = {
   zoom: {
     meetingNumber: "",
     displayName: "StudyBox",
-    sdkSecretConfigured: false
+    clientIdConfigured: false,
+    sdkSecretConfigured: false,
+    webhookSecretConfigured: false,
+    redirectUri: "https://studybox.enochscalendar.com/zoom/oauth/callback",
+    deviceOAuthEnabled: true
   },
   audio: {
     inputDevice: "DJI Mic Receiver (Mock)",

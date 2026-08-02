@@ -2,6 +2,8 @@ import cors from "cors";
 import express from "express";
 import { StudyBoxAppliance } from "./appliance.js";
 import { SettingsStore } from "./settingsStore.js";
+import { getZoomConfig, getZoomRuntimeStatus } from "./zoomConfig.js";
+import { createZoomSdkJwt } from "./zoomSdkJwt.js";
 
 const port = Number(process.env.PORT ?? 4000);
 const app = express();
@@ -12,6 +14,21 @@ app.use(express.json());
 
 app.get("/api/snapshot", (_request, response) => {
   response.json(appliance.snapshot());
+});
+
+app.get("/api/zoom/status", (_request, response) => {
+  response.json(getZoomRuntimeStatus());
+});
+
+app.post("/api/zoom/sdk-jwt", (_request, response, next) => {
+  try {
+    response.json({
+      token: createZoomSdkJwt(getZoomConfig()),
+      expiresInSeconds: 7200
+    });
+  } catch (error) {
+    next(error);
+  }
 });
 
 app.post("/api/buttons/page", async (_request, response, next) => {

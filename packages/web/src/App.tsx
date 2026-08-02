@@ -268,6 +268,15 @@ function SettingsView({ snapshot, saving, save }: { snapshot: StudyBoxSnapshot; 
         <div className="formGrid">
           <label>Meeting Number<input value={draft.zoom.meetingNumber} onChange={(event) => setDraft({ ...draft, zoom: { ...draft.zoom, meetingNumber: event.target.value } })} /></label>
           <label>Display Name<input value={draft.zoom.displayName} onChange={(event) => setDraft({ ...draft, zoom: { ...draft.zoom, displayName: event.target.value } })} /></label>
+          <label>Redirect URI<input value={draft.zoom.redirectUri ?? ""} onChange={(event) => setDraft({ ...draft, zoom: { ...draft.zoom, redirectUri: event.target.value } })} /></label>
+        </div>
+      </Panel>
+      <Panel title="Zoom Runtime">
+        <div className="metricGrid compactMetrics">
+          <Metric label="Mode" value={snapshot.zoom.mode} detail="env controlled" />
+          <Metric label="SDK Arch" value={snapshot.zoom.sdkArch} detail="target package" />
+          <Metric label="Credentials" value={snapshot.zoom.configured ? "Ready" : "Missing"} detail="Client ID and secret" />
+          <Metric label="Runner" value={snapshot.zoom.runnerAvailable ? "Available" : "Missing"} detail={snapshot.zoom.runnerPath ?? "Not configured"} />
         </div>
       </Panel>
       <div className="toolbar">
@@ -279,11 +288,19 @@ function SettingsView({ snapshot, saving, save }: { snapshot: StudyBoxSnapshot; 
 
 function Diagnostics({ snapshot }: { snapshot: StudyBoxSnapshot }) {
   return (
-    <div className="metricGrid">
-      <Metric label="CPU" value={`${snapshot.metrics.cpuPercent}%`} detail="mock telemetry" />
-      <Metric label="SSD" value={`${snapshot.metrics.ssdPercent}%`} detail="NVMe storage" />
-      <Metric label="WiFi" value={snapshot.metrics.wifiConnected ? "Connected" : "Offline"} detail={snapshot.settings.wifi.ssid || "Ethernet preferred"} />
-      <Metric label="Temperature" value={`${snapshot.metrics.temperatureC}C`} detail="Pi active cooler" />
+    <div className="stack">
+      <div className="metricGrid">
+        <Metric label="CPU" value={`${snapshot.metrics.cpuPercent}%`} detail="mock telemetry" />
+        <Metric label="SSD" value={`${snapshot.metrics.ssdPercent}%`} detail="NVMe storage" />
+        <Metric label="WiFi" value={snapshot.metrics.wifiConnected ? "Connected" : "Offline"} detail={snapshot.settings.wifi.ssid || "Ethernet preferred"} />
+        <Metric label="Temperature" value={`${snapshot.metrics.temperatureC}C`} detail="Pi active cooler" />
+      </div>
+      <div className="metricGrid">
+        <Metric label="Zoom Mode" value={snapshot.zoom.mode} detail={snapshot.zoom.configured ? "credentials loaded" : "credentials missing"} />
+        <Metric label="SDK Arch" value={snapshot.zoom.sdkArch} detail="Pi target is linux-arm64" />
+        <Metric label="Webhook" value={snapshot.zoom.webhookSecretConfigured ? "Configured" : "Missing"} detail="event verification token" />
+        <Metric label="Runner" value={snapshot.zoom.runnerAvailable ? "Available" : "Missing"} detail="native process bridge" />
+      </div>
     </div>
   );
 }

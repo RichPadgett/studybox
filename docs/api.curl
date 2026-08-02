@@ -3,6 +3,14 @@
 
 curl --request GET 'http://localhost:4000/api/snapshot'
 
+# Zoom readiness and SDK auth helpers.
+
+curl --request GET 'http://localhost:4000/api/zoom/status'
+
+curl --request POST 'http://localhost:4000/api/zoom/sdk-jwt'
+
+# Appliance controls.
+
 curl --request POST 'http://localhost:4000/api/buttons/page'
 
 curl --request POST 'http://localhost:4000/api/buttons/action'
@@ -36,7 +44,11 @@ curl --request PUT 'http://localhost:4000/api/settings' \
     "zoom": {
       "meetingNumber": "123456789",
       "displayName": "StudyBox",
-      "sdkSecretConfigured": false
+      "clientIdConfigured": true,
+      "sdkSecretConfigured": true,
+      "webhookSecretConfigured": true,
+      "redirectUri": "https://studybox.enochscalendar.com/zoom/oauth/callback",
+      "deviceOAuthEnabled": true
     },
     "audio": {
       "inputDevice": "DJI Mic Receiver (Mock)",

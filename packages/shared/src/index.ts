@@ -68,8 +68,11 @@ export interface MeetingSchedule {
 export interface ZoomSettings {
   meetingNumber: string;
   displayName: string;
-  sdkKey?: string;
+  clientIdConfigured?: boolean;
   sdkSecretConfigured: boolean;
+  webhookSecretConfigured?: boolean;
+  redirectUri?: string;
+  deviceOAuthEnabled?: boolean;
 }
 
 export interface AudioSettings {
@@ -113,6 +116,7 @@ export interface LogEntry {
 export interface StudyBoxSnapshot {
   systemStatus: SystemStatus;
   meeting: MeetingState;
+  zoom: ZoomRuntimeStatus;
   podcast: PodcastState;
   oled: {
     currentPageId: OledPageId;
@@ -121,6 +125,19 @@ export interface StudyBoxSnapshot {
   metrics: SystemMetrics;
   settings: StudyBoxSettings;
   logs: LogEntry[];
+}
+
+export interface ZoomRuntimeStatus {
+  mode: "mock" | "runner";
+  configured: boolean;
+  clientIdConfigured: boolean;
+  clientSecretConfigured: boolean;
+  webhookSecretConfigured: boolean;
+  redirectUri?: string;
+  runnerPath?: string;
+  runnerAvailable: boolean;
+  sdkArch: "linux-arm64" | "linux-x86_64" | "unknown";
+  lastError?: string;
 }
 
 export interface MeetingService {
