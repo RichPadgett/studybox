@@ -60,7 +60,7 @@ export class StudyBoxAppliance {
     const zoomConfig = getZoomConfig();
     this.backup = new MockBackupSyncService({
       queuePath: projectPath("data", "backup-queue.json"),
-      bundleDir: projectPath("data", "backup-bundles"),
+      bundleDir: process.env.STUDYBOX_BACKUP_DIR ?? projectPath("data", "backup-bundles"),
       target: process.env.STUDYBOX_BACKUP_REPO ?? "hetzner:studybox-backup",
       mode: process.env.STUDYBOX_BACKUP_MODE === "hetzner-repo" ? "hetzner-repo" : "mock"
     });
