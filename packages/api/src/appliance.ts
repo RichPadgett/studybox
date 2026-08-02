@@ -5,10 +5,21 @@ import { MissingZoomRunnerClient, MockMeetingService, ZoomMeetingService } from 
 import { MockOledDisplay } from "@studybox/oled";
 import { MockPodcastService } from "@studybox/podcast";
 import { MockSchedulerService } from "@studybox/scheduler";
-import type { LogEntry, MeetingService, OledPageId, RecordingDownload, StudyBoxSettings, StudyBoxSnapshot, SystemMetrics, SystemStatus } from "@studybox/shared";
+import type { LogEntry, LogLevel, LogResult, LogSource, MeetingService, OledPageId, RecordingDownload, StudyBoxSettings, StudyBoxSnapshot, SystemMetrics, SystemStatus } from "@studybox/shared";
+import { LogStore } from "./logStore.js";
 import { SettingsStore } from "./settingsStore.js";
 import { getZoomConfig, getZoomRuntimeStatus } from "./zoomConfig.js";
 import { ZoomRunnerProcessClient } from "./zoomRunnerProcessClient.js";
+
+export interface ActionContext {
+  actor?: string;
+  source?: LogSource;
+}
+
+export interface AuditContext extends ActionContext {
+  action?: string;
+  details?: Record<string, string | number | boolean | undefined>;
+}
 
 export class StudyBoxAppliance {
   readonly meeting: MeetingService;
@@ -24,16 +35,24 @@ export class StudyBoxAppliance {
   readonly buttons = new MockButtonController(
     async () => {
       const page = await this.oled.nextPage();
-      this.log("hal", "info", `Page button selected ${page.title}`);
+      await this.log({
+        source: "button",
+        level: "info",
+        action: "button.page",
+        result: "success",
+        message: `Page button selected ${page.title}`,
+        details: { pageId: page.id, pageTitle: page.title }
+      });
     },
     async () => {
       await this.executeCurrentPageAction();
     }
   );
 
-  private logs: LogEntry[] = [];
-
-  constructor(private readonly settingsStore: SettingsStore) {
+  constructor(
+    private readonly settingsStore: SettingsStore,
+    private readonly logStore: LogStore
+  ) {
     const zoomConfig = getZoomConfig();
     this.meeting = zoomConfig.meetingMode === "runner"
       ? new ZoomMeetingService(
@@ -46,9 +65,16 @@ export class StudyBoxAppliance {
 
   async initialize(): Promise<void> {
     await this.settingsStore.load();
+    await this.logStore.load();
     await this.oled.render(this.oled.getCurrentPage());
     await this.syncLeds();
-    this.log("system", "info", "StudyBox mock appliance initialized");
+    await this.log({
+      source: "system",
+      level: "info",
+      action: "system.initialize",
+      result: "success",
+      message: "StudyBox mock appliance initialized"
+    });
   }
 
   snapshot(): StudyBoxSnapshot {
@@ -63,14 +89,21 @@ export class StudyBoxAppliance {
       },
       metrics: this.getMetrics(),
       settings: this.settingsStore.get(),
-      logs: this.logs.slice(0, 100)
+      logs: this.logStore.get(100)
     };
   }
 
-  async updateSettings(settings: StudyBoxSettings): Promise<StudyBoxSettings> {
+  async updateSettings(settings: StudyBoxSettings, context: ActionContext = {}): Promise<StudyBoxSettings> {
     const saved = await this.settingsStore.save(settings);
     await this.scheduler.updateSchedule(saved.schedule);
-    this.log("system", "info", "Settings saved");
+    await this.log({
+      source: context.source ?? "web",
+      actor: context.actor,
+      level: "info",
+      action: "settings.save",
+      result: "success",
+      message: "Settings saved"
+    });
     return saved;
   }
 
@@ -84,86 +117,86 @@ export class StudyBoxAppliance {
     return this.snapshot();
   }
 
-  async startMeeting(): Promise<StudyBoxSnapshot> {
+  async startMeeting(context: ActionContext = {}): Promise<StudyBoxSnapshot> {
     await this.meeting.startMeeting();
-    this.log("meeting", "info", "Meeting started");
+    await this.logAction("meeting.start", "Meeting started", context);
     await this.syncLeds();
     return this.snapshot();
   }
 
-  async endMeeting(): Promise<StudyBoxSnapshot> {
+  async endMeeting(context: ActionContext = {}): Promise<StudyBoxSnapshot> {
     await this.meeting.endMeeting();
-    this.log("meeting", "info", "Meeting ended");
+    await this.logAction("meeting.end", "Meeting ended", context);
     await this.syncLeds();
     return this.snapshot();
   }
 
-  async admitParticipant(participantId: string): Promise<StudyBoxSnapshot> {
+  async admitParticipant(participantId: string, context: ActionContext = {}): Promise<StudyBoxSnapshot> {
     await this.meeting.admitParticipant(participantId);
-    this.log("meeting", "info", "Participant admitted");
+    await this.logAction("meeting.participant.admit", "Participant admitted", context, { participantId });
     await this.syncLeds();
     return this.snapshot();
   }
 
-  async dismissRaisedHand(participantId: string): Promise<StudyBoxSnapshot> {
+  async dismissRaisedHand(participantId: string, context: ActionContext = {}): Promise<StudyBoxSnapshot> {
     await this.meeting.dismissRaisedHand(participantId);
-    this.log("meeting", "info", "Raised hand dismissed");
+    await this.logAction("meeting.raisedHand.dismiss", "Raised hand dismissed", context, { participantId });
     await this.syncLeds();
     return this.snapshot();
   }
 
-  async allowParticipantToSpeak(participantId: string): Promise<StudyBoxSnapshot> {
+  async allowParticipantToSpeak(participantId: string, context: ActionContext = {}): Promise<StudyBoxSnapshot> {
     await this.meeting.allowParticipantToSpeak(participantId);
-    this.log("meeting", "info", "Participant allowed to speak");
+    await this.logAction("meeting.participant.allowToSpeak", "Participant allowed to speak", context, { participantId });
     await this.syncLeds();
     return this.snapshot();
   }
 
-  async muteParticipant(participantId: string): Promise<StudyBoxSnapshot> {
+  async muteParticipant(participantId: string, context: ActionContext = {}): Promise<StudyBoxSnapshot> {
     await this.meeting.muteParticipant(participantId);
-    this.log("meeting", "info", "Participant muted");
+    await this.logAction("meeting.participant.mute", "Participant muted", context, { participantId });
     await this.syncLeds();
     return this.snapshot();
   }
 
-  async startRecording(): Promise<StudyBoxSnapshot> {
+  async startRecording(context: ActionContext = {}): Promise<StudyBoxSnapshot> {
     await this.podcast.startRecording();
-    this.log("podcast", "info", "Recording started");
+    await this.logAction("podcast.recording.start", "Recording started", context);
     await this.syncLeds();
     return this.snapshot();
   }
 
-  async pauseRecording(): Promise<StudyBoxSnapshot> {
+  async pauseRecording(context: ActionContext = {}): Promise<StudyBoxSnapshot> {
     await this.podcast.pauseRecording();
-    this.log("podcast", "info", "Recording paused");
+    await this.logAction("podcast.recording.pause", "Recording paused", context);
     await this.syncLeds();
     return this.snapshot();
   }
 
-  async resumeRecording(): Promise<StudyBoxSnapshot> {
+  async resumeRecording(context: ActionContext = {}): Promise<StudyBoxSnapshot> {
     await this.podcast.resumeRecording();
-    this.log("podcast", "info", "Recording resumed");
+    await this.logAction("podcast.recording.resume", "Recording resumed", context);
     await this.syncLeds();
     return this.snapshot();
   }
 
-  async stopRecording(): Promise<StudyBoxSnapshot> {
+  async stopRecording(context: ActionContext = {}): Promise<StudyBoxSnapshot> {
     await this.podcast.stopRecording();
-    this.log("podcast", "info", "Recording stopped");
+    await this.logAction("podcast.recording.finish", "Recording finished", context);
     await this.syncLeds();
     return this.snapshot();
   }
 
-  async getRecordingDownload(recordingId: string): Promise<RecordingDownload | undefined> {
+  async getRecordingDownload(recordingId: string, context: ActionContext = {}): Promise<RecordingDownload | undefined> {
     const download = await this.podcast.getRecordingDownload(recordingId);
     if (download) {
-      this.log("podcast", "info", `Recording download prepared: ${download.fileName}`);
+      await this.logAction("podcast.recording.download", `Recording download prepared: ${download.fileName}`, context, { recordingId, fileName: download.fileName });
     }
     return download;
   }
 
-  recordExternalLog(source: LogEntry["source"], level: LogEntry["level"], message: string): StudyBoxSnapshot {
-    this.log(source, level, message);
+  async recordAudit(context: AuditContext & { source: LogSource; level: LogLevel; message: string; result?: LogResult }): Promise<StudyBoxSnapshot> {
+    await this.log(context);
     return this.snapshot();
   }
 
@@ -171,20 +204,20 @@ export class StudyBoxAppliance {
     const pageId: OledPageId = this.oled.getCurrentPage().id;
     const meeting = this.meeting.getState();
     if (meeting.activeSpeaker) {
-      await this.muteParticipant(meeting.activeSpeaker.id);
+      await this.muteParticipant(meeting.activeSpeaker.id, { source: "button" });
       return;
     }
 
     if (meeting.raisedHands[0]) {
-      await this.allowParticipantToSpeak(meeting.raisedHands[0].id);
+      await this.allowParticipantToSpeak(meeting.raisedHands[0].id, { source: "button" });
       return;
     }
 
     if (pageId === "meeting") {
       if (meeting.status === "live") {
-        await this.endMeeting();
+        await this.endMeeting({ source: "button" });
       } else {
-        await this.startMeeting();
+        await this.startMeeting({ source: "button" });
       }
       return;
     }
@@ -192,16 +225,23 @@ export class StudyBoxAppliance {
     if (pageId === "podcast") {
       const podcast = this.podcast.getState();
       if (podcast.status === "recording") {
-        await this.pauseRecording();
+        await this.pauseRecording({ source: "button" });
       } else if (podcast.status === "paused") {
-        await this.resumeRecording();
+        await this.resumeRecording({ source: "button" });
       } else {
-        await this.startRecording();
+        await this.startRecording({ source: "button" });
       }
       return;
     }
 
-    this.log("hal", "info", "Action button has no action on this page");
+    await this.log({
+      source: "button",
+      level: "info",
+      action: "button.action.noop",
+      result: "success",
+      message: "Action button has no action on this page",
+      details: { pageId }
+    });
   }
 
   private getSystemStatus(): SystemStatus {
@@ -233,13 +273,27 @@ export class StudyBoxAppliance {
     await this.leds.setRecording(recordingStatus === "recording" ? "solid" : recordingStatus === "paused" ? "blinking" : "off");
   }
 
-  private log(source: LogEntry["source"], level: LogEntry["level"], message: string): void {
-    this.logs.unshift({
-      id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-      timestamp: new Date().toISOString(),
-      source,
-      level,
-      message
+  private async logAction(action: string, message: string, context: ActionContext = {}, details?: Record<string, string | number | boolean | undefined>): Promise<void> {
+    await this.log({
+      source: context.source ?? "web",
+      actor: context.actor,
+      level: "info",
+      action,
+      result: "success",
+      message,
+      details
     });
+  }
+
+  private async log(input: {
+    source: LogSource;
+    level: LogLevel;
+    message: string;
+    action?: string;
+    actor?: string;
+    result?: LogResult;
+    details?: Record<string, string | number | boolean | undefined>;
+  }): Promise<LogEntry> {
+    return this.logStore.append(input);
   }
 }

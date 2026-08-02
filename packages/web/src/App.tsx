@@ -518,8 +518,18 @@ function Logs({ logs }: { logs: LogEntry[] }) {
       <List empty="No logs yet">
         {logs.map((log) => (
           <li key={log.id}>
-            <span>{log.message}</span>
-            <small>{log.source} · {new Date(log.timestamp).toLocaleTimeString()}</small>
+            <span className="logMain">
+              <span className="logHeader">
+                <strong>{log.message}</strong>
+                {log.result ? <em className={`logResult ${log.result}`}>{log.result}</em> : null}
+              </span>
+              <small>
+                {new Date(log.timestamp).toLocaleTimeString()} · {log.source}
+                {log.actor ? ` · ${log.actor}` : ""}
+                {log.action ? ` · ${log.action}` : ""}
+              </small>
+              {log.details ? <small>{formatLogDetails(log.details)}</small> : null}
+            </span>
           </li>
         ))}
       </List>
@@ -615,6 +625,13 @@ function formatDuration(seconds: number): string {
 
 function formatBytes(bytes: number): string {
   return `${(bytes / 1_000_000).toFixed(1)} MB`;
+}
+
+function formatLogDetails(details: Record<string, string | number | boolean | undefined>): string {
+  return Object.entries(details)
+    .filter((entry): entry is [string, string | number | boolean] => entry[1] !== undefined)
+    .map(([key, value]) => `${key}: ${value}`)
+    .join(" · ");
 }
 
 function isAdminSessionActive(session?: AdminSession): boolean {

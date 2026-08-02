@@ -130,12 +130,20 @@ export interface StudyBoxSettings {
   oled: OledSettings;
 }
 
+export type LogSource = "system" | "web" | "button" | "meeting" | "podcast" | "hal" | "scheduler" | "zoom-webhook" | "zoom-runner";
+export type LogLevel = "info" | "warn" | "error";
+export type LogResult = "success" | "failure";
+
 export interface LogEntry {
   id: string;
   timestamp: string;
-  level: "info" | "warn" | "error";
-  source: "system" | "meeting" | "podcast" | "hal" | "scheduler";
+  level: LogLevel;
+  source: LogSource;
   message: string;
+  action?: string;
+  actor?: string;
+  result?: LogResult;
+  details?: Record<string, string | number | boolean | undefined>;
 }
 
 export interface StudyBoxSnapshot {

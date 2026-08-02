@@ -26,6 +26,12 @@ Within one recording session, pause and resume continue writing to the same logi
 
 The web admin downloads recordings through the API. The UI should never read local audio files directly; the real recorder should replace the mock download implementation behind `PodcastService`.
 
+## Audit Logs And Remote Sync
+
+StudyBox keeps a local persisted audit log under `data/`. The log records appliance actions such as admin login, meeting controls, recording controls, download requests, settings saves, button actions, and Zoom webhook activity.
+
+When remote sync is added, the Pi should continue operating locally during the meeting and upload finalized session bundles afterward. A bundle should include the completed mixed-audio recording, the audit log entries for that recording session, and metadata such as start time, end time, duration, and file name. Uploads should use a retry queue so travel, unplugging, or a network change does not interrupt the meeting or lose the session package.
+
 ## Development
 
 ```bash

@@ -316,6 +316,42 @@ h1 {
   min-width: 0;
 }
 
+.logMain {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.logHeader {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.logHeader strong {
+  font-size: 14px;
+}
+
+.logResult {
+  border-radius: 999px;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 800;
+  padding: 3px 7px;
+  text-transform: uppercase;
+}
+
+.logResult.success {
+  background: #d8f3df;
+  color: #155c2b;
+}
+
+.logResult.failure {
+  background: #ffe1dd;
+  color: #7c2016;
+}
+
 .inlineButton {
   min-height: 30px;
   padding: 0 9px;
