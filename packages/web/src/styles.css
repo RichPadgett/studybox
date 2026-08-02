@@ -94,6 +94,14 @@ nav button:hover {
   margin-bottom: 18px;
 }
 
+.topbarActions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
 h1,
 h2,
 p {
@@ -129,6 +137,51 @@ h1 {
 
 .statusPill.attention {
   background: #ffe18d;
+}
+
+.adminUnlock,
+.adminBadge {
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid #d6dfd9;
+  border-radius: 8px;
+  color: #31443a;
+  display: inline-flex;
+  gap: 8px;
+  min-height: 38px;
+  padding: 5px 6px 5px 10px;
+}
+
+.adminUnlock input {
+  border: 0;
+  border-left: 1px solid #d6dfd9;
+  color: #17211c;
+  max-width: 116px;
+  min-width: 0;
+  outline: 0;
+  padding: 0 8px;
+}
+
+.adminUnlock button,
+.adminBadge button {
+  background: #244638;
+  border: 0;
+  border-radius: 6px;
+  color: #ffffff;
+  cursor: pointer;
+  font-weight: 700;
+  min-height: 28px;
+  padding: 0 10px;
+}
+
+.adminUnlock button:disabled {
+  background: #9caaa3;
+  cursor: not-allowed;
+}
+
+.adminBadge span {
+  font-size: 13px;
+  white-space: nowrap;
 }
 
 .errorBanner {

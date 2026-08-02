@@ -181,6 +181,11 @@ export interface ZoomDeviceAuthorization {
   expiresAt: string;
 }
 
+export interface AdminSession {
+  token: string;
+  expiresAt: string;
+}
+
 export interface ZoomZakStatus {
   available: boolean;
   expiresAt?: string;

@@ -1,4 +1,18 @@
-import type { StudyBoxSettings, StudyBoxSnapshot, ZoomDeviceAuthorization, ZoomOAuthStatus } from "@studybox/shared";
+import type { AdminSession, StudyBoxSettings, StudyBoxSnapshot, ZoomDeviceAuthorization, ZoomOAuthStatus } from "@studybox/shared";
+
+let adminToken: string | undefined;
+
+export function setAdminToken(token?: string): void {
+  adminToken = token;
+}
+
+export async function loginAdmin(pin: string): Promise<AdminSession> {
+  return request<AdminSession>("/api/admin/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ pin })
+  });
+}
 
 export async function getSnapshot(): Promise<StudyBoxSnapshot> {
   return request<StudyBoxSnapshot>("/api/snapshot");
@@ -33,7 +47,12 @@ export async function refreshZoomToken(): Promise<ZoomOAuthStatus> {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, init);
+  const headers = new Headers(init?.headers);
+  if (adminToken) {
+    headers.set("Authorization", `Bearer ${adminToken}`);
+  }
+
+  const response = await fetch(path, { ...init, headers });
   if (!response.ok) {
     throw new Error(await response.text());
   }

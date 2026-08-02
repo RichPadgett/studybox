@@ -1,5 +1,6 @@
 import cors from "cors";
 import express from "express";
+import { createAdminSession, requireAdmin } from "./adminAuth.js";
 import { StudyBoxAppliance } from "./appliance.js";
 import { SettingsStore } from "./settingsStore.js";
 import { getZoomConfig, getZoomRuntimeStatus } from "./zoomConfig.js";
@@ -23,6 +24,14 @@ app.use(express.json({
 
 app.get("/api/snapshot", (_request, response) => {
   response.json(appliance.snapshot());
+});
+
+app.post("/api/admin/login", (request, response, next) => {
+  try {
+    response.json(createAdminSession(String(request.body?.pin ?? "")));
+  } catch (error) {
+    response.status(401).json({ error: error instanceof Error ? error.message : "Invalid admin PIN" });
+  }
 });
 
 app.get("/api/zoom/status", (_request, response) => {
@@ -53,7 +62,7 @@ app.post("/api/zoom/webhooks", (request, response, next) => {
   }
 });
 
-app.post("/api/zoom/device-authorization", async (_request, response, next) => {
+app.post("/api/zoom/device-authorization", requireAdmin, async (_request, response, next) => {
   try {
     const client = new ZoomOAuthClient(getZoomConfig());
     response.json(await client.requestDeviceAuthorization());
@@ -62,7 +71,7 @@ app.post("/api/zoom/device-authorization", async (_request, response, next) => {
   }
 });
 
-app.post("/api/zoom/device-token", async (request, response, next) => {
+app.post("/api/zoom/device-token", requireAdmin, async (request, response, next) => {
   try {
     const deviceCode = String(request.body?.deviceCode ?? "");
     if (!deviceCode) {
@@ -84,7 +93,7 @@ app.post("/api/zoom/device-token", async (request, response, next) => {
   }
 });
 
-app.post("/api/zoom/refresh-token", async (_request, response, next) => {
+app.post("/api/zoom/refresh-token", requireAdmin, async (_request, response, next) => {
   try {
     const currentToken = zoomOAuthStore.get();
     if (!currentToken) {
@@ -106,7 +115,7 @@ app.post("/api/zoom/refresh-token", async (_request, response, next) => {
   }
 });
 
-app.get("/api/zoom/zak/status", async (_request, response, next) => {
+app.get("/api/zoom/zak/status", requireAdmin, async (_request, response, next) => {
   try {
     response.json(await new ZoomZakService().getZakStatus());
   } catch (error) {
@@ -114,7 +123,7 @@ app.get("/api/zoom/zak/status", async (_request, response, next) => {
   }
 });
 
-app.post("/api/zoom/sdk-jwt", (_request, response, next) => {
+app.post("/api/zoom/sdk-jwt", requireAdmin, (_request, response, next) => {
   try {
     response.json({
       token: createZoomSdkJwt(getZoomConfig()),
@@ -125,7 +134,7 @@ app.post("/api/zoom/sdk-jwt", (_request, response, next) => {
   }
 });
 
-app.post("/api/buttons/page", async (_request, response, next) => {
+app.post("/api/buttons/page", requireAdmin, async (_request, response, next) => {
   try {
     response.json(await appliance.pressPage());
   } catch (error) {
@@ -133,7 +142,7 @@ app.post("/api/buttons/page", async (_request, response, next) => {
   }
 });
 
-app.post("/api/buttons/action", async (_request, response, next) => {
+app.post("/api/buttons/action", requireAdmin, async (_request, response, next) => {
   try {
     response.json(await appliance.pressAction());
   } catch (error) {
@@ -141,7 +150,7 @@ app.post("/api/buttons/action", async (_request, response, next) => {
   }
 });
 
-app.post("/api/meeting/start", async (_request, response, next) => {
+app.post("/api/meeting/start", requireAdmin, async (_request, response, next) => {
   try {
     response.json(await appliance.startMeeting());
   } catch (error) {
@@ -149,7 +158,7 @@ app.post("/api/meeting/start", async (_request, response, next) => {
   }
 });
 
-app.post("/api/meeting/end", async (_request, response, next) => {
+app.post("/api/meeting/end", requireAdmin, async (_request, response, next) => {
   try {
     response.json(await appliance.endMeeting());
   } catch (error) {
@@ -157,7 +166,7 @@ app.post("/api/meeting/end", async (_request, response, next) => {
   }
 });
 
-app.post("/api/meeting/waiting/:participantId/admit", async (request, response, next) => {
+app.post("/api/meeting/waiting/:participantId/admit", requireAdmin, async (request, response, next) => {
   try {
     response.json(await appliance.admitParticipant(request.params.participantId));
   } catch (error) {
@@ -165,7 +174,7 @@ app.post("/api/meeting/waiting/:participantId/admit", async (request, response, 
   }
 });
 
-app.post("/api/meeting/raised-hands/:participantId/dismiss", async (request, response, next) => {
+app.post("/api/meeting/raised-hands/:participantId/dismiss", requireAdmin, async (request, response, next) => {
   try {
     response.json(await appliance.dismissRaisedHand(request.params.participantId));
   } catch (error) {
@@ -173,7 +182,7 @@ app.post("/api/meeting/raised-hands/:participantId/dismiss", async (request, res
   }
 });
 
-app.post("/api/meeting/raised-hands/:participantId/allow", async (request, response, next) => {
+app.post("/api/meeting/raised-hands/:participantId/allow", requireAdmin, async (request, response, next) => {
   try {
     response.json(await appliance.allowParticipantToSpeak(request.params.participantId));
   } catch (error) {
@@ -181,7 +190,7 @@ app.post("/api/meeting/raised-hands/:participantId/allow", async (request, respo
   }
 });
 
-app.post("/api/meeting/participants/:participantId/mute", async (request, response, next) => {
+app.post("/api/meeting/participants/:participantId/mute", requireAdmin, async (request, response, next) => {
   try {
     response.json(await appliance.muteParticipant(request.params.participantId));
   } catch (error) {
@@ -189,7 +198,7 @@ app.post("/api/meeting/participants/:participantId/mute", async (request, respon
   }
 });
 
-app.post("/api/podcast/start", async (_request, response, next) => {
+app.post("/api/podcast/start", requireAdmin, async (_request, response, next) => {
   try {
     response.json(await appliance.startRecording());
   } catch (error) {
@@ -197,7 +206,7 @@ app.post("/api/podcast/start", async (_request, response, next) => {
   }
 });
 
-app.post("/api/podcast/pause", async (_request, response, next) => {
+app.post("/api/podcast/pause", requireAdmin, async (_request, response, next) => {
   try {
     response.json(await appliance.pauseRecording());
   } catch (error) {
@@ -205,7 +214,7 @@ app.post("/api/podcast/pause", async (_request, response, next) => {
   }
 });
 
-app.post("/api/podcast/resume", async (_request, response, next) => {
+app.post("/api/podcast/resume", requireAdmin, async (_request, response, next) => {
   try {
     response.json(await appliance.resumeRecording());
   } catch (error) {
@@ -213,7 +222,7 @@ app.post("/api/podcast/resume", async (_request, response, next) => {
   }
 });
 
-app.post("/api/podcast/stop", async (_request, response, next) => {
+app.post("/api/podcast/stop", requireAdmin, async (_request, response, next) => {
   try {
     response.json(await appliance.stopRecording());
   } catch (error) {
@@ -221,7 +230,7 @@ app.post("/api/podcast/stop", async (_request, response, next) => {
   }
 });
 
-app.put("/api/settings", async (request, response, next) => {
+app.put("/api/settings", requireAdmin, async (request, response, next) => {
   try {
     response.json(await appliance.updateSettings(request.body));
   } catch (error) {

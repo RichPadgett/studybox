@@ -1,24 +1,24 @@
-import type { LogEntry, OledPageId, StudyBoxSettings, StudyBoxSnapshot, ZoomDeviceAuthorization } from "@studybox/shared";
+import type { AdminSession, LogEntry, StudyBoxSettings, StudyBoxSnapshot, ZoomDeviceAuthorization } from "@studybox/shared";
 import {
   Activity,
   AudioLines,
-  CalendarClock,
   ClipboardList,
   Disc3,
   Gauge,
   Hand,
+  KeyRound,
   Mic,
   MonitorDot,
   Network,
   Radio,
   Save,
+  ShieldCheck,
   Settings,
   Square,
-  Users,
-  Wifi
+  Users
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { getSnapshot, pollZoomDeviceToken, postAction, refreshZoomToken, saveSettings, startZoomDeviceAuthorization } from "./api.js";
+import { getSnapshot, loginAdmin, pollZoomDeviceToken, postAction, refreshZoomToken, saveSettings, setAdminToken, startZoomDeviceAuthorization } from "./api.js";
 
 const navItems = [
   { id: "dashboard", label: "Dashboard", icon: Gauge },
@@ -33,12 +33,15 @@ const navItems = [
 ] as const;
 
 type NavId = (typeof navItems)[number]["id"];
+const adminSessionStorageKey = "studybox.adminSession";
 
 export function App() {
   const [snapshot, setSnapshot] = useState<StudyBoxSnapshot>();
   const [activeNav, setActiveNav] = useState<NavId>("dashboard");
   const [error, setError] = useState<string>();
   const [saving, setSaving] = useState(false);
+  const [adminSession, setAdminSession] = useState<AdminSession>();
+  const adminUnlocked = isAdminSessionActive(adminSession);
 
   async function refresh() {
     try {
@@ -50,6 +53,11 @@ export function App() {
   }
 
   async function run(path: string) {
+    if (!adminUnlocked) {
+      setError("Enter the admin PIN before using StudyBox controls.");
+      return;
+    }
+
     try {
       setSnapshot(await postAction(path));
       setError(undefined);
@@ -59,6 +67,11 @@ export function App() {
   }
 
   async function persistSettings(settings: StudyBoxSettings) {
+    if (!adminUnlocked) {
+      setError("Enter the admin PIN before saving settings.");
+      return;
+    }
+
     setSaving(true);
     try {
       await saveSettings(settings);
@@ -69,6 +82,32 @@ export function App() {
       setSaving(false);
     }
   }
+
+  async function unlockAdmin(pin: string) {
+    try {
+      const session = await loginAdmin(pin);
+      setAdminToken(session.token);
+      setAdminSession(session);
+      window.localStorage.setItem(adminSessionStorageKey, JSON.stringify(session));
+      setError(undefined);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Admin unlock failed");
+    }
+  }
+
+  function lockAdmin() {
+    setAdminSession(undefined);
+    setAdminToken(undefined);
+    window.localStorage.removeItem(adminSessionStorageKey);
+  }
+
+  useEffect(() => {
+    const stored = readStoredAdminSession();
+    if (stored) {
+      setAdminToken(stored.token);
+      setAdminSession(stored);
+    }
+  }, []);
 
   useEffect(() => {
     void refresh();
@@ -114,7 +153,10 @@ export function App() {
             <h1>{navItems.find((item) => item.id === activeNav)?.label}</h1>
             <p>{statusCopy(snapshot)}</p>
           </div>
-          <StatusPill status={snapshot.systemStatus} />
+          <div className="topbarActions">
+            <AdminUnlock session={adminSession} unlock={unlockAdmin} lock={lockAdmin} />
+            <StatusPill status={snapshot.systemStatus} />
+          </div>
         </header>
 
         {error ? <div className="errorBanner">{error}</div> : null}
@@ -126,7 +168,7 @@ export function App() {
             {activeNav === "podcast" ? <Podcast snapshot={snapshot} run={run} /> : null}
             {activeNav === "audio" ? <Audio snapshot={snapshot} /> : null}
             {activeNav === "recordings" ? <Recordings snapshot={snapshot} /> : null}
-            {activeNav === "settings" ? <SettingsView snapshot={snapshot} saving={saving} save={persistSettings} /> : null}
+            {activeNav === "settings" ? <SettingsView snapshot={snapshot} saving={saving} save={persistSettings} adminUnlocked={adminUnlocked} /> : null}
             {activeNav === "diagnostics" ? <Diagnostics snapshot={snapshot} /> : null}
             {activeNav === "logs" ? <Logs logs={snapshot.logs} /> : null}
             {activeNav === "network" ? <NetworkView snapshot={snapshot} /> : null}
@@ -276,7 +318,7 @@ function Recordings({ snapshot }: { snapshot: StudyBoxSnapshot }) {
   );
 }
 
-function SettingsView({ snapshot, saving, save }: { snapshot: StudyBoxSnapshot; saving: boolean; save: (settings: StudyBoxSettings) => Promise<void> }) {
+function SettingsView({ snapshot, saving, save, adminUnlocked }: { snapshot: StudyBoxSnapshot; saving: boolean; save: (settings: StudyBoxSettings) => Promise<void>; adminUnlocked: boolean }) {
   const [draft, setDraft] = useState(snapshot.settings);
   const [deviceAuthorization, setDeviceAuthorization] = useState<ZoomDeviceAuthorization>();
   const [authMessage, setAuthMessage] = useState<string>();
@@ -284,8 +326,12 @@ function SettingsView({ snapshot, saving, save }: { snapshot: StudyBoxSnapshot; 
   useEffect(() => setDraft(snapshot.settings), [snapshot.settings]);
 
   async function startDeviceAuthorization() {
-    setAuthMessage(undefined);
-    setDeviceAuthorization(await startZoomDeviceAuthorization());
+    try {
+      setAuthMessage(undefined);
+      setDeviceAuthorization(await startZoomDeviceAuthorization());
+    } catch (caught) {
+      setAuthMessage(caught instanceof Error ? caught.message : "Unable to start Zoom authorization");
+    }
   }
 
   async function completeDeviceAuthorization() {
@@ -293,13 +339,21 @@ function SettingsView({ snapshot, saving, save }: { snapshot: StudyBoxSnapshot; 
       return;
     }
 
-    const status = await pollZoomDeviceToken(deviceAuthorization.deviceCode);
-    setAuthMessage(status.authorized ? "Zoom account authorized" : "Authorization pending");
+    try {
+      const status = await pollZoomDeviceToken(deviceAuthorization.deviceCode);
+      setAuthMessage(status.authorized ? "Zoom account authorized" : "Authorization pending");
+    } catch (caught) {
+      setAuthMessage(caught instanceof Error ? caught.message : "Unable to poll Zoom authorization");
+    }
   }
 
   async function refreshAuthorization() {
-    const status = await refreshZoomToken();
-    setAuthMessage(status.authorized ? "Zoom token refreshed" : "Zoom authorization expired");
+    try {
+      const status = await refreshZoomToken();
+      setAuthMessage(status.authorized ? "Zoom token refreshed" : "Zoom authorization expired");
+    } catch (caught) {
+      setAuthMessage(caught instanceof Error ? caught.message : "Unable to refresh Zoom authorization");
+    }
   }
 
   return (
@@ -340,15 +394,57 @@ function SettingsView({ snapshot, saving, save }: { snapshot: StudyBoxSnapshot; 
         ) : null}
         {authMessage ? <p className="inlineNotice">{authMessage}</p> : null}
         <div className="toolbar">
-          <Command icon={<Settings size={17} />} label="Start Device OAuth" onClick={() => void startDeviceAuthorization()} disabled={!snapshot.zoom.configured} />
-          <Command icon={<Save size={17} />} label="Poll Authorization" onClick={() => void completeDeviceAuthorization()} disabled={!deviceAuthorization} />
-          <Command icon={<Activity size={17} />} label="Refresh Token" onClick={() => void refreshAuthorization()} disabled={!snapshot.zoom.oauth.authorized} />
+          <Command icon={<Settings size={17} />} label="Start Device OAuth" onClick={() => void startDeviceAuthorization()} disabled={!adminUnlocked || !snapshot.zoom.configured} />
+          <Command icon={<Save size={17} />} label="Poll Authorization" onClick={() => void completeDeviceAuthorization()} disabled={!adminUnlocked || !deviceAuthorization} />
+          <Command icon={<Activity size={17} />} label="Refresh Token" onClick={() => void refreshAuthorization()} disabled={!adminUnlocked || !snapshot.zoom.oauth.authorized} />
         </div>
       </Panel>
       <div className="toolbar">
-        <Command icon={<Save size={17} />} label={saving ? "Saving" : "Save Settings"} onClick={() => save(draft)} disabled={saving} />
+        <Command icon={<Save size={17} />} label={saving ? "Saving" : "Save Settings"} onClick={() => save(draft)} disabled={saving || !adminUnlocked} />
       </div>
     </div>
+  );
+}
+
+function AdminUnlock({ session, unlock, lock }: { session?: AdminSession; unlock: (pin: string) => Promise<void>; lock: () => void }) {
+  const [pin, setPin] = useState("");
+  const [unlocking, setUnlocking] = useState(false);
+  const active = isAdminSessionActive(session);
+
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setUnlocking(true);
+    try {
+      await unlock(pin);
+      setPin("");
+    } finally {
+      setUnlocking(false);
+    }
+  }
+
+  if (active && session) {
+    return (
+      <div className="adminBadge">
+        <ShieldCheck size={16} />
+        <span>Admin until {new Date(session.expiresAt).toLocaleTimeString()}</span>
+        <button onClick={lock}>Lock</button>
+      </div>
+    );
+  }
+
+  return (
+    <form className="adminUnlock" onSubmit={(event) => void submit(event)}>
+      <KeyRound size={16} />
+      <input
+        aria-label="Admin PIN"
+        inputMode="numeric"
+        placeholder="Admin PIN"
+        type="password"
+        value={pin}
+        onChange={(event) => setPin(event.target.value)}
+      />
+      <button disabled={unlocking || pin.trim().length === 0}>{unlocking ? "..." : "Unlock"}</button>
+    </form>
   );
 }
 
@@ -474,4 +570,27 @@ function formatDuration(seconds: number): string {
 
 function formatBytes(bytes: number): string {
   return `${(bytes / 1_000_000).toFixed(1)} MB`;
+}
+
+function isAdminSessionActive(session?: AdminSession): boolean {
+  return Boolean(session?.token && Date.parse(session.expiresAt) > Date.now());
+}
+
+function readStoredAdminSession(): AdminSession | undefined {
+  const stored = window.localStorage.getItem(adminSessionStorageKey);
+  if (!stored) {
+    return undefined;
+  }
+
+  try {
+    const session = JSON.parse(stored) as AdminSession;
+    if (isAdminSessionActive(session)) {
+      return session;
+    }
+  } catch {
+    // Ignore malformed browser storage and let the user unlock again.
+  }
+
+  window.localStorage.removeItem(adminSessionStorageKey);
+  return undefined;
 }

@@ -3,23 +3,37 @@
 
 curl --request GET 'http://localhost:4000/api/snapshot'
 
+curl --request POST 'http://localhost:4000/api/admin/login' \
+  --header 'Content-Type: application/json' \
+  --data '{
+    "pin": "364364"
+  }'
+
+# Copy the login response token into protected requests:
+# --header 'Authorization: Bearer paste-admin-token'
+
 # Zoom readiness and SDK auth helpers.
 
 curl --request GET 'http://localhost:4000/api/zoom/status'
 
-curl --request POST 'http://localhost:4000/api/zoom/sdk-jwt'
+curl --request POST 'http://localhost:4000/api/zoom/sdk-jwt' \
+  --header 'Authorization: Bearer paste-admin-token'
 
-curl --request POST 'http://localhost:4000/api/zoom/device-authorization'
+curl --request POST 'http://localhost:4000/api/zoom/device-authorization' \
+  --header 'Authorization: Bearer paste-admin-token'
 
 curl --request POST 'http://localhost:4000/api/zoom/device-token' \
+  --header 'Authorization: Bearer paste-admin-token' \
   --header 'Content-Type: application/json' \
   --data '{
     "deviceCode": "paste-device-code-from-device-authorization-response"
   }'
 
-curl --request POST 'http://localhost:4000/api/zoom/refresh-token'
+curl --request POST 'http://localhost:4000/api/zoom/refresh-token' \
+  --header 'Authorization: Bearer paste-admin-token'
 
-curl --request GET 'http://localhost:4000/api/zoom/zak/status'
+curl --request GET 'http://localhost:4000/api/zoom/zak/status' \
+  --header 'Authorization: Bearer paste-admin-token'
 
 curl --request POST 'http://localhost:4000/api/zoom/webhooks' \
   --header 'Content-Type: application/json' \
@@ -33,41 +47,58 @@ curl --request POST 'http://localhost:4000/api/zoom/webhooks' \
 
 # Appliance controls.
 
-curl --request POST 'http://localhost:4000/api/buttons/page'
+curl --request POST 'http://localhost:4000/api/buttons/page' \
+  --header 'Authorization: Bearer paste-admin-token'
 
-curl --request POST 'http://localhost:4000/api/buttons/action'
+curl --request POST 'http://localhost:4000/api/buttons/action' \
+  --header 'Authorization: Bearer paste-admin-token'
 
-curl --request POST 'http://localhost:4000/api/meeting/start'
+curl --request POST 'http://localhost:4000/api/meeting/start' \
+  --header 'Authorization: Bearer paste-admin-token'
 
-curl --request POST 'http://localhost:4000/api/meeting/end'
+curl --request POST 'http://localhost:4000/api/meeting/end' \
+  --header 'Authorization: Bearer paste-admin-token'
 
 # In runner mode, mock runner participant IDs are runner-w1 and runner-p2.
 
-curl --request POST 'http://localhost:4000/api/meeting/waiting/w1/admit'
+curl --request POST 'http://localhost:4000/api/meeting/waiting/w1/admit' \
+  --header 'Authorization: Bearer paste-admin-token'
 
-curl --request POST 'http://localhost:4000/api/meeting/raised-hands/p3/dismiss'
+curl --request POST 'http://localhost:4000/api/meeting/raised-hands/p3/dismiss' \
+  --header 'Authorization: Bearer paste-admin-token'
 
-curl --request POST 'http://localhost:4000/api/meeting/raised-hands/p3/allow'
+curl --request POST 'http://localhost:4000/api/meeting/raised-hands/p3/allow' \
+  --header 'Authorization: Bearer paste-admin-token'
 
-curl --request POST 'http://localhost:4000/api/meeting/participants/p3/mute'
+curl --request POST 'http://localhost:4000/api/meeting/participants/p3/mute' \
+  --header 'Authorization: Bearer paste-admin-token'
 
-curl --request POST 'http://localhost:4000/api/meeting/waiting/runner-w1/admit'
+curl --request POST 'http://localhost:4000/api/meeting/waiting/runner-w1/admit' \
+  --header 'Authorization: Bearer paste-admin-token'
 
-curl --request POST 'http://localhost:4000/api/meeting/raised-hands/runner-p2/dismiss'
+curl --request POST 'http://localhost:4000/api/meeting/raised-hands/runner-p2/dismiss' \
+  --header 'Authorization: Bearer paste-admin-token'
 
-curl --request POST 'http://localhost:4000/api/meeting/raised-hands/runner-p2/allow'
+curl --request POST 'http://localhost:4000/api/meeting/raised-hands/runner-p2/allow' \
+  --header 'Authorization: Bearer paste-admin-token'
 
-curl --request POST 'http://localhost:4000/api/meeting/participants/runner-p2/mute'
+curl --request POST 'http://localhost:4000/api/meeting/participants/runner-p2/mute' \
+  --header 'Authorization: Bearer paste-admin-token'
 
-curl --request POST 'http://localhost:4000/api/podcast/start'
+curl --request POST 'http://localhost:4000/api/podcast/start' \
+  --header 'Authorization: Bearer paste-admin-token'
 
-curl --request POST 'http://localhost:4000/api/podcast/pause'
+curl --request POST 'http://localhost:4000/api/podcast/pause' \
+  --header 'Authorization: Bearer paste-admin-token'
 
-curl --request POST 'http://localhost:4000/api/podcast/resume'
+curl --request POST 'http://localhost:4000/api/podcast/resume' \
+  --header 'Authorization: Bearer paste-admin-token'
 
-curl --request POST 'http://localhost:4000/api/podcast/stop'
+curl --request POST 'http://localhost:4000/api/podcast/stop' \
+  --header 'Authorization: Bearer paste-admin-token'
 
 curl --request PUT 'http://localhost:4000/api/settings' \
+  --header 'Authorization: Bearer paste-admin-token' \
   --header 'Content-Type: application/json' \
   --data '{
     "schedule": {
