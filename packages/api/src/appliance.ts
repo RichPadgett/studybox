@@ -8,6 +8,7 @@ import { MockSchedulerService } from "@studybox/scheduler";
 import type { LogEntry, MeetingService, OledPageId, StudyBoxSettings, StudyBoxSnapshot, SystemMetrics, SystemStatus } from "@studybox/shared";
 import { SettingsStore } from "./settingsStore.js";
 import { getZoomConfig, getZoomRuntimeStatus } from "./zoomConfig.js";
+import { ZoomRunnerProcessClient } from "./zoomRunnerProcessClient.js";
 
 export class StudyBoxAppliance {
   readonly meeting: MeetingService;
@@ -34,7 +35,13 @@ export class StudyBoxAppliance {
 
   constructor(private readonly settingsStore: SettingsStore) {
     const zoomConfig = getZoomConfig();
-    this.meeting = zoomConfig.meetingMode === "runner" ? new ZoomMeetingService(new MissingZoomRunnerClient()) : new MockMeetingService();
+    this.meeting = zoomConfig.meetingMode === "runner"
+      ? new ZoomMeetingService(
+          zoomConfig.runnerCommand
+            ? new ZoomRunnerProcessClient(zoomConfig.runnerCommand, zoomConfig.runnerArgs)
+            : new MissingZoomRunnerClient()
+        )
+      : new MockMeetingService();
   }
 
   async initialize(): Promise<void> {

@@ -1,0 +1,15 @@
+{
+  "name": "@studybox/zoom-runner-mock",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "studybox-zoom-runner-mock": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@studybox/shared": "0.1.0"
+  }
+}

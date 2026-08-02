@@ -13,6 +13,8 @@ export interface ZoomConfig {
   meetingMode: "mock" | "runner";
   sdkArch: "linux-arm64" | "linux-x86_64" | "unknown";
   runnerPath?: string;
+  runnerCommand?: string;
+  runnerArgs: string[];
 }
 
 export function getZoomConfig(): ZoomConfig {
@@ -25,7 +27,9 @@ export function getZoomConfig(): ZoomConfig {
     webhookSecretToken: readEnv("ZOOM_WEBHOOK_SECRET_TOKEN"),
     meetingMode: readEnv("ZOOM_MEETING_MODE") === "runner" ? "runner" : "mock",
     sdkArch: parseSdkArch(readEnv("ZOOM_SDK_ARCH")),
-    runnerPath: readEnv("ZOOM_RUNNER_PATH")
+    runnerPath: readEnv("ZOOM_RUNNER_PATH"),
+    runnerCommand: readEnv("ZOOM_RUNNER_COMMAND"),
+    runnerArgs: parseArgs(readEnv("ZOOM_RUNNER_ARGS"))
   };
 }
 
@@ -60,6 +64,10 @@ function parseSdkArch(value: string | undefined): ZoomConfig["sdkArch"] {
   }
 
   return "unknown";
+}
+
+function parseArgs(value: string | undefined): string[] {
+  return value?.split(" ").map((item) => item.trim()).filter(Boolean) ?? [];
 }
 
 let envLoaded = false;

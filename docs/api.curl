@@ -31,9 +31,15 @@ curl --request POST 'http://localhost:4000/api/meeting/start'
 
 curl --request POST 'http://localhost:4000/api/meeting/end'
 
+# In runner mode, mock runner participant IDs are runner-w1 and runner-p2.
+
 curl --request POST 'http://localhost:4000/api/meeting/waiting/w1/admit'
 
 curl --request POST 'http://localhost:4000/api/meeting/raised-hands/p3/dismiss'
+
+curl --request POST 'http://localhost:4000/api/meeting/waiting/runner-w1/admit'
+
+curl --request POST 'http://localhost:4000/api/meeting/raised-hands/runner-p2/dismiss'
 
 curl --request POST 'http://localhost:4000/api/podcast/start'
 

@@ -214,3 +214,20 @@ export interface AudioDevice {
   getInputDevices(): Promise<string[]>;
   getLevel(): Promise<number>;
 }
+
+export type ZoomRunnerCommand =
+  | { id: string; type: "startMeeting" }
+  | { id: string; type: "endMeeting" }
+  | { id: string; type: "admitParticipant"; participantId: string }
+  | { id: string; type: "dismissRaisedHand"; participantId: string }
+  | { id: string; type: "getState" };
+
+export type ZoomRunnerResponse =
+  | { id: string; ok: true; state?: MeetingState }
+  | { id: string; ok: false; error: string; state?: MeetingState };
+
+export type ZoomRunnerEvent =
+  | { type: "ready"; state: MeetingState }
+  | { type: "meeting.state"; state: MeetingState }
+  | { type: "log"; level: LogEntry["level"]; message: string }
+  | { type: "error"; message: string };
