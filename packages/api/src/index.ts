@@ -272,6 +272,30 @@ app.post("/api/meeting/participants/:participantId/podcast-inclusion", requireAd
   }
 });
 
+app.post("/api/audio/teacher-input", requireAdmin, async (request, response, next) => {
+  try {
+    response.json(await appliance.setTeacherAudioDevice(String(request.body?.deviceId ?? ""), webAdminContext));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/audio/audience-input", requireAdmin, async (request, response, next) => {
+  try {
+    response.json(await appliance.setAudienceAudioDevice(String(request.body?.deviceId ?? ""), webAdminContext));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/audio/speaker-output", requireAdmin, async (request, response, next) => {
+  try {
+    response.json(await appliance.setSpeakerAudioDevice(String(request.body?.deviceId ?? ""), webAdminContext));
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.post("/api/podcast/start", requireAdmin, async (_request, response, next) => {
   try {
     response.json(await appliance.startRecording(webAdminContext));

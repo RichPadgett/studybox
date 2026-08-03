@@ -199,6 +199,24 @@ export class StudyBoxAppliance {
     return this.snapshot();
   }
 
+  async setTeacherAudioDevice(deviceId: string, context: ActionContext = {}): Promise<StudyBoxSnapshot> {
+    await this.audio.setTeacherInputDevice(deviceId);
+    await this.logAction("audio.teacherInput.set", "Teacher audio input selected", context, { deviceId });
+    return this.snapshot();
+  }
+
+  async setAudienceAudioDevice(deviceId: string, context: ActionContext = {}): Promise<StudyBoxSnapshot> {
+    await this.audio.setAudienceInputDevice(deviceId);
+    await this.logAction("audio.audienceInput.set", "Audience audio input selected", context, { deviceId });
+    return this.snapshot();
+  }
+
+  async setSpeakerAudioDevice(deviceId: string, context: ActionContext = {}): Promise<StudyBoxSnapshot> {
+    await this.audio.setSpeakerOutputDevice(deviceId);
+    await this.logAction("audio.speakerOutput.set", "Room speaker audio output selected", context, { deviceId });
+    return this.snapshot();
+  }
+
   async startRecording(context: ActionContext = {}): Promise<StudyBoxSnapshot> {
     await this.podcast.startRecording();
     await this.logAction("podcast.recording.start", "Recording started", context);

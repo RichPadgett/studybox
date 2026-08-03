@@ -1,4 +1,4 @@
-import type { AudioDevice, AudioRoutingContext, AudioService, AudioServiceState } from "@studybox/shared";
+import type { AudioDevice, AudioDeviceOption, AudioRoutingContext, AudioService, AudioServiceState } from "@studybox/shared";
 
 export class RaspberryPiAudioDevice implements AudioDevice {
   async getInputDevices(): Promise<string[]> {
@@ -15,11 +15,11 @@ export class RaspberryPiAudioService implements AudioService {
     throw new Error("Raspberry Pi audio service implementation is not available yet.");
   }
 
-  async listInputDevices(): Promise<string[]> {
+  async listInputDevices(): Promise<AudioDeviceOption[]> {
     throw new Error("Raspberry Pi audio service implementation is not available yet.");
   }
 
-  async listOutputDevices(): Promise<string[]> {
+  async listOutputDevices(): Promise<AudioDeviceOption[]> {
     throw new Error("Raspberry Pi audio service implementation is not available yet.");
   }
 

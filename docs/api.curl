@@ -99,6 +99,27 @@ curl --request POST 'http://localhost:4000/api/meeting/participants/runner-p2/po
 curl --request POST 'http://localhost:4000/api/meeting/participants/runner-p2/mute' \
   --header 'Authorization: Bearer paste-admin-token'
 
+curl --request POST 'http://localhost:4000/api/audio/teacher-input' \
+  --header 'Authorization: Bearer paste-admin-token' \
+  --header 'Content-Type: application/json' \
+  --data '{
+    "deviceId": "dji-receiver"
+  }'
+
+curl --request POST 'http://localhost:4000/api/audio/audience-input' \
+  --header 'Authorization: Bearer paste-admin-token' \
+  --header 'Content-Type: application/json' \
+  --data '{
+    "deviceId": "conference-speakerphone-mic"
+  }'
+
+curl --request POST 'http://localhost:4000/api/audio/speaker-output' \
+  --header 'Authorization: Bearer paste-admin-token' \
+  --header 'Content-Type: application/json' \
+  --data '{
+    "deviceId": "conference-speakerphone-output"
+  }'
+
 curl --request POST 'http://localhost:4000/api/podcast/start' \
   --header 'Authorization: Bearer paste-admin-token'
 

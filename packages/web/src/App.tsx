@@ -183,7 +183,7 @@ export function App() {
             {activeNav === "dashboard" ? <Dashboard snapshot={snapshot} run={run} /> : null}
             {activeNav === "meeting" ? <Meeting snapshot={snapshot} run={run} /> : null}
             {activeNav === "podcast" ? <Podcast snapshot={snapshot} run={run} /> : null}
-            {activeNav === "audio" ? <Audio snapshot={snapshot} /> : null}
+            {activeNav === "audio" ? <Audio snapshot={snapshot} run={run} adminUnlocked={adminUnlocked} /> : null}
             {activeNav === "recordings" ? <Recordings snapshot={snapshot} adminUnlocked={adminUnlocked} setError={setError} lockAdmin={lockAdmin} /> : null}
             {activeNav === "backup" ? <BackupView snapshot={snapshot} run={run} adminUnlocked={adminUnlocked} /> : null}
             {activeNav === "settings" ? <SettingsView snapshot={snapshot} saving={saving} save={persistSettings} adminUnlocked={adminUnlocked} lockAdmin={lockAdmin} /> : null}
@@ -306,14 +306,51 @@ function Podcast({ snapshot, run }: { snapshot: StudyBoxSnapshot; run: (path: st
   );
 }
 
-function Audio({ snapshot }: { snapshot: StudyBoxSnapshot }) {
+function Audio({ snapshot, run, adminUnlocked }: { snapshot: StudyBoxSnapshot; run: (path: string, body?: unknown) => Promise<void>; adminUnlocked: boolean }) {
   return (
     <div className="stack">
+      <Panel title="Device Routing">
+        <div className="formGrid">
+          <label>Teacher Mic
+            <select
+              value={snapshot.hardware.audio.selectedTeacherInputDeviceId}
+              disabled={!adminUnlocked}
+              onChange={(event) => run("/api/audio/teacher-input", { deviceId: event.target.value })}
+            >
+              {snapshot.hardware.audio.inputDevices.map((device) => (
+                <option key={device.id} value={device.id}>{device.label}{device.connected ? "" : " (Disconnected)"}</option>
+              ))}
+            </select>
+          </label>
+          <label>Audience Mic
+            <select
+              value={snapshot.hardware.audio.selectedAudienceInputDeviceId}
+              disabled={!adminUnlocked}
+              onChange={(event) => run("/api/audio/audience-input", { deviceId: event.target.value })}
+            >
+              {snapshot.hardware.audio.inputDevices.map((device) => (
+                <option key={device.id} value={device.id}>{device.label}{device.connected ? "" : " (Disconnected)"}</option>
+              ))}
+            </select>
+          </label>
+          <label>Room Speaker
+            <select
+              value={snapshot.hardware.audio.selectedSpeakerOutputDeviceId}
+              disabled={!adminUnlocked}
+              onChange={(event) => run("/api/audio/speaker-output", { deviceId: event.target.value })}
+            >
+              {snapshot.hardware.audio.outputDevices.map((device) => (
+                <option key={device.id} value={device.id}>{device.label}{device.connected ? "" : " (Disconnected)"}</option>
+              ))}
+            </select>
+          </label>
+        </div>
+      </Panel>
       <Panel title="Input">
         <div className="formGrid">
-          <label>Device<input value={snapshot.settings.audio.inputDevice} readOnly /></label>
           <label>Gain<input value={`${snapshot.settings.audio.gain}%`} readOnly /></label>
           <label>Monitor<input value={snapshot.settings.audio.monitorEnabled ? "Enabled" : "Disabled"} readOnly /></label>
+          <label>Audio Service<input value={snapshot.hardware.audio.lastEvent ?? "Ready"} readOnly /></label>
         </div>
       </Panel>
       <Panel title="Level">

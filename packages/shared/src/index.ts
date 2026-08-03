@@ -102,9 +102,19 @@ export interface AudioHardwareDeviceStatus {
   error?: string;
 }
 
+export interface AudioDeviceOption {
+  id: string;
+  label: string;
+  kind: "input" | "output" | "virtual";
+  connected: boolean;
+}
+
 export interface AudioServiceState extends HardwareComponentStatus {
-  inputDevices: string[];
-  outputDevices: string[];
+  inputDevices: AudioDeviceOption[];
+  outputDevices: AudioDeviceOption[];
+  selectedTeacherInputDeviceId: string;
+  selectedAudienceInputDeviceId: string;
+  selectedSpeakerOutputDeviceId: string;
   devices: AudioHardwareDeviceStatus[];
   mixedLevelPercent: number;
 }
@@ -361,8 +371,8 @@ export interface AudioRoutingContext {
 
 export interface AudioService {
   getState(context: AudioRoutingContext): AudioServiceState;
-  listInputDevices(): Promise<string[]>;
-  listOutputDevices(): Promise<string[]>;
+  listInputDevices(): Promise<AudioDeviceOption[]>;
+  listOutputDevices(): Promise<AudioDeviceOption[]>;
   setTeacherInputDevice(deviceId: string): Promise<AudioServiceState>;
   setAudienceInputDevice(deviceId: string): Promise<AudioServiceState>;
   setSpeakerOutputDevice(deviceId: string): Promise<AudioServiceState>;
