@@ -74,6 +74,51 @@ export interface SystemMetrics {
   temperatureC: number;
 }
 
+export type HardwareMode = "mock" | "raspberryPi";
+export type HardwareHealth = "ready" | "missing" | "error";
+
+export interface HardwareComponentStatus {
+  mode: HardwareMode;
+  health: HardwareHealth;
+  connected: boolean;
+  lastEvent?: string;
+  error?: string;
+}
+
+export interface ButtonHardwareStatus extends HardwareComponentStatus {
+  label: "PAGE" | "ACTION";
+  lastPressedAt?: string;
+}
+
+export interface AudioHardwareDeviceStatus {
+  id: string;
+  label: string;
+  role: "teacher-mic" | "audience-mic" | "speaker-output" | "mixed-bus" | "zoom-output" | "recording-output";
+  connected: boolean;
+  levelPercent?: number;
+  muted?: boolean;
+  error?: string;
+}
+
+export interface HardwareState {
+  oled: HardwareComponentStatus & {
+    currentPageId: OledPageId;
+    currentPageTitle: string;
+  };
+  pageButton: ButtonHardwareStatus;
+  actionButton: ButtonHardwareStatus & {
+    ringColor: LedColor;
+    ringMode: "solid" | "pulsing" | "off";
+  };
+  recordingLed: HardwareComponentStatus & {
+    state: RecLedState;
+  };
+  audio: HardwareComponentStatus & {
+    devices: AudioHardwareDeviceStatus[];
+    mixedLevelPercent: number;
+  };
+}
+
 export interface MeetingSchedule {
   dayOfWeek: "Sunday" | "Monday" | "Tuesday" | "Wednesday" | "Thursday" | "Friday" | "Saturday";
   time: string;
@@ -152,6 +197,7 @@ export interface StudyBoxSnapshot {
   zoom: ZoomRuntimeStatus;
   podcast: PodcastState;
   backup: BackupSyncState;
+  hardware: HardwareState;
   oled: {
     currentPageId: OledPageId;
     pages: OledPage[];

@@ -6,7 +6,7 @@ import { MockOledDisplay } from "@studybox/oled";
 import { MockPodcastService } from "@studybox/podcast";
 import { MockSchedulerService } from "@studybox/scheduler";
 import { MockBackupSyncService } from "@studybox/sync";
-import type { BackupSyncService, LogEntry, LogLevel, LogResult, LogSource, MeetingService, OledPageId, Recording, RecordingDownload, StudyBoxSettings, StudyBoxSnapshot, SystemMetrics, SystemStatus } from "@studybox/shared";
+import type { BackupSyncService, HardwareState, LedColor, LogEntry, LogLevel, LogResult, LogSource, MeetingService, OledPageId, Recording, RecordingDownload, StudyBoxSettings, StudyBoxSnapshot, SystemMetrics, SystemStatus } from "@studybox/shared";
 import { LogStore } from "./logStore.js";
 import { projectPath } from "./paths.js";
 import { SettingsStore } from "./settingsStore.js";
@@ -37,6 +37,7 @@ export class StudyBoxAppliance {
   );
   readonly buttons = new MockButtonController(
     async () => {
+      this.lastPagePressedAt = new Date().toISOString();
       const page = await this.oled.nextPage();
       await this.log({
         source: "button",
@@ -48,10 +49,13 @@ export class StudyBoxAppliance {
       });
     },
     async () => {
+      this.lastActionPressedAt = new Date().toISOString();
       await this.executeCurrentPageAction();
     }
   );
   private finalizedRecordingId?: string;
+  private lastPagePressedAt?: string;
+  private lastActionPressedAt?: string;
 
   constructor(
     private readonly settingsStore: SettingsStore,
@@ -102,6 +106,7 @@ export class StudyBoxAppliance {
       zoom: getZoomRuntimeStatus(),
       podcast: this.podcast.getState(),
       backup: this.backup.getState(),
+      hardware: this.getHardwareState(),
       oled: {
         currentPageId: this.oled.getCurrentPage().id,
         pages: this.oled.getPages()
@@ -331,6 +336,107 @@ export class StudyBoxAppliance {
       wifiConnected: true,
       temperatureC: 46 + Math.round((Math.sin(now / 12000) + 1) * 4)
     };
+  }
+
+  private getHardwareState(): HardwareState {
+    const currentPage = this.oled.getCurrentPage();
+    const audioLevel = 42 + Math.round((Math.sin(Date.now() / 2500) + 1) * 18);
+    const ringColor = this.getRingColor();
+    return {
+      oled: {
+        mode: "mock",
+        health: "ready",
+        connected: true,
+        currentPageId: currentPage.id,
+        currentPageTitle: currentPage.title,
+        lastEvent: `Rendered ${currentPage.title}`
+      },
+      pageButton: {
+        mode: "mock",
+        health: "ready",
+        connected: true,
+        label: "PAGE",
+        lastPressedAt: this.lastPagePressedAt,
+        lastEvent: this.lastPagePressedAt ? "Page button pressed" : "Ready"
+      },
+      actionButton: {
+        mode: "mock",
+        health: "ready",
+        connected: true,
+        label: "ACTION",
+        ringColor,
+        ringMode: ringColor === "off" ? "off" : this.getSystemStatus() === "attention" ? "pulsing" : "solid",
+        lastPressedAt: this.lastActionPressedAt,
+        lastEvent: this.lastActionPressedAt ? "Action button pressed" : "Ready"
+      },
+      recordingLed: {
+        mode: "mock",
+        health: "ready",
+        connected: true,
+        state: this.leds.recordingState,
+        lastEvent: `REC LED ${this.leds.recordingState}`
+      },
+      audio: {
+        mode: "mock",
+        health: "ready",
+        connected: true,
+        mixedLevelPercent: audioLevel,
+        lastEvent: "Mock mixed audio bus ready",
+        devices: [
+          {
+            id: "dji-receiver",
+            label: "DJI Mic Receiver",
+            role: "teacher-mic",
+            connected: true,
+            levelPercent: Math.min(100, audioLevel + 8),
+            muted: false
+          },
+          {
+            id: "conference-speakerphone-mic",
+            label: "Conference Speakerphone Mic",
+            role: "audience-mic",
+            connected: true,
+            levelPercent: Math.max(0, audioLevel - 12),
+            muted: false
+          },
+          {
+            id: "conference-speakerphone-output",
+            label: "Conference Speakerphone Speaker",
+            role: "speaker-output",
+            connected: true
+          },
+          {
+            id: "mixed-audio-bus",
+            label: "Mixed Audio Bus",
+            role: "mixed-bus",
+            connected: true,
+            levelPercent: audioLevel
+          },
+          {
+            id: "zoom-destination",
+            label: "Zoom Meeting Audio",
+            role: "zoom-output",
+            connected: this.meeting.getState().status === "live"
+          },
+          {
+            id: "recording-destination",
+            label: "Podcast Recording Audio",
+            role: "recording-output",
+            connected: this.podcast.getState().status !== "idle"
+          }
+        ]
+      }
+    };
+  }
+
+  private getRingColor(): LedColor {
+    const status = this.getSystemStatus();
+    if (status === "ready") return "green";
+    if (status === "meeting-live") return "blue";
+    if (status === "attention") return "yellow";
+    if (status === "wifi-setup") return "purple";
+    if (status === "booting") return "white";
+    return "red";
   }
 
   private async syncLeds(): Promise<void> {

@@ -317,6 +317,19 @@ function Audio({ snapshot }: { snapshot: StudyBoxSnapshot }) {
       <Panel title="Level">
         <div className="levelMeter"><span style={{ width: `${snapshot.metrics.cpuPercent + 20}%` }} /></div>
       </Panel>
+      <Panel title="Hardware Routes">
+        <List empty="No audio routes">
+          {snapshot.hardware.audio.devices.map((device) => (
+            <li key={device.id}>
+              <span className="listMain">
+                <span>{device.label}</span>
+                <small>{device.role} · {device.connected ? "connected" : "disconnected"}</small>
+              </span>
+              {device.levelPercent !== undefined ? <small>{device.levelPercent}%</small> : null}
+            </li>
+          ))}
+        </List>
+      </Panel>
     </div>
   );
 }
@@ -544,6 +557,26 @@ function Diagnostics({ snapshot }: { snapshot: StudyBoxSnapshot }) {
         <Metric label="Runner" value={snapshot.zoom.runnerAvailable ? "Available" : "Missing"} detail="native process bridge" />
         <Metric label="Backup" value={`${snapshot.backup.pendingCount} pending`} detail={snapshot.backup.lastEvent ?? snapshot.backup.target} />
       </div>
+      <div className="metricGrid">
+        <Metric label="OLED" value={snapshot.hardware.oled.health} detail={`${snapshot.hardware.oled.mode} · ${snapshot.hardware.oled.currentPageTitle}`} />
+        <Metric label="Page Button" value={snapshot.hardware.pageButton.health} detail={snapshot.hardware.pageButton.lastEvent ?? "Ready"} />
+        <Metric label="Action Ring" value={snapshot.hardware.actionButton.ringColor} detail={`${snapshot.hardware.actionButton.ringMode} · ${snapshot.hardware.actionButton.health}`} />
+        <Metric label="REC LED" value={snapshot.hardware.recordingLed.state} detail={snapshot.hardware.recordingLed.lastEvent ?? "Ready"} />
+      </div>
+      <Panel title="Audio Hardware">
+        <List empty="No audio devices">
+          {snapshot.hardware.audio.devices.map((device) => (
+            <li key={device.id}>
+              <span className="listMain">
+                <span>{device.label}</span>
+                <small>{device.role} · {device.connected ? "connected" : "disconnected"}</small>
+                {device.levelPercent !== undefined ? <small>Level {device.levelPercent}%</small> : null}
+                {device.error ? <small className="errorText">{device.error}</small> : null}
+              </span>
+            </li>
+          ))}
+        </List>
+      </Panel>
     </div>
   );
 }
