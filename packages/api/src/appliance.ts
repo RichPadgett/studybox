@@ -1,4 +1,4 @@
-import { MockAudioDevice } from "@studybox/audio";
+import { MockAudioService } from "@studybox/audio";
 import { MockButtonController } from "@studybox/buttons";
 import { MockLedController } from "@studybox/led";
 import { MissingZoomRunnerClient, MockMeetingService, ZoomMeetingService } from "@studybox/meeting";
@@ -28,7 +28,7 @@ export class StudyBoxAppliance {
   readonly podcast = new MockPodcastService();
   readonly scheduler = new MockSchedulerService();
   readonly backup: BackupSyncService;
-  readonly audio = new MockAudioDevice();
+  readonly audio = new MockAudioService();
   readonly leds = new MockLedController();
   readonly oled = new MockOledDisplay(
     () => this.meeting.getState(),
@@ -355,10 +355,9 @@ export class StudyBoxAppliance {
 
   private getHardwareState(): HardwareState {
     const currentPage = this.oled.getCurrentPage();
-    const audioLevel = 42 + Math.round((Math.sin(Date.now() / 2500) + 1) * 18);
     const ringColor = this.getRingColor();
     const meeting = this.meeting.getState();
-    const activeSpeaker = meeting.activeSpeaker;
+    const podcast = this.podcast.getState();
     return {
       oled: {
         mode: "mock",
@@ -393,73 +392,11 @@ export class StudyBoxAppliance {
         state: this.leds.recordingState,
         lastEvent: `REC LED ${this.leds.recordingState}`
       },
-      audio: {
-        mode: "mock",
-        health: "ready",
-        connected: true,
-        mixedLevelPercent: audioLevel,
-        lastEvent: "Mock mixed audio bus ready",
-        devices: [
-          {
-            id: "dji-receiver",
-            label: "DJI Mic Receiver",
-            role: "teacher-mic",
-            connected: true,
-            levelPercent: Math.min(100, audioLevel + 8),
-            muted: false
-          },
-          {
-            id: "conference-speakerphone-mic",
-            label: "Conference Speakerphone Mic",
-            role: "audience-mic",
-            connected: true,
-            levelPercent: Math.max(0, audioLevel - 12),
-            muted: false
-          },
-          {
-            id: "conference-speakerphone-output",
-            label: "Conference Speakerphone Speaker",
-            role: "speaker-output",
-            connected: true
-          },
-          {
-            id: "remote-zoom-audio",
-            label: "Remote Zoom Audio to Room",
-            role: "remote-audio",
-            connected: meeting.status === "live",
-            muted: false,
-            includedInPodcast: false
-          },
-          {
-            id: "approved-remote-speaker",
-            label: activeSpeaker ? `${activeSpeaker.displayName} Podcast Feed` : "Approved Remote Speaker Feed",
-            role: "approved-remote-speaker",
-            connected: Boolean(activeSpeaker),
-            levelPercent: activeSpeaker ? Math.max(0, audioLevel - 18) : 0,
-            muted: !activeSpeaker,
-            includedInPodcast: Boolean(activeSpeaker?.includedInPodcast)
-          },
-          {
-            id: "mixed-audio-bus",
-            label: "Mixed Audio Bus",
-            role: "mixed-bus",
-            connected: true,
-            levelPercent: audioLevel
-          },
-          {
-            id: "zoom-destination",
-            label: "Zoom Meeting Audio",
-            role: "zoom-output",
-            connected: meeting.status === "live"
-          },
-          {
-            id: "recording-destination",
-            label: "Podcast Recording Audio",
-            role: "recording-output",
-            connected: this.podcast.getState().status !== "idle"
-          }
-        ]
-      }
+      audio: this.audio.getState({
+        meetingStatus: meeting.status,
+        podcastStatus: podcast.status,
+        activeSpeaker: meeting.activeSpeaker
+      })
     };
   }
 

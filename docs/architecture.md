@@ -22,6 +22,8 @@ The UI never imports GPIO, OLED, Zoom, podcast, or scheduler implementations dir
 
 The snapshot includes a hardware state model for the appliance surface: OLED, PAGE button, ACTION/RGB ring button, REC LED, and audio devices/routes. Each component reports implementation mode, health, connected state, and last event. During development these values are mock-backed; on the Pi the same shape should be populated by real HAL implementations without changing the web UI.
 
+Audio routing now has a first-class `AudioService` boundary. The API asks the service for input devices, output devices, route state, and mixed bus levels, then exposes that state through the same appliance snapshot. The current `MockAudioService` lives in `@studybox/audio`; the future Raspberry Pi implementation should satisfy the same interface with real Linux audio discovery and routing.
+
 ## Recording Lifecycle
 
 Podcast recording is independent from the Zoom meeting lifecycle. A single Zoom meeting may contain multiple audio recording sessions.

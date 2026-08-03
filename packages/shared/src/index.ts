@@ -102,6 +102,13 @@ export interface AudioHardwareDeviceStatus {
   error?: string;
 }
 
+export interface AudioServiceState extends HardwareComponentStatus {
+  inputDevices: string[];
+  outputDevices: string[];
+  devices: AudioHardwareDeviceStatus[];
+  mixedLevelPercent: number;
+}
+
 export interface HardwareState {
   oled: HardwareComponentStatus & {
     currentPageId: OledPageId;
@@ -115,10 +122,7 @@ export interface HardwareState {
   recordingLed: HardwareComponentStatus & {
     state: RecLedState;
   };
-  audio: HardwareComponentStatus & {
-    devices: AudioHardwareDeviceStatus[];
-    mixedLevelPercent: number;
-  };
+  audio: AudioServiceState;
 }
 
 export interface MeetingSchedule {
@@ -347,6 +351,21 @@ export interface LedController {
 export interface AudioDevice {
   getInputDevices(): Promise<string[]>;
   getLevel(): Promise<number>;
+}
+
+export interface AudioRoutingContext {
+  meetingStatus: MeetingState["status"];
+  podcastStatus: PodcastState["status"];
+  activeSpeaker?: Participant;
+}
+
+export interface AudioService {
+  getState(context: AudioRoutingContext): AudioServiceState;
+  listInputDevices(): Promise<string[]>;
+  listOutputDevices(): Promise<string[]>;
+  setTeacherInputDevice(deviceId: string): Promise<AudioServiceState>;
+  setAudienceInputDevice(deviceId: string): Promise<AudioServiceState>;
+  setSpeakerOutputDevice(deviceId: string): Promise<AudioServiceState>;
 }
 
 export type ZoomRunnerCommand =
