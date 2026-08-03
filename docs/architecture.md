@@ -30,6 +30,14 @@ Within one recording session, pause and resume continue writing to the same logi
 
 The web admin downloads recordings through the API. The UI should never read local audio files directly; the real recorder should replace the mock download implementation behind `PodcastService`.
 
+## Remote Speaker Podcast Routing
+
+Remote Zoom audio is always routed to the room speakerphone output when the meeting is live, but it is not automatically part of the podcast mix. In moderated mode, a remote participant must first be approved to speak through `MeetingService`. That approval creates an active remote speaker route that the admin can include in or exclude from the podcast.
+
+The default setting is `settings.moderation.includeApprovedRemoteSpeakersInPodcast = false`. With that default, accidental hot mics from remote homes remain room audio only and are excluded from the recording. When a speaker is intentionally approved for discussion, the admin can include that active speaker in the podcast from the web UI. Muting the participant clears the podcast inclusion flag.
+
+The future real audio service should preserve this boundary: teacher microphones and in-room audience audio go to Zoom and the podcast, unapproved remote audio goes only to room playback, and approved remote speaker audio goes to the podcast only when explicitly included by policy or operator action.
+
 ## Audit Logs And Remote Sync
 
 StudyBox keeps a local persisted audit log under `data/`. The log records appliance actions such as admin login, meeting controls, recording controls, download requests, settings saves, button actions, and Zoom webhook activity.

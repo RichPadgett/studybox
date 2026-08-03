@@ -17,7 +17,8 @@ export const defaultSettings: StudyBoxSettings = {
     mode: "moderated",
     joinMuted: true,
     raiseHandRequired: true,
-    assistantApprovesSpeakers: true
+    assistantApprovesSpeakers: true,
+    includeApprovedRemoteSpeakersInPodcast: false
   },
   zoom: {
     meetingNumber: "",
@@ -53,7 +54,18 @@ export class SettingsStore {
   async load(): Promise<StudyBoxSettings> {
     try {
       const raw = await readFile(settingsPath, "utf8");
-      this.settings = { ...defaultSettings, ...JSON.parse(raw) } as StudyBoxSettings;
+      const parsed = JSON.parse(raw) as Partial<StudyBoxSettings>;
+      this.settings = {
+        ...defaultSettings,
+        ...parsed,
+        schedule: { ...defaultSettings.schedule, ...parsed.schedule },
+        moderation: { ...defaultSettings.moderation, ...parsed.moderation },
+        zoom: { ...defaultSettings.zoom, ...parsed.zoom },
+        audio: { ...defaultSettings.audio, ...parsed.audio },
+        wifi: { ...defaultSettings.wifi, ...parsed.wifi },
+        cloudflare: { ...defaultSettings.cloudflare, ...parsed.cloudflare },
+        oled: { ...defaultSettings.oled, ...parsed.oled }
+      };
     } catch {
       await this.save(defaultSettings);
     }

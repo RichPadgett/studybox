@@ -117,11 +117,16 @@ async function execute(command: ZoomRunnerCommand): Promise<ZoomRunnerResponse> 
       const speaker: Participant = {
         ...participant,
         status: "joined",
-        audioState: "allowed-to-speak"
+        audioState: "allowed-to-speak",
+        includedInPodcast: false
       };
       state = {
         ...state,
-        participants: state.participants.map((item) => item.id === command.participantId ? speaker : item),
+        participants: state.participants.map((item) => item.id === command.participantId ? speaker : {
+          ...item,
+          audioState: item.audioState === "allowed-to-speak" || item.audioState === "speaking" ? "muted" : item.audioState,
+          includedInPodcast: false
+        }),
         raisedHands: state.raisedHands.filter((item) => item.id !== command.participantId),
         activeSpeaker: speaker,
         lastEvent: `${participant.displayName} allowed to speak by mock runner`
@@ -135,11 +140,25 @@ async function execute(command: ZoomRunnerCommand): Promise<ZoomRunnerResponse> 
     const participant = state.participants.find((item) => item.id === command.participantId);
     state = {
       ...state,
-      participants: state.participants.map((item) => item.id === command.participantId ? { ...item, audioState: "muted" } : item),
+      participants: state.participants.map((item) => item.id === command.participantId ? { ...item, audioState: "muted", includedInPodcast: false } : item),
       activeSpeaker: state.activeSpeaker?.id === command.participantId ? undefined : state.activeSpeaker,
       lastEvent: participant ? `${participant.displayName} muted by mock runner` : "Participant muted by mock runner"
     };
     emit({ type: "meeting.state", state });
+    return { id: command.id, ok: true, state };
+  }
+
+  if (command.type === "setParticipantPodcastInclusion") {
+    const participant = state.participants.find((item) => item.id === command.participantId);
+    if (participant) {
+      state = {
+        ...state,
+        participants: state.participants.map((item) => item.id === command.participantId ? { ...item, includedInPodcast: command.included } : item),
+        activeSpeaker: state.activeSpeaker?.id === command.participantId ? { ...state.activeSpeaker, includedInPodcast: command.included } : state.activeSpeaker,
+        lastEvent: command.included ? `${participant.displayName} included in podcast mix by mock runner` : `${participant.displayName} excluded from podcast mix by mock runner`
+      };
+      emit({ type: "meeting.state", state });
+    }
     return { id: command.id, ok: true, state };
   }
 
@@ -149,7 +168,8 @@ async function execute(command: ZoomRunnerCommand): Promise<ZoomRunnerResponse> 
       moderationMode: command.mode,
       participants: state.participants.map((participant) => ({
         ...participant,
-        audioState: command.mode === "open" || participant.trustedSpeaker ? "allowed-to-speak" : "muted"
+        audioState: command.mode === "open" || participant.trustedSpeaker ? "allowed-to-speak" : "muted",
+        includedInPodcast: false
       })),
       activeSpeaker: undefined,
       lastEvent: `Moderation mode set to ${command.mode} by mock runner`

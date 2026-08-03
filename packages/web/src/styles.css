@@ -409,7 +409,8 @@ label {
   gap: 6px;
 }
 
-input {
+input,
+select {
   border: 1px solid #cbd8d1;
   border-radius: 6px;
   color: #17211c;

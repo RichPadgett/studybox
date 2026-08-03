@@ -56,14 +56,14 @@ export function App() {
     }
   }
 
-  async function run(path: string) {
+  async function run(path: string, body?: unknown) {
     if (!adminUnlocked) {
       setError("Enter the admin PIN before using StudyBox controls.");
       return;
     }
 
     try {
-      setSnapshot(await postAction(path));
+      setSnapshot(await postAction(path, body));
       setError(undefined);
     } catch (caught) {
       if (isAdminAuthError(caught)) {
@@ -202,7 +202,7 @@ export function App() {
   );
 }
 
-function Dashboard({ snapshot, run }: { snapshot: StudyBoxSnapshot; run: (path: string) => Promise<void> }) {
+function Dashboard({ snapshot, run }: { snapshot: StudyBoxSnapshot; run: (path: string, body?: unknown) => Promise<void> }) {
   return (
     <div className="stack">
       <div className="metricGrid">
@@ -221,16 +221,18 @@ function Dashboard({ snapshot, run }: { snapshot: StudyBoxSnapshot; run: (path: 
   );
 }
 
-function Meeting({ snapshot, run, compact = false }: { snapshot: StudyBoxSnapshot; run: (path: string) => Promise<void>; compact?: boolean }) {
+function Meeting({ snapshot, run, compact = false }: { snapshot: StudyBoxSnapshot; run: (path: string, body?: unknown) => Promise<void>; compact?: boolean }) {
+  const activeSpeaker = snapshot.meeting.activeSpeaker;
   return (
     <div className="stack">
       <div className="metricGrid compactMetrics">
         <Metric label="Moderation" value={snapshot.meeting.moderationMode} detail="default meeting mode" />
-        <Metric label="Remote Speaker" value={snapshot.meeting.activeSpeaker?.displayName ?? "None"} detail={snapshot.meeting.activeSpeaker ? "ACTION mutes speaker" : "raised hand required"} />
+        <Metric label="Remote Speaker" value={activeSpeaker?.displayName ?? "None"} detail={activeSpeaker ? activeSpeaker.includedInPodcast ? "included in podcast" : "room audio only" : "raised hand required"} />
       </div>
-      {snapshot.meeting.activeSpeaker ? (
+      {activeSpeaker ? (
         <div className="toolbar">
-          <Command icon={<Mic size={17} />} label={`Mute ${snapshot.meeting.activeSpeaker.displayName}`} onClick={() => run(`/api/meeting/participants/${snapshot.meeting.activeSpeaker?.id}/mute`)} />
+          <Command icon={<Radio size={17} />} label={activeSpeaker.includedInPodcast ? "Exclude from Podcast" : "Include in Podcast"} onClick={() => run(`/api/meeting/participants/${activeSpeaker.id}/podcast-inclusion`, { included: !activeSpeaker.includedInPodcast })} />
+          <Command icon={<Mic size={17} />} label={`Mute ${activeSpeaker.displayName}`} onClick={() => run(`/api/meeting/participants/${activeSpeaker.id}/mute`)} />
         </div>
       ) : null}
       {!compact ? (
@@ -254,7 +256,7 @@ function Meeting({ snapshot, run, compact = false }: { snapshot: StudyBoxSnapsho
                     </button>
                   </span>
                 ) : (
-                  <small>{participant.audioState ?? "joined"}</small>
+                  <small>{participant.audioState ?? "joined"}{participant.includedInPodcast ? " · podcast" : ""}</small>
                 )}
               </li>
             ))}
@@ -289,7 +291,7 @@ function Meeting({ snapshot, run, compact = false }: { snapshot: StudyBoxSnapsho
   );
 }
 
-function Podcast({ snapshot, run }: { snapshot: StudyBoxSnapshot; run: (path: string) => Promise<void> }) {
+function Podcast({ snapshot, run }: { snapshot: StudyBoxSnapshot; run: (path: string, body?: unknown) => Promise<void> }) {
   return (
     <div className="stack">
       <div className="recordingSurface">
@@ -324,6 +326,7 @@ function Audio({ snapshot }: { snapshot: StudyBoxSnapshot }) {
               <span className="listMain">
                 <span>{device.label}</span>
                 <small>{device.role} · {device.connected ? "connected" : "disconnected"}</small>
+                {device.includedInPodcast !== undefined ? <small>{device.includedInPodcast ? "included in podcast mix" : "excluded from podcast mix"}</small> : null}
               </span>
               {device.levelPercent !== undefined ? <small>{device.levelPercent}%</small> : null}
             </li>
@@ -371,7 +374,7 @@ function Recordings({ snapshot, adminUnlocked, setError, lockAdmin }: { snapshot
   );
 }
 
-function BackupView({ snapshot, run, adminUnlocked }: { snapshot: StudyBoxSnapshot; run: (path: string) => Promise<void>; adminUnlocked: boolean }) {
+function BackupView({ snapshot, run, adminUnlocked }: { snapshot: StudyBoxSnapshot; run: (path: string, body?: unknown) => Promise<void>; adminUnlocked: boolean }) {
   return (
     <div className="stack">
       <div className="metricGrid compactMetrics">
@@ -456,6 +459,27 @@ function SettingsView({ snapshot, saving, save, adminUnlocked, lockAdmin }: { sn
           <label>Day<input value={draft.schedule.dayOfWeek} onChange={(event) => setDraft({ ...draft, schedule: { ...draft.schedule, dayOfWeek: event.target.value as StudyBoxSettings["schedule"]["dayOfWeek"] } })} /></label>
           <label>Time<input type="time" value={draft.schedule.time} onChange={(event) => setDraft({ ...draft, schedule: { ...draft.schedule, time: event.target.value } })} /></label>
           <label>Timezone<input value={draft.schedule.timezone} onChange={(event) => setDraft({ ...draft, schedule: { ...draft.schedule, timezone: event.target.value } })} /></label>
+        </div>
+      </Panel>
+      <Panel title="Moderation">
+        <div className="formGrid">
+          <label>Mode<input value={draft.moderation.mode} readOnly /></label>
+          <label>Remote Speaker Podcast
+            <select
+              value={draft.moderation.includeApprovedRemoteSpeakersInPodcast ? "include" : "exclude"}
+              onChange={(event) => setDraft({
+                ...draft,
+                moderation: {
+                  ...draft.moderation,
+                  includeApprovedRemoteSpeakersInPodcast: event.target.value === "include"
+                }
+              })}
+            >
+              <option value="exclude">Exclude by default</option>
+              <option value="include">Include approved speakers</option>
+            </select>
+          </label>
+          <label>Approval<input value={draft.moderation.assistantApprovesSpeakers ? "Assistant approves" : "Open speaking"} readOnly /></label>
         </div>
       </Panel>
       <Panel title="Zoom">
@@ -617,7 +641,7 @@ function NetworkView({ snapshot }: { snapshot: StudyBoxSnapshot }) {
   );
 }
 
-function OledSimulator({ snapshot, run }: { snapshot: StudyBoxSnapshot; run: (path: string) => Promise<void> }) {
+function OledSimulator({ snapshot, run }: { snapshot: StudyBoxSnapshot; run: (path: string, body?: unknown) => Promise<void> }) {
   const currentPage = useMemo(() => snapshot.oled.pages.find((page) => page.id === snapshot.oled.currentPageId) ?? snapshot.oled.pages[0], [snapshot]);
 
   return (

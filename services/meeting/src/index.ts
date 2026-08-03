@@ -98,12 +98,17 @@ export class MockMeetingService implements MeetingService {
     const speaker: Participant = {
       ...participant,
       status: "joined",
-      audioState: "allowed-to-speak"
+      audioState: "allowed-to-speak",
+      includedInPodcast: false
     };
 
     this.state = {
       ...this.state,
-      participants: this.state.participants.map((item) => item.id === participantId ? speaker : { ...item, audioState: item.audioState === "speaking" ? "muted" : item.audioState }),
+      participants: this.state.participants.map((item) => item.id === participantId ? speaker : {
+        ...item,
+        audioState: item.audioState === "allowed-to-speak" || item.audioState === "speaking" ? "muted" : item.audioState,
+        includedInPodcast: false
+      }),
       raisedHands: this.state.raisedHands.filter((item) => item.id !== participantId),
       activeSpeaker: speaker,
       lastEvent: `${participant.displayName} allowed to speak`
@@ -115,9 +120,24 @@ export class MockMeetingService implements MeetingService {
     const participant = this.state.participants.find((item) => item.id === participantId);
     this.state = {
       ...this.state,
-      participants: this.state.participants.map((item) => item.id === participantId ? { ...item, audioState: "muted" } : item),
+      participants: this.state.participants.map((item) => item.id === participantId ? { ...item, audioState: "muted", includedInPodcast: false } : item),
       activeSpeaker: this.state.activeSpeaker?.id === participantId ? undefined : this.state.activeSpeaker,
       lastEvent: participant ? `${participant.displayName} muted` : "Participant muted"
+    };
+    return this.state;
+  }
+
+  async setParticipantPodcastInclusion(participantId: string, included: boolean): Promise<MeetingState> {
+    const participant = this.state.participants.find((item) => item.id === participantId);
+    if (!participant) {
+      return this.state;
+    }
+
+    this.state = {
+      ...this.state,
+      participants: this.state.participants.map((item) => item.id === participantId ? { ...item, includedInPodcast: included } : item),
+      activeSpeaker: this.state.activeSpeaker?.id === participantId ? { ...this.state.activeSpeaker, includedInPodcast: included } : this.state.activeSpeaker,
+      lastEvent: included ? `${participant.displayName} included in podcast mix` : `${participant.displayName} excluded from podcast mix`
     };
     return this.state;
   }
@@ -128,7 +148,8 @@ export class MockMeetingService implements MeetingService {
       moderationMode: mode,
       participants: this.state.participants.map((participant) => ({
         ...participant,
-        audioState: mode === "open" || participant.trustedSpeaker ? "allowed-to-speak" : "muted"
+        audioState: mode === "open" || participant.trustedSpeaker ? "allowed-to-speak" : "muted",
+        includedInPodcast: false
       })),
       activeSpeaker: undefined,
       lastEvent: `Moderation mode set to ${mode}`
@@ -144,6 +165,7 @@ export interface ZoomMeetingRunnerClient {
   dismissRaisedHand(participantId: string): Promise<void>;
   allowParticipantToSpeak(participantId: string): Promise<void>;
   muteParticipant(participantId: string): Promise<void>;
+  setParticipantPodcastInclusion(participantId: string, included: boolean): Promise<void>;
   setModerationMode(mode: MeetingModerationMode): Promise<void>;
   getState(): Promise<MeetingState>;
 }
@@ -205,6 +227,11 @@ export class ZoomMeetingService implements MeetingService {
     return this.refreshState();
   }
 
+  async setParticipantPodcastInclusion(participantId: string, included: boolean): Promise<MeetingState> {
+    await this.runner.setParticipantPodcastInclusion(participantId, included);
+    return this.refreshState();
+  }
+
   async setModerationMode(mode: MeetingModerationMode): Promise<MeetingState> {
     await this.runner.setModerationMode(mode);
     return this.refreshState();
@@ -238,6 +265,10 @@ export class MissingZoomRunnerClient implements ZoomMeetingRunnerClient {
   }
 
   async muteParticipant(_participantId: string): Promise<void> {
+    throw new Error("Zoom runner is not available. Build and configure the ARM64 Meeting SDK runner first.");
+  }
+
+  async setParticipantPodcastInclusion(_participantId: string, _included: boolean): Promise<void> {
     throw new Error("Zoom runner is not available. Build and configure the ARM64 Meeting SDK runner first.");
   }
 

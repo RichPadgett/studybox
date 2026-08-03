@@ -172,6 +172,9 @@ export class StudyBoxAppliance {
 
   async allowParticipantToSpeak(participantId: string, context: ActionContext = {}): Promise<StudyBoxSnapshot> {
     await this.meeting.allowParticipantToSpeak(participantId);
+    if (this.settingsStore.get().moderation.includeApprovedRemoteSpeakersInPodcast) {
+      await this.meeting.setParticipantPodcastInclusion(participantId, true);
+    }
     await this.logAction("meeting.participant.allowToSpeak", "Participant allowed to speak", context, { participantId });
     await this.syncLeds();
     return this.snapshot();
@@ -180,6 +183,18 @@ export class StudyBoxAppliance {
   async muteParticipant(participantId: string, context: ActionContext = {}): Promise<StudyBoxSnapshot> {
     await this.meeting.muteParticipant(participantId);
     await this.logAction("meeting.participant.mute", "Participant muted", context, { participantId });
+    await this.syncLeds();
+    return this.snapshot();
+  }
+
+  async setRemoteSpeakerPodcastInclusion(participantId: string, included: boolean, context: ActionContext = {}): Promise<StudyBoxSnapshot> {
+    await this.meeting.setParticipantPodcastInclusion(participantId, included);
+    await this.logAction(
+      "meeting.participant.podcastInclusion",
+      included ? "Remote speaker included in podcast mix" : "Remote speaker excluded from podcast mix",
+      context,
+      { participantId, included }
+    );
     await this.syncLeds();
     return this.snapshot();
   }
@@ -342,6 +357,8 @@ export class StudyBoxAppliance {
     const currentPage = this.oled.getCurrentPage();
     const audioLevel = 42 + Math.round((Math.sin(Date.now() / 2500) + 1) * 18);
     const ringColor = this.getRingColor();
+    const meeting = this.meeting.getState();
+    const activeSpeaker = meeting.activeSpeaker;
     return {
       oled: {
         mode: "mock",
@@ -406,6 +423,23 @@ export class StudyBoxAppliance {
             connected: true
           },
           {
+            id: "remote-zoom-audio",
+            label: "Remote Zoom Audio to Room",
+            role: "remote-audio",
+            connected: meeting.status === "live",
+            muted: false,
+            includedInPodcast: false
+          },
+          {
+            id: "approved-remote-speaker",
+            label: activeSpeaker ? `${activeSpeaker.displayName} Podcast Feed` : "Approved Remote Speaker Feed",
+            role: "approved-remote-speaker",
+            connected: Boolean(activeSpeaker),
+            levelPercent: activeSpeaker ? Math.max(0, audioLevel - 18) : 0,
+            muted: !activeSpeaker,
+            includedInPodcast: Boolean(activeSpeaker?.includedInPodcast)
+          },
+          {
             id: "mixed-audio-bus",
             label: "Mixed Audio Bus",
             role: "mixed-bus",
@@ -416,7 +450,7 @@ export class StudyBoxAppliance {
             id: "zoom-destination",
             label: "Zoom Meeting Audio",
             role: "zoom-output",
-            connected: this.meeting.getState().status === "live"
+            connected: meeting.status === "live"
           },
           {
             id: "recording-destination",

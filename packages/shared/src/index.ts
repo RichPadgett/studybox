@@ -15,6 +15,7 @@ export interface Participant {
   displayName: string;
   status: ParticipantStatus;
   audioState?: ParticipantAudioState;
+  includedInPodcast?: boolean;
   trustedSpeaker?: boolean;
   joinedAt?: string;
 }
@@ -93,10 +94,11 @@ export interface ButtonHardwareStatus extends HardwareComponentStatus {
 export interface AudioHardwareDeviceStatus {
   id: string;
   label: string;
-  role: "teacher-mic" | "audience-mic" | "speaker-output" | "mixed-bus" | "zoom-output" | "recording-output";
+  role: "teacher-mic" | "audience-mic" | "speaker-output" | "mixed-bus" | "zoom-output" | "recording-output" | "remote-audio" | "approved-remote-speaker";
   connected: boolean;
   levelPercent?: number;
   muted?: boolean;
+  includedInPodcast?: boolean;
   error?: string;
 }
 
@@ -132,6 +134,7 @@ export interface MeetingModerationSettings {
   joinMuted: boolean;
   raiseHandRequired: boolean;
   assistantApprovesSpeakers: boolean;
+  includeApprovedRemoteSpeakersInPodcast: boolean;
 }
 
 export interface ZoomSettings {
@@ -305,6 +308,7 @@ export interface MeetingService {
   dismissRaisedHand(participantId: string): Promise<MeetingState>;
   allowParticipantToSpeak(participantId: string): Promise<MeetingState>;
   muteParticipant(participantId: string): Promise<MeetingState>;
+  setParticipantPodcastInclusion(participantId: string, included: boolean): Promise<MeetingState>;
   setModerationMode(mode: MeetingModerationMode): Promise<MeetingState>;
 }
 
@@ -352,6 +356,7 @@ export type ZoomRunnerCommand =
   | { id: string; type: "dismissRaisedHand"; participantId: string }
   | { id: string; type: "allowParticipantToSpeak"; participantId: string }
   | { id: string; type: "muteParticipant"; participantId: string }
+  | { id: string; type: "setParticipantPodcastInclusion"; participantId: string; included: boolean }
   | { id: string; type: "setModerationMode"; mode: MeetingModerationMode }
   | { id: string; type: "getState" };
 

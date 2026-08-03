@@ -49,6 +49,10 @@ export class ZoomRunnerProcessClient implements ZoomMeetingRunnerClient {
     await this.send({ id: createId(), type: "muteParticipant", participantId });
   }
 
+  async setParticipantPodcastInclusion(participantId: string, included: boolean): Promise<void> {
+    await this.send({ id: createId(), type: "setParticipantPodcastInclusion", participantId, included });
+  }
+
   async setModerationMode(mode: MeetingModerationMode): Promise<void> {
     await this.send({ id: createId(), type: "setModerationMode", mode });
   }

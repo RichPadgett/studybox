@@ -70,6 +70,13 @@ curl --request POST 'http://localhost:4000/api/meeting/raised-hands/p3/dismiss' 
 curl --request POST 'http://localhost:4000/api/meeting/raised-hands/p3/allow' \
   --header 'Authorization: Bearer paste-admin-token'
 
+curl --request POST 'http://localhost:4000/api/meeting/participants/p3/podcast-inclusion' \
+  --header 'Authorization: Bearer paste-admin-token' \
+  --header 'Content-Type: application/json' \
+  --data '{
+    "included": true
+  }'
+
 curl --request POST 'http://localhost:4000/api/meeting/participants/p3/mute' \
   --header 'Authorization: Bearer paste-admin-token'
 
@@ -81,6 +88,13 @@ curl --request POST 'http://localhost:4000/api/meeting/raised-hands/runner-p2/di
 
 curl --request POST 'http://localhost:4000/api/meeting/raised-hands/runner-p2/allow' \
   --header 'Authorization: Bearer paste-admin-token'
+
+curl --request POST 'http://localhost:4000/api/meeting/participants/runner-p2/podcast-inclusion' \
+  --header 'Authorization: Bearer paste-admin-token' \
+  --header 'Content-Type: application/json' \
+  --data '{
+    "included": true
+  }'
 
 curl --request POST 'http://localhost:4000/api/meeting/participants/runner-p2/mute' \
   --header 'Authorization: Bearer paste-admin-token'
@@ -114,6 +128,13 @@ curl --request PUT 'http://localhost:4000/api/settings' \
       "timezone": "America/New_York",
       "autoStartMeeting": true,
       "autoStartRecording": true
+    },
+    "moderation": {
+      "mode": "moderated",
+      "joinMuted": true,
+      "raiseHandRequired": true,
+      "assistantApprovesSpeakers": true,
+      "includeApprovedRemoteSpeakersInPodcast": false
     },
     "zoom": {
       "meetingNumber": "123456789",

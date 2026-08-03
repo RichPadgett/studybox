@@ -31,8 +31,12 @@ export async function getSnapshot(): Promise<StudyBoxSnapshot> {
   return request<StudyBoxSnapshot>("/api/snapshot");
 }
 
-export async function postAction(path: string): Promise<StudyBoxSnapshot> {
-  return request<StudyBoxSnapshot>(path, { method: "POST" });
+export async function postAction(path: string, body?: unknown): Promise<StudyBoxSnapshot> {
+  return request<StudyBoxSnapshot>(path, {
+    method: "POST",
+    headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body)
+  });
 }
 
 export async function saveSettings(settings: StudyBoxSettings): Promise<StudyBoxSettings> {
