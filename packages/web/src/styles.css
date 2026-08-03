@@ -193,6 +193,11 @@ h1 {
   padding: 10px 12px;
 }
 
+.errorText {
+  color: #9d251a;
+  font-weight: 700;
+}
+
 .contentGrid {
   align-items: start;
   display: grid;

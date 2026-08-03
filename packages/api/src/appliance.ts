@@ -59,7 +59,7 @@ export class StudyBoxAppliance {
   ) {
     const zoomConfig = getZoomConfig();
     this.backup = new MockBackupSyncService({
-      queuePath: projectPath("data", "backup-queue.json"),
+      queuePath: process.env.STUDYBOX_BACKUP_QUEUE_PATH ?? projectPath("data", "backup-queue.json"),
       bundleDir: process.env.STUDYBOX_BACKUP_DIR ?? projectPath("data", "backup-bundles"),
       target: process.env.STUDYBOX_BACKUP_REPO ?? "hetzner:studybox-backup",
       mode: process.env.STUDYBOX_BACKUP_MODE === "rsync" ? "rsync" : "mock",
@@ -231,6 +231,36 @@ export class StudyBoxAppliance {
       message: `Backup sync triggered for ${this.backup.getState().target}`
     });
     return this.snapshot();
+  }
+
+  async retryBackups(): Promise<void> {
+    if (this.meeting.getState().status !== "idle" || this.podcast.getState().status !== "idle") {
+      return;
+    }
+
+    const before = this.backup.getState();
+    const retryableCount = before.pendingCount + before.failedCount;
+    if (retryableCount === 0) {
+      return;
+    }
+
+    const after = await this.backup.syncPending();
+    const failed = after.failedCount;
+    await this.log({
+      source: "backup",
+      actor: "scheduler",
+      level: failed > 0 ? "warn" : "info",
+      action: "backup.sync.retry",
+      result: failed > 0 ? "failure" : "success",
+      message: failed > 0 ? "Automatic backup retry completed with failures" : "Automatic backup retry completed",
+      details: {
+        attempted: retryableCount,
+        pending: after.pendingCount,
+        uploaded: after.uploadedCount,
+        failed: after.failedCount,
+        target: after.target
+      }
+    });
   }
 
   async recordAudit(context: AuditContext & { source: LogSource; level: LogLevel; message: string; result?: LogResult }): Promise<StudyBoxSnapshot> {

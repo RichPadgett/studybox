@@ -16,6 +16,7 @@ const app = express();
 const appliance = new StudyBoxAppliance(new SettingsStore(), new LogStore());
 const zoomOAuthStore = new ZoomOAuthStore();
 const webAdminContext = { source: "web" as const, actor: "admin" };
+let backupRetryInProgress = false;
 
 app.use(cors());
 app.use(express.json({
@@ -336,7 +337,31 @@ app.use((error: unknown, _request: express.Request, response: express.Response, 
 });
 
 await appliance.initialize();
+startBackupRetryLoop();
 
 app.listen(port, () => {
   console.log(`StudyBox API listening on http://localhost:${port}`);
 });
+
+function startBackupRetryLoop(): void {
+  const retrySeconds = Number(process.env.STUDYBOX_BACKUP_RETRY_SECONDS ?? 300);
+  if (!Number.isFinite(retrySeconds) || retrySeconds <= 0) {
+    return;
+  }
+
+  const timer = setInterval(() => {
+    if (backupRetryInProgress) {
+      return;
+    }
+
+    backupRetryInProgress = true;
+    void appliance.retryBackups()
+      .catch((error: unknown) => {
+        console.error("Backup retry failed", error);
+      })
+      .finally(() => {
+        backupRetryInProgress = false;
+      });
+  }, retrySeconds * 1000);
+  timer.unref();
+}

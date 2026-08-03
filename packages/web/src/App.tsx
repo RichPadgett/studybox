@@ -378,6 +378,8 @@ function BackupView({ snapshot, run, adminUnlocked }: { snapshot: StudyBoxSnapsh
                 <span>{bundle.recordingTitle}</span>
                 <small>{bundle.fileName} · {bundle.status} · {bundle.target}</small>
                 <small>{new Date(bundle.createdAt).toLocaleString()} · {bundle.logEntryCount} log entries</small>
+                {bundle.lastAttemptAt ? <small>Last attempt {new Date(bundle.lastAttemptAt).toLocaleString()}</small> : null}
+                {bundle.error ? <small className="errorText">{bundle.error}</small> : null}
               </span>
             </li>
           ))}
