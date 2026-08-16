@@ -224,6 +224,15 @@ app.post("/api/meeting/start", requireAdmin, async (_request, response, next) =>
   }
 });
 
+app.post("/api/meeting/join-requests", async (request, response, next) => {
+  try {
+    const displayName = String(request.body?.displayName ?? "");
+    response.json(await appliance.requestParticipantJoin(displayName, { source: "web", actor: "participant" }));
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.post("/api/meeting/end", requireAdmin, async (_request, response, next) => {
   try {
     response.json(await appliance.endMeeting(webAdminContext));

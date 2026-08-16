@@ -1,4 +1,4 @@
-import type { AdminSession, StudyBoxSettings, StudyBoxSnapshot, ZoomDeviceAuthorization, ZoomOAuthStatus } from "@studybox/shared";
+import type { AdminSession, Participant, StudyBoxSettings, StudyBoxSnapshot, ZoomDeviceAuthorization, ZoomOAuthStatus } from "@studybox/shared";
 
 let adminToken: string | undefined;
 
@@ -36,6 +36,14 @@ export async function postAction(path: string, body?: unknown): Promise<StudyBox
     method: "POST",
     headers: body === undefined ? undefined : { "Content-Type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body)
+  });
+}
+
+export async function requestMeetingJoin(displayName: string): Promise<Participant> {
+  return request<Participant>("/api/meeting/join-requests", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ displayName })
   });
 }
 

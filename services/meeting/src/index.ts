@@ -15,15 +15,33 @@ export class MockMeetingService implements MeetingService {
     return this.state;
   }
 
+  async requestParticipantJoin(displayName: string): Promise<Participant> {
+    const normalizedName = displayName.trim().slice(0, 80);
+    if (!normalizedName) {
+      throw new Error("Display name is required");
+    }
+
+    const participant: Participant = {
+      id: `web-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      displayName: normalizedName,
+      status: "waiting"
+    };
+
+    this.state = {
+      ...this.state,
+      waitingRoom: [...this.state.waitingRoom, participant],
+      lastEvent: `${participant.displayName} entered the StudyBox waiting room`
+    };
+
+    return participant;
+  }
+
   async startMeeting(): Promise<MeetingState> {
     this.state = {
       ...this.state,
       status: "live",
       meetingId: "studybox-local-session",
       startedAt: new Date().toISOString(),
-      participants: [],
-      waitingRoom: [],
-      raisedHands: [],
       lastEvent: "Meeting marked live; Zoom moderation sync is not connected yet"
     };
     return this.state;
@@ -174,6 +192,27 @@ export class ZoomMeetingService implements MeetingService {
 
   getState(): MeetingState {
     return this.state;
+  }
+
+  async requestParticipantJoin(displayName: string): Promise<Participant> {
+    const normalizedName = displayName.trim().slice(0, 80);
+    if (!normalizedName) {
+      throw new Error("Display name is required");
+    }
+
+    const participant: Participant = {
+      id: `web-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      displayName: normalizedName,
+      status: "waiting"
+    };
+
+    this.state = {
+      ...this.state,
+      waitingRoom: [...this.state.waitingRoom, participant],
+      lastEvent: `${participant.displayName} entered the StudyBox waiting room`
+    };
+
+    return participant;
   }
 
   async startMeeting(): Promise<MeetingState> {

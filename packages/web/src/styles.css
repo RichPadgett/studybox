@@ -153,6 +153,47 @@ input {
   cursor: not-allowed;
 }
 
+.joinRequestForm {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.joinRequestForm input {
+  border: 1px solid #cbd7d0;
+  border-radius: 8px;
+  color: #17211c;
+  min-height: 52px;
+  min-width: min(100%, 260px);
+  padding: 0 14px;
+}
+
+.joinRequestForm button,
+.waitingCard {
+  align-items: center;
+  background: #244638;
+  border: 0;
+  border-radius: 8px;
+  color: #ffffff;
+  display: inline-flex;
+  font-weight: 900;
+  gap: 10px;
+  min-height: 52px;
+  padding: 0 18px;
+}
+
+.joinRequestForm button:disabled {
+  background: #9caaa3;
+  cursor: not-allowed;
+}
+
+.waitingCard {
+  background: #f1f6f3;
+  border: 1px solid #cbd7d0;
+  color: #244638;
+  width: fit-content;
+}
+
 .publicMeta {
   display: flex;
   flex-wrap: wrap;

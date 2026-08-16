@@ -1,3 +1,5 @@
+import { readFileSync, statfsSync } from "node:fs";
+import { availableParallelism, loadavg } from "node:os";
 import { MockAudioService } from "@studybox/audio";
 import { MockButtonController } from "@studybox/buttons";
 import { MockLedController } from "@studybox/led";
@@ -6,7 +8,7 @@ import { MockOledDisplay } from "@studybox/oled";
 import { MockPodcastService } from "@studybox/podcast";
 import { MockSchedulerService } from "@studybox/scheduler";
 import { MockBackupSyncService } from "@studybox/sync";
-import type { BackupSyncService, HardwareState, LedColor, LogEntry, LogLevel, LogResult, LogSource, MeetingService, OledPageId, Recording, RecordingDownload, StudyBoxSettings, StudyBoxSnapshot, SystemMetrics, SystemStatus } from "@studybox/shared";
+import type { BackupSyncService, HardwareState, LedColor, LogEntry, LogLevel, LogResult, LogSource, MeetingService, OledPageId, Participant, Recording, RecordingDownload, StudyBoxSettings, StudyBoxSnapshot, SystemMetrics, SystemStatus } from "@studybox/shared";
 import { LogStore } from "./logStore.js";
 import { projectPath } from "./paths.js";
 import { SettingsStore } from "./settingsStore.js";
@@ -139,6 +141,16 @@ export class StudyBoxAppliance {
   async pressAction(): Promise<StudyBoxSnapshot> {
     await this.buttons.pressAction();
     return this.snapshot();
+  }
+
+  async requestParticipantJoin(displayName: string, context: ActionContext = {}): Promise<Participant> {
+    const participant = await this.meeting.requestParticipantJoin(displayName);
+    await this.logAction("meeting.participant.requestJoin", "Participant entered StudyBox waiting room", context, {
+      participantId: participant.id,
+      displayName: participant.displayName
+    });
+    await this.syncLeds();
+    return participant;
   }
 
   async startMeeting(context: ActionContext = {}): Promise<StudyBoxSnapshot> {
@@ -314,6 +326,11 @@ export class StudyBoxAppliance {
       return;
     }
 
+    if (meeting.waitingRoom[0]) {
+      await this.admitParticipant(meeting.waitingRoom[0].id, { source: "button" });
+      return;
+    }
+
     if (meeting.raisedHands[0]) {
       await this.allowParticipantToSpeak(meeting.raisedHands[0].id, { source: "button" });
       return;
@@ -362,12 +379,11 @@ export class StudyBoxAppliance {
   }
 
   private getMetrics(): SystemMetrics {
-    const now = Date.now();
     return {
-      cpuPercent: 18 + Math.round((Math.sin(now / 8000) + 1) * 12),
-      ssdPercent: 12,
-      wifiConnected: true,
-      temperatureC: 46 + Math.round((Math.sin(now / 12000) + 1) * 4)
+      cpuPercent: getCpuPercent(),
+      ssdPercent: getRootDiskPercent(),
+      wifiConnected: getWifiConnected(),
+      temperatureC: getTemperatureC()
     };
   }
 
@@ -523,4 +539,50 @@ export class StudyBoxAppliance {
   }): Promise<LogEntry> {
     return this.logStore.append(input);
   }
+}
+
+function getCpuPercent(): number {
+  const cores = Math.max(1, availableParallelism());
+  const oneMinuteLoad = loadavg()[0] ?? 0;
+  return clampPercent(Math.round((oneMinuteLoad / cores) * 100));
+}
+
+function getRootDiskPercent(): number {
+  try {
+    const stats = statfsSync("/");
+    const totalBlocks = Number(stats.blocks);
+    const availableBlocks = Number(stats.bavail);
+    if (totalBlocks <= 0) {
+      return 0;
+    }
+    return clampPercent(Math.round(((totalBlocks - availableBlocks) / totalBlocks) * 100));
+  } catch {
+    return 0;
+  }
+}
+
+function getWifiConnected(): boolean {
+  try {
+    const wireless = readFileSync("/proc/net/wireless", "utf8");
+    return wireless.split("\n").some((line) => line.includes(":") && !line.trim().startsWith("Inter-"));
+  } catch {
+    return false;
+  }
+}
+
+function getTemperatureC(): number {
+  try {
+    const raw = readFileSync("/sys/class/thermal/thermal_zone0/temp", "utf8").trim();
+    const milliCelsius = Number(raw);
+    if (Number.isFinite(milliCelsius)) {
+      return Math.round(milliCelsius / 1000);
+    }
+  } catch {
+    // Non-Pi development machines may not expose Linux thermal zones.
+  }
+  return 0;
+}
+
+function clampPercent(value: number): number {
+  return Math.max(0, Math.min(100, value));
 }

@@ -19,12 +19,14 @@ export class MockOledDisplay implements OledDisplay {
       {
         id: "home",
         title: "StudyBox",
-        lines: meeting.raisedHands[0]
+        lines: meeting.waitingRoom[0]
+          ? ["WAITING ROOM", meeting.waitingRoom[0].displayName, "ACTION: Admit"]
+          : meeting.raisedHands[0]
           ? ["HAND RAISED", meeting.raisedHands[0].displayName, "ACTION: Allow"]
           : meeting.activeSpeaker
             ? [`${meeting.activeSpeaker.displayName} LIVE`, "Remote speaker", "ACTION: Mute"]
             : ["READY", "Next Meeting", "Saturday 11:00"],
-        actionLabel: meeting.raisedHands[0] ? "Allow to Speak" : meeting.activeSpeaker ? "Mute Speaker" : undefined
+        actionLabel: meeting.waitingRoom[0] ? "Admit Participant" : meeting.raisedHands[0] ? "Allow to Speak" : meeting.activeSpeaker ? "Mute Speaker" : undefined
       },
       {
         id: "meeting",

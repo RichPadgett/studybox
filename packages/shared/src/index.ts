@@ -317,6 +317,7 @@ export interface BackupSyncService {
 
 export interface MeetingService {
   getState(): MeetingState;
+  requestParticipantJoin(displayName: string): Promise<Participant>;
   startMeeting(): Promise<MeetingState>;
   endMeeting(): Promise<MeetingState>;
   admitParticipant(participantId: string): Promise<MeetingState>;

@@ -1,4 +1,4 @@
-import type { AdminSession, LogEntry, StudyBoxSettings, StudyBoxSnapshot, ZoomDeviceAuthorization } from "@studybox/shared";
+import type { AdminSession, LogEntry, Participant, StudyBoxSettings, StudyBoxSnapshot, ZoomDeviceAuthorization } from "@studybox/shared";
 import {
   Activity,
   AudioLines,
@@ -23,7 +23,7 @@ import {
   Users
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { ApiError, downloadRecording, getSnapshot, loginAdmin, pollZoomDeviceToken, postAction, refreshZoomToken, saveSettings, setAdminToken, startZoomDeviceAuthorization, validateAdminSession } from "./api.js";
+import { ApiError, downloadRecording, getSnapshot, loginAdmin, pollZoomDeviceToken, postAction, refreshZoomToken, requestMeetingJoin, saveSettings, setAdminToken, startZoomDeviceAuthorization, validateAdminSession } from "./api.js";
 
 const navItems = [
   { id: "dashboard", label: "Dashboard", icon: Gauge },
@@ -40,6 +40,7 @@ const navItems = [
 
 type NavId = (typeof navItems)[number]["id"];
 const adminSessionStorageKey = "studybox.adminSession";
+const publicJoinStorageKey = "studybox.publicJoin";
 
 export function App() {
   const [snapshot, setSnapshot] = useState<StudyBoxSnapshot>();
@@ -213,6 +214,29 @@ function PublicJoinPage({ snapshot, error }: { snapshot: StudyBoxSnapshot; error
   const joinUrl = getZoomJoinUrl(snapshot);
   const zoomHostConnected = isZoomHostConnected(snapshot);
   const recordingLive = snapshot.podcast.status === "recording" || snapshot.podcast.status === "paused";
+  const [displayName, setDisplayName] = useState("");
+  const [participant, setParticipant] = useState<Participant | undefined>(() => readStoredPublicParticipant());
+  const [joining, setJoining] = useState(false);
+  const [joinError, setJoinError] = useState<string>();
+  const waitingParticipant = participant ? snapshot.meeting.waitingRoom.find((item) => item.id === participant.id) : undefined;
+  const admittedParticipant = participant ? snapshot.meeting.participants.find((item) => item.id === participant.id) : undefined;
+  const activeRequest = Boolean(waitingParticipant || admittedParticipant);
+
+  async function submitJoinRequest(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setJoining(true);
+    setJoinError(undefined);
+    try {
+      const requestedParticipant = await requestMeetingJoin(displayName);
+      setParticipant(requestedParticipant);
+      setDisplayName("");
+      window.localStorage.setItem(publicJoinStorageKey, JSON.stringify(requestedParticipant));
+    } catch (caught) {
+      setJoinError(caught instanceof Error ? caught.message : "Unable to enter StudyBox waiting room");
+    } finally {
+      setJoining(false);
+    }
+  }
 
   return (
     <main className="publicPage">
@@ -236,21 +260,37 @@ function PublicJoinPage({ snapshot, error }: { snapshot: StudyBoxSnapshot; error
         <img className="joinLogo" src="/assets/church-of-the-word.png" alt="Church of the Word" />
         <div className="meetingStatus">
           <span className={`liveDot ${zoomHostConnected ? "on" : ""}`} />
-          <span>{zoomHostConnected ? "Zoom host connected" : "Zoom link ready"}</span>
+          <span>{zoomHostConnected ? "Zoom host connected" : "StudyBox room ready"}</span>
         </div>
         <h1>Weekly Bible Study</h1>
-        <p>{zoomHostConnected ? "Join the Zoom meeting from your phone, tablet, or computer." : `If Zoom says it is waiting for the host, the StudyBox host has not started the Zoom room yet. Next meeting: ${snapshot.settings.schedule.dayOfWeek} at ${snapshot.settings.schedule.time}`}</p>
-        {joinUrl ? (
+        <p>{activeRequest ? admittedParticipant ? "You have been admitted by StudyBox." : "You are in the StudyBox waiting room. Please wait for the room assistant." : `Enter the StudyBox room first. Next meeting: ${snapshot.settings.schedule.dayOfWeek} at ${snapshot.settings.schedule.time}`}</p>
+        {admittedParticipant && joinUrl ? (
           <a className="joinButton" href={joinUrl} target="_blank" rel="noreferrer">
             <ExternalLink size={22} />
             Join Bible Study Zoom
           </a>
-        ) : (
+        ) : admittedParticipant ? (
           <button className="joinButton disabled" disabled>
             <ExternalLink size={22} />
             Join Link Not Set
           </button>
+        ) : waitingParticipant ? (
+          <div className="waitingCard">
+            <Users size={22} />
+            <span>{waitingParticipant.displayName} is waiting for admission</span>
+          </div>
+        ) : (
+          <form className="joinRequestForm" onSubmit={(event) => void submitJoinRequest(event)}>
+            <input
+              aria-label="Your name"
+              placeholder="Your name"
+              value={displayName}
+              onChange={(event) => setDisplayName(event.target.value)}
+            />
+            <button disabled={joining || displayName.trim().length === 0}>{joining ? "Entering..." : "Enter StudyBox Room"}</button>
+          </form>
         )}
+        {joinError ? <div className="publicNotice errorBanner">{joinError}</div> : null}
         <div className="publicMeta">
           <span><CalendarClock size={17} /> {snapshot.settings.schedule.timezone}</span>
           <span><Users size={17} /> {snapshot.meeting.participants.length} online</span>
@@ -301,12 +341,6 @@ function Meeting({ snapshot, run, compact = false }: { snapshot: StudyBoxSnapsho
       {!compact ? (
         <div className="toolbar">
           <Command icon={<Users size={17} />} label={meetingPrimaryAction(snapshot)} onClick={() => run(snapshot.meeting.status === "live" ? "/api/meeting/end" : "/api/meeting/start")} />
-          {getZoomJoinUrl(snapshot) ? (
-            <a className="command" href={getZoomJoinUrl(snapshot)} target="_blank" rel="noreferrer">
-              <ExternalLink size={17} />
-              <span>Open Zoom Host Link</span>
-            </a>
-          ) : null}
         </div>
       ) : null}
       <div className="twoColumn">
@@ -692,10 +726,10 @@ function Diagnostics({ snapshot }: { snapshot: StudyBoxSnapshot }) {
   return (
     <div className="stack">
       <div className="metricGrid">
-        <Metric label="CPU" value={`${snapshot.metrics.cpuPercent}%`} detail="placeholder until Pi metrics are wired" />
+        <Metric label="CPU" value={`${snapshot.metrics.cpuPercent}%`} detail="1-minute load across CPU cores" />
         <Metric label="Storage" value={`${snapshot.metrics.ssdPercent}%`} detail="microSD now, NVMe later" />
         <Metric label="WiFi" value={snapshot.metrics.wifiConnected ? "Connected" : "Offline"} detail={snapshot.settings.wifi.ssid || "Ethernet preferred"} />
-        <Metric label="Temperature" value={`${snapshot.metrics.temperatureC}C`} detail="placeholder until Pi metrics are wired" />
+        <Metric label="Temperature" value={`${snapshot.metrics.temperatureC}C`} detail="Pi thermal sensor" />
       </div>
       <div className="metricGrid">
         <Metric label="Zoom Mode" value={snapshot.zoom.mode} detail={snapshot.zoom.configured ? "credentials loaded" : "credentials missing"} />
@@ -899,4 +933,18 @@ function readStoredAdminSession(): AdminSession | undefined {
 
   window.localStorage.removeItem(adminSessionStorageKey);
   return undefined;
+}
+
+function readStoredPublicParticipant(): Participant | undefined {
+  const stored = window.localStorage.getItem(publicJoinStorageKey);
+  if (!stored) {
+    return undefined;
+  }
+
+  try {
+    return JSON.parse(stored) as Participant;
+  } catch {
+    window.localStorage.removeItem(publicJoinStorageKey);
+    return undefined;
+  }
 }
