@@ -211,7 +211,7 @@ export function App() {
 
 function PublicJoinPage({ snapshot, error }: { snapshot: StudyBoxSnapshot; error?: string }) {
   const joinUrl = getZoomJoinUrl(snapshot);
-  const meetingLive = snapshot.meeting.status === "live";
+  const zoomHostConnected = isZoomHostConnected(snapshot);
   const recordingLive = snapshot.podcast.status === "recording" || snapshot.podcast.status === "paused";
 
   return (
@@ -235,11 +235,11 @@ function PublicJoinPage({ snapshot, error }: { snapshot: StudyBoxSnapshot; error
       <section className="joinSurface">
         <img className="joinLogo" src="/assets/church-of-the-word.png" alt="Church of the Word" />
         <div className="meetingStatus">
-          <span className={`liveDot ${meetingLive ? "on" : ""}`} />
-          <span>{meetingLive ? "Meeting live now" : "Meeting ready"}</span>
+          <span className={`liveDot ${zoomHostConnected ? "on" : ""}`} />
+          <span>{zoomHostConnected ? "Zoom host connected" : "Zoom link ready"}</span>
         </div>
         <h1>Weekly Bible Study</h1>
-        <p>{meetingLive ? "Join the Zoom meeting from your phone, tablet, or computer." : `Next meeting: ${snapshot.settings.schedule.dayOfWeek} at ${snapshot.settings.schedule.time}`}</p>
+        <p>{zoomHostConnected ? "Join the Zoom meeting from your phone, tablet, or computer." : `If Zoom says it is waiting for the host, the StudyBox host has not started the Zoom room yet. Next meeting: ${snapshot.settings.schedule.dayOfWeek} at ${snapshot.settings.schedule.time}`}</p>
         {joinUrl ? (
           <a className="joinButton" href={joinUrl} target="_blank" rel="noreferrer">
             <ExternalLink size={22} />
@@ -271,7 +271,7 @@ function Dashboard({ snapshot, run }: { snapshot: StudyBoxSnapshot; run: (path: 
         <Metric label="Next Meeting" value={`${snapshot.settings.schedule.dayOfWeek}`} detail={snapshot.settings.schedule.time} />
       </div>
       <div className="toolbar">
-        <Command icon={<Users size={17} />} label={snapshot.meeting.status === "live" ? "End Meeting" : "Start Meeting"} onClick={() => run(snapshot.meeting.status === "live" ? "/api/meeting/end" : "/api/meeting/start")} />
+        <Command icon={<Users size={17} />} label={meetingPrimaryAction(snapshot)} onClick={() => run(snapshot.meeting.status === "live" ? "/api/meeting/end" : "/api/meeting/start")} />
         <Command icon={<Mic size={17} />} label={podcastPrimaryAction(snapshot)} onClick={() => run(podcastPrimaryPath(snapshot))} />
         <Command icon={<Square size={17} />} label="Finish Recording" onClick={() => run("/api/podcast/stop")} disabled={snapshot.podcast.status === "idle"} />
       </div>
@@ -300,7 +300,13 @@ function Meeting({ snapshot, run, compact = false }: { snapshot: StudyBoxSnapsho
       ) : null}
       {!compact ? (
         <div className="toolbar">
-          <Command icon={<Users size={17} />} label={snapshot.meeting.status === "live" ? "End Meeting" : "Start Meeting"} onClick={() => run(snapshot.meeting.status === "live" ? "/api/meeting/end" : "/api/meeting/start")} />
+          <Command icon={<Users size={17} />} label={meetingPrimaryAction(snapshot)} onClick={() => run(snapshot.meeting.status === "live" ? "/api/meeting/end" : "/api/meeting/start")} />
+          {getZoomJoinUrl(snapshot) ? (
+            <a className="command" href={getZoomJoinUrl(snapshot)} target="_blank" rel="noreferrer">
+              <ExternalLink size={17} />
+              <span>Open Zoom Host Link</span>
+            </a>
+          ) : null}
         </div>
       ) : null}
       <div className="twoColumn">
@@ -827,6 +833,15 @@ function getZoomJoinUrl(snapshot: StudyBoxSnapshot): string | undefined {
 
   const meetingNumber = snapshot.settings.zoom.meetingNumber.replace(/\D/g, "");
   return meetingNumber ? `https://zoom.us/j/${meetingNumber}` : undefined;
+}
+
+function isZoomHostConnected(snapshot: StudyBoxSnapshot): boolean {
+  return snapshot.meeting.status === "live" && snapshot.zoom.mode === "runner" && snapshot.zoom.runnerAvailable;
+}
+
+function meetingPrimaryAction(snapshot: StudyBoxSnapshot): string {
+  if (snapshot.meeting.status === "live") return "End Local Session";
+  return snapshot.zoom.mode === "runner" && snapshot.zoom.runnerAvailable ? "Start Zoom Meeting" : "Start Local Session";
 }
 
 function podcastPrimaryAction(snapshot: StudyBoxSnapshot): string {

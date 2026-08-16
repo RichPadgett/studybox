@@ -428,6 +428,7 @@ h1 {
   gap: 8px;
   min-height: 38px;
   padding: 0 13px;
+  text-decoration: none;
 }
 
 .command:disabled,
