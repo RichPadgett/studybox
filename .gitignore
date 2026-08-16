@@ -8,3 +8,4 @@ dist-types/
 .env.*
 !.env.example
 data/
+native/zoom-runner/build/

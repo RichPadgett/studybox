@@ -153,6 +153,7 @@ export interface MeetingModerationSettings {
 
 export interface ZoomSettings {
   meetingNumber: string;
+  passcode?: string;
   joinUrl?: string;
   displayName: string;
   clientIdConfigured?: boolean;
@@ -380,8 +381,16 @@ export interface AudioService {
   setSpeakerOutputDevice(deviceId: string): Promise<AudioServiceState>;
 }
 
+export interface ZoomRunnerStartMeetingPayload {
+  meetingNumber: string;
+  password?: string;
+  displayName: string;
+  sdkJwt: string;
+  zak: string;
+}
+
 export type ZoomRunnerCommand =
-  | { id: string; type: "startMeeting" }
+  | ({ id: string; type: "startMeeting" } & Partial<ZoomRunnerStartMeetingPayload>)
   | { id: string; type: "endMeeting" }
   | { id: string; type: "admitParticipant"; participantId: string }
   | { id: string; type: "dismissRaisedHand"; participantId: string }

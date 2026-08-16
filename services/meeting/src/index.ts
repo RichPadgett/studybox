@@ -1,4 +1,4 @@
-import type { MeetingModerationMode, MeetingService, MeetingState, Participant } from "@studybox/shared";
+import type { MeetingModerationMode, MeetingService, MeetingState, Participant, ZoomRunnerStartMeetingPayload } from "@studybox/shared";
 
 export class MockMeetingService implements MeetingService {
   private state: MeetingState = {
@@ -166,7 +166,7 @@ export class MockMeetingService implements MeetingService {
 }
 
 export interface ZoomMeetingRunnerClient {
-  startMeeting(): Promise<void>;
+  startMeeting(payload?: ZoomRunnerStartMeetingPayload): Promise<void>;
   endMeeting(): Promise<void>;
   admitParticipant(participantId: string): Promise<void>;
   dismissRaisedHand(participantId: string): Promise<void>;
@@ -188,7 +188,10 @@ export class ZoomMeetingService implements MeetingService {
     lastEvent: "Zoom runner adapter initialized"
   };
 
-  constructor(private readonly runner: ZoomMeetingRunnerClient) {}
+  constructor(
+    private readonly runner: ZoomMeetingRunnerClient,
+    private readonly getStartPayload?: () => Promise<ZoomRunnerStartMeetingPayload>
+  ) {}
 
   getState(): MeetingState {
     return this.state;
@@ -221,7 +224,7 @@ export class ZoomMeetingService implements MeetingService {
       status: "starting",
       lastEvent: "Starting Zoom meeting through runner"
     };
-    await this.runner.startMeeting();
+    await this.runner.startMeeting(this.getStartPayload ? await this.getStartPayload() : undefined);
     return this.refreshState();
   }
 
@@ -272,7 +275,7 @@ export class ZoomMeetingService implements MeetingService {
 }
 
 export class MissingZoomRunnerClient implements ZoomMeetingRunnerClient {
-  async startMeeting(): Promise<void> {
+  async startMeeting(_payload?: ZoomRunnerStartMeetingPayload): Promise<void> {
     throw new Error("Zoom runner is not available. Build and configure the ARM64 Meeting SDK runner first.");
   }
 

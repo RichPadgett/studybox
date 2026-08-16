@@ -55,7 +55,9 @@ async function execute(command: ZoomRunnerCommand): Promise<ZoomRunnerResponse> 
       participants,
       waitingRoom: [...initialWaitingRoom],
       raisedHands: participants.filter((participant) => participant.status === "raised-hand"),
-      lastEvent: "Mock runner marked meeting live; no Zoom participants are synced"
+      lastEvent: command.meetingNumber
+        ? `Mock runner received host start payload for meeting ${redactMeetingNumber(command.meetingNumber)}`
+        : "Mock runner marked meeting live; no Zoom participants are synced"
     };
     emit({ type: "meeting.state", state });
     return { id: command.id, ok: true, state };
@@ -181,4 +183,9 @@ function writeResponse(response: ZoomRunnerResponse): void {
 
 function emit(event: ZoomRunnerEvent): void {
   process.stdout.write(`${JSON.stringify({ kind: "event", ...event })}\n`);
+}
+
+function redactMeetingNumber(meetingNumber: string): string {
+  const digits = meetingNumber.replace(/\D/g, "");
+  return digits.length > 4 ? `...${digits.slice(-4)}` : "configured";
 }

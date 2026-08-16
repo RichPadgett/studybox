@@ -1,6 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface } from "node:readline";
-import type { MeetingModerationMode, MeetingState, ZoomRunnerCommand, ZoomRunnerResponse } from "@studybox/shared";
+import type { MeetingModerationMode, MeetingState, ZoomRunnerCommand, ZoomRunnerResponse, ZoomRunnerStartMeetingPayload } from "@studybox/shared";
 import type { ZoomMeetingRunnerClient } from "@studybox/meeting";
 import { projectPath } from "./paths.js";
 
@@ -25,8 +25,8 @@ export class ZoomRunnerProcessClient implements ZoomMeetingRunnerClient {
 
   constructor(private readonly command: string, private readonly args: string[] = []) {}
 
-  async startMeeting(): Promise<void> {
-    await this.send({ id: createId(), type: "startMeeting" });
+  async startMeeting(payload?: ZoomRunnerStartMeetingPayload): Promise<void> {
+    await this.send({ id: createId(), type: "startMeeting", ...payload });
   }
 
   async endMeeting(): Promise<void> {

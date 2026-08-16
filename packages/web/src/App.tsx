@@ -641,6 +641,7 @@ function SettingsView({ snapshot, saving, save, adminUnlocked, lockAdmin }: { sn
       <Panel title="Zoom">
         <div className="formGrid">
           <label>Meeting Number<input value={draft.zoom.meetingNumber} onChange={(event) => updateDraft({ ...draft, zoom: { ...draft.zoom, meetingNumber: event.target.value } })} /></label>
+          <label>Passcode<input value={draft.zoom.passcode ?? ""} onChange={(event) => updateDraft({ ...draft, zoom: { ...draft.zoom, passcode: event.target.value } })} /></label>
           <label>Join URL<input value={draft.zoom.joinUrl ?? ""} onChange={(event) => updateDraft({ ...draft, zoom: { ...draft.zoom, joinUrl: event.target.value } })} /></label>
           <label>Display Name<input value={draft.zoom.displayName} onChange={(event) => updateDraft({ ...draft, zoom: { ...draft.zoom, displayName: event.target.value } })} /></label>
           <label>Redirect URI<input value={draft.zoom.redirectUri ?? ""} onChange={(event) => updateDraft({ ...draft, zoom: { ...draft.zoom, redirectUri: event.target.value } })} /></label>

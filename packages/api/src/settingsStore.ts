@@ -22,6 +22,7 @@ export const defaultSettings: StudyBoxSettings = {
   },
   zoom: {
     meetingNumber: "",
+    passcode: "",
     joinUrl: "",
     displayName: "StudyBox",
     clientIdConfigured: false,

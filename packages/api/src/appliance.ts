@@ -14,6 +14,8 @@ import { projectPath } from "./paths.js";
 import { SettingsStore } from "./settingsStore.js";
 import { getZoomConfig, getZoomRuntimeStatus } from "./zoomConfig.js";
 import { ZoomRunnerProcessClient } from "./zoomRunnerProcessClient.js";
+import { createZoomSdkJwt } from "./zoomSdkJwt.js";
+import { ZoomZakService } from "./zoomZakService.js";
 
 export interface ActionContext {
   actor?: string;
@@ -81,7 +83,21 @@ export class StudyBoxAppliance {
       ? new ZoomMeetingService(
           zoomConfig.runnerCommand
             ? new ZoomRunnerProcessClient(zoomConfig.runnerCommand, zoomConfig.runnerArgs)
-            : new MissingZoomRunnerClient()
+            : new MissingZoomRunnerClient(),
+          async () => {
+            const settings = this.settingsStore.get();
+            if (!settings.zoom.meetingNumber.trim()) {
+              throw new Error("Zoom meeting number is required before StudyBox can start Zoom.");
+            }
+
+            return {
+              meetingNumber: settings.zoom.meetingNumber,
+              password: settings.zoom.passcode,
+              displayName: settings.zoom.displayName || "StudyBox",
+              sdkJwt: createZoomSdkJwt(getZoomConfig()),
+              zak: await new ZoomZakService().getZak()
+            };
+          }
         )
       : new MockMeetingService();
   }

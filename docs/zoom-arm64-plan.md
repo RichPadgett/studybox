@@ -8,6 +8,7 @@ StudyBox targets the Zoom Meeting SDK for Linux ARM64 on Raspberry Pi 5. The Typ
 - `packages/api/src/zoomConfig.ts` reads Zoom env safely and exposes readiness without secrets.
 - `packages/api/src/zoomSdkJwt.ts` creates the Meeting SDK JWT with Client ID and Client Secret.
 - `services/meeting/src/index.ts` now includes `ZoomMeetingService`, `ZoomMeetingRunnerClient`, and `MissingZoomRunnerClient`.
+- `native/zoom-runner` now builds a C++ StudyBox runner process that speaks the JSON-line runner protocol. Its default adapter validates host-start payloads and reports that the Zoom SDK is not linked yet.
 - API endpoints:
   - `GET /api/zoom/status`
   - `POST /api/zoom/sdk-jwt`
@@ -27,6 +28,8 @@ ZOOM_WEBHOOK_SECRET_TOKEN=
 ZOOM_MEETING_MODE=mock
 ZOOM_SDK_ARCH=linux-arm64
 ZOOM_RUNNER_PATH=./native/zoom-runner/build/studybox-zoom-runner
+ZOOM_RUNNER_COMMAND=./native/zoom-runner/build/studybox-zoom-runner
+ZOOM_RUNNER_ARGS=
 ```
 
 Switch to the real runner later with:
@@ -63,12 +66,14 @@ Initial events:
 
 1. Copy `zoom-meeting-sdk-linux_arm64-*` to the Pi.
 2. Install Zoom Linux SDK dependencies from the headless sample Dockerfile as native apt packages.
-3. Build the native runner with CMake against the ARM64 SDK.
-4. Confirm SDK authentication using `POST /api/zoom/sdk-jwt`.
-5. Start or join a test meeting.
-6. Confirm audio device selection with the DJI Mic receiver.
-7. Confirm waiting room and participant callbacks.
-8. Run the runner under systemd and verify restart behavior.
+3. Build the native runner stub with `npm run build -w @studybox/zoom-runner`.
+4. Build the native runner with CMake against the ARM64 SDK.
+5. Confirm SDK authentication using `POST /api/zoom/sdk-jwt`.
+6. Confirm host ZAK retrieval using `GET /api/zoom/zak/status`.
+7. Start or join a test meeting.
+8. Confirm audio device selection with the DJI Mic receiver.
+9. Confirm waiting room and participant callbacks.
+10. Run the runner under systemd and verify restart behavior.
 
 ## Design Constraints
 

@@ -1,0 +1,10 @@
+{
+  "name": "@studybox/zoom-runner",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "mkdir -p build && cd build && cmake .. && cmake --build .",
+    "clean": "rm -rf build",
+    "start": "./build/studybox-zoom-runner"
+  }
+}
