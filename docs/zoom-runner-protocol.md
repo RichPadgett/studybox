@@ -81,3 +81,14 @@ cd build
 cmake .. -DSTUDYBOX_ENABLE_ZOOM_SDK=ON -DZOOM_SDK_ROOT=/opt/zoom/meeting-sdk-linux-arm64
 cmake --build .
 ```
+
+For the ARM64 7.1.5 archive currently used by StudyBox, the SDK root is `/opt/zoom`, so the Pi build command is:
+
+```bash
+cd /opt/studybox/native/zoom-runner
+rm -rf build-sdk
+mkdir build-sdk
+cd build-sdk
+cmake .. -DSTUDYBOX_ENABLE_ZOOM_SDK=ON -DZOOM_SDK_ROOT=/opt/zoom
+cmake --build .
+```

@@ -9,3 +9,4 @@ dist-types/
 !.env.example
 data/
 native/zoom-runner/build/
+native/zoom-runner/build-sdk/

@@ -8,11 +8,18 @@ set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-add_executable(studybox-zoom-runner
+set(STUDYBOX_ZOOM_RUNNER_SOURCES
   src/main.cpp
   src/protocol.cpp
-  src/stub_zoom_adapter.cpp
 )
+
+if(STUDYBOX_ENABLE_ZOOM_SDK)
+  list(APPEND STUDYBOX_ZOOM_RUNNER_SOURCES src/zoom_sdk_adapter.cpp)
+else()
+  list(APPEND STUDYBOX_ZOOM_RUNNER_SOURCES src/stub_zoom_adapter.cpp)
+endif()
+
+add_executable(studybox-zoom-runner ${STUDYBOX_ZOOM_RUNNER_SOURCES})
 
 target_include_directories(studybox-zoom-runner PRIVATE src)
 
@@ -24,5 +31,6 @@ if(STUDYBOX_ENABLE_ZOOM_SDK)
   target_compile_definitions(studybox-zoom-runner PRIVATE STUDYBOX_ENABLE_ZOOM_SDK=1)
   target_include_directories(studybox-zoom-runner PRIVATE "${ZOOM_SDK_ROOT}/h")
   link_directories("${ZOOM_SDK_ROOT}/lib")
+  target_link_libraries(studybox-zoom-runner PRIVATE "${ZOOM_SDK_ROOT}/libmeetingsdk.so" pthread dl)
   message(STATUS "Zoom SDK adapter is enabled; SDK root: ${ZOOM_SDK_ROOT}")
 endif()

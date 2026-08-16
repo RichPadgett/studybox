@@ -65,15 +65,49 @@ Initial events:
 ## ARM64 Validation Steps
 
 1. Copy `zoom-meeting-sdk-linux_arm64-*` to the Pi.
-2. Install Zoom Linux SDK dependencies from the headless sample Dockerfile as native apt packages.
-3. Build the native runner stub with `npm run build -w @studybox/zoom-runner`.
-4. Build the native runner with CMake against the ARM64 SDK.
-5. Confirm SDK authentication using `POST /api/zoom/sdk-jwt`.
-6. Confirm host ZAK retrieval using `GET /api/zoom/zak/status`.
-7. Start or join a test meeting.
-8. Confirm audio device selection with the DJI Mic receiver.
-9. Confirm waiting room and participant callbacks.
-10. Run the runner under systemd and verify restart behavior.
+2. Install Zoom Linux SDK dependencies from the official Linux SDK docs as native apt packages:
+
+```bash
+sudo apt install -y \
+  build-essential cmake pkgconf libgtkmm-3.0-dev \
+  libx11-xcb1 libxcb-xfixes0 libxcb-shape0 libxcb-shm0 \
+  libxcb-randr0 libxcb-image0 libxcb-keysyms1 libxcb-xtest0
+```
+
+3. Unpack the ARM64 SDK on the Pi:
+
+```bash
+sudo mkdir -p /opt/zoom
+sudo tar -xf ~/zoom-meeting-sdk-linux_arm64-*.tar.xz -C /opt/zoom
+sudo chown -R studybox:studybox /opt/zoom
+```
+
+The 7.1.5 ARM64 archive currently unpacks directly into `/opt/zoom` with `h/`, `qt_libs/`, `libglib2/`, and `libmeetingsdk.so`.
+
+4. Build the native runner stub with `npm run build -w @studybox/zoom-runner`.
+5. Build the native runner with CMake against the ARM64 SDK:
+
+```bash
+cd /opt/studybox/native/zoom-runner
+rm -rf build-sdk
+mkdir build-sdk
+cd build-sdk
+cmake .. -DSTUDYBOX_ENABLE_ZOOM_SDK=ON -DZOOM_SDK_ROOT=/opt/zoom
+cmake --build .
+```
+
+6. Verify dynamic linking:
+
+```bash
+ldd /opt/studybox/native/zoom-runner/build-sdk/studybox-zoom-runner
+```
+
+7. Confirm SDK authentication using `POST /api/zoom/sdk-jwt`.
+8. Confirm host ZAK retrieval using `GET /api/zoom/zak/status`.
+9. Start or join a test meeting.
+10. Confirm audio device selection with the DJI Mic receiver.
+11. Confirm waiting room and participant callbacks.
+12. Run the runner under systemd and verify restart behavior.
 
 ## Design Constraints
 
