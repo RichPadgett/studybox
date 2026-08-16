@@ -190,6 +190,46 @@ Tmux windows:
 1: Web, npm run dev -w @studybox/web
 ```
 
+## Boot Services
+
+Initial systemd units live in:
+
+```text
+deploy/systemd/studybox-api.service
+deploy/systemd/studybox-web.service
+```
+
+The first version intentionally mirrors the manual test:
+
+- API runs on `4000`.
+- Web UI runs on `5173`.
+- Both run as the `studybox` user from `/opt/studybox`.
+- Optional environment values can be placed in `/etc/studybox/studybox.env`.
+
+Install them on the Pi:
+
+```bash
+sudo cp deploy/systemd/studybox-api.service /etc/systemd/system/studybox-api.service
+sudo cp deploy/systemd/studybox-web.service /etc/systemd/system/studybox-web.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now studybox-api.service studybox-web.service
+```
+
+Check status and logs:
+
+```bash
+systemctl status studybox-api.service --no-pager
+systemctl status studybox-web.service --no-pager
+journalctl -u studybox-api.service -f
+journalctl -u studybox-web.service -f
+```
+
+Stop the manual tmux session before enabling the services, otherwise ports `4000` and `5173` may already be in use:
+
+```bash
+tmux kill-session -t studybox
+```
+
 ## Next Step
 
-After the manual run works, add systemd service files so StudyBox starts automatically on boot.
+Replace the temporary Vite web service with a production static web service or Nginx reverse proxy before treating the Pi image as final.
