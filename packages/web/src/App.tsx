@@ -2,10 +2,12 @@ import type { AdminSession, LogEntry, StudyBoxSettings, StudyBoxSnapshot, ZoomDe
 import {
   Activity,
   AudioLines,
+  CalendarClock,
   CloudUpload,
   ClipboardList,
   Disc3,
   Download,
+  ExternalLink,
   Gauge,
   Hand,
   KeyRound,
@@ -46,6 +48,7 @@ export function App() {
   const [saving, setSaving] = useState(false);
   const [adminSession, setAdminSession] = useState<AdminSession>();
   const adminUnlocked = isAdminSessionActive(adminSession);
+  const isAdminRoute = window.location.pathname === "/admin" || window.location.pathname.startsWith("/admin/");
 
   async function refresh() {
     try {
@@ -141,6 +144,10 @@ export function App() {
     );
   }
 
+  if (!isAdminRoute) {
+    return <PublicJoinPage snapshot={snapshot} error={error} />;
+  }
+
   return (
     <div className="appShell">
       <aside className="sidebar">
@@ -199,6 +206,57 @@ export function App() {
         </section>
       </main>
     </div>
+  );
+}
+
+function PublicJoinPage({ snapshot, error }: { snapshot: StudyBoxSnapshot; error?: string }) {
+  const joinUrl = getZoomJoinUrl(snapshot);
+  const meetingLive = snapshot.meeting.status === "live";
+  const recordingLive = snapshot.podcast.status === "recording" || snapshot.podcast.status === "paused";
+
+  return (
+    <main className="publicPage">
+      <section className="publicHeader">
+        <div className="publicBrand">
+          <Radio size={28} />
+          <div>
+            <strong>StudyBox</strong>
+            <span>Bible Study Zoom</span>
+          </div>
+        </div>
+        <a className="adminLink" href="/admin">
+          <KeyRound size={16} />
+          Admin
+        </a>
+      </section>
+
+      {error ? <div className="publicNotice errorBanner">{error}</div> : null}
+
+      <section className="joinSurface">
+        <div className="meetingStatus">
+          <span className={`liveDot ${meetingLive ? "on" : ""}`} />
+          <span>{meetingLive ? "Meeting live now" : "Meeting ready"}</span>
+        </div>
+        <h1>Weekly Bible Study</h1>
+        <p>{meetingLive ? "Join the Zoom meeting from your phone, tablet, or computer." : `Next meeting: ${snapshot.settings.schedule.dayOfWeek} at ${snapshot.settings.schedule.time}`}</p>
+        {joinUrl ? (
+          <a className="joinButton" href={joinUrl} target="_blank" rel="noreferrer">
+            <ExternalLink size={22} />
+            Join Bible Study Zoom
+          </a>
+        ) : (
+          <button className="joinButton disabled" disabled>
+            <ExternalLink size={22} />
+            Join Link Not Set
+          </button>
+        )}
+        <div className="publicMeta">
+          <span><CalendarClock size={17} /> {snapshot.settings.schedule.timezone}</span>
+          <span><Users size={17} /> {snapshot.meeting.participants.length} online</span>
+          <span><Mic size={17} /> {recordingLive ? "Recording active" : "Podcast idle"}</span>
+        </div>
+      </section>
+    </main>
   );
 }
 
@@ -522,6 +580,7 @@ function SettingsView({ snapshot, saving, save, adminUnlocked, lockAdmin }: { sn
       <Panel title="Zoom">
         <div className="formGrid">
           <label>Meeting Number<input value={draft.zoom.meetingNumber} onChange={(event) => setDraft({ ...draft, zoom: { ...draft.zoom, meetingNumber: event.target.value } })} /></label>
+          <label>Join URL<input value={draft.zoom.joinUrl ?? ""} onChange={(event) => setDraft({ ...draft, zoom: { ...draft.zoom, joinUrl: event.target.value } })} /></label>
           <label>Display Name<input value={draft.zoom.displayName} onChange={(event) => setDraft({ ...draft, zoom: { ...draft.zoom, displayName: event.target.value } })} /></label>
           <label>Redirect URI<input value={draft.zoom.redirectUri ?? ""} onChange={(event) => setDraft({ ...draft, zoom: { ...draft.zoom, redirectUri: event.target.value } })} /></label>
         </div>
@@ -607,7 +666,7 @@ function Diagnostics({ snapshot }: { snapshot: StudyBoxSnapshot }) {
     <div className="stack">
       <div className="metricGrid">
         <Metric label="CPU" value={`${snapshot.metrics.cpuPercent}%`} detail="mock telemetry" />
-        <Metric label="SSD" value={`${snapshot.metrics.ssdPercent}%`} detail="NVMe storage" />
+        <Metric label="Storage" value={`${snapshot.metrics.ssdPercent}%`} detail="microSD now, NVMe later" />
         <Metric label="WiFi" value={snapshot.metrics.wifiConnected ? "Connected" : "Offline"} detail={snapshot.settings.wifi.ssid || "Ethernet preferred"} />
         <Metric label="Temperature" value={`${snapshot.metrics.temperatureC}C`} detail="Pi active cooler" />
       </div>
@@ -668,12 +727,17 @@ function Logs({ logs }: { logs: LogEntry[] }) {
 }
 
 function NetworkView({ snapshot }: { snapshot: StudyBoxSnapshot }) {
+  const host = window.location.host || "localhost:5173";
+  const hostname = window.location.hostname;
+  const publicAccess = window.location.protocol === "https:" && !["localhost", "127.0.0.1"].includes(hostname);
+  const tunnelHostname = snapshot.settings.cloudflare.hostname || (publicAccess ? hostname : "");
+
   return (
     <div className="metricGrid">
       <Metric label="WiFi" value={snapshot.settings.wifi.configured ? snapshot.settings.wifi.ssid : "Not configured"} detail={snapshot.metrics.wifiConnected ? "Connected" : "Offline"} />
-      <Metric label="Tunnel" value={snapshot.settings.cloudflare.tunnelEnabled ? "Enabled" : "Disabled"} detail={snapshot.settings.cloudflare.hostname || "No hostname"} />
-      <Metric label="Access" value="Local" detail="Cloudflare Tunnel later" />
-      <Metric label="API" value="Online" detail="localhost:4000" />
+      <Metric label="Tunnel" value={tunnelHostname ? "Available" : "Not configured"} detail={tunnelHostname || "No public hostname detected"} />
+      <Metric label="Access" value={publicAccess ? "Public" : "Local"} detail={host} />
+      <Metric label="API" value="Online" detail={`${window.location.origin}/api`} />
     </div>
   );
 }
@@ -732,6 +796,16 @@ function statusCopy(snapshot: StudyBoxSnapshot): string {
   if (snapshot.systemStatus === "attention") return "Waiting room or raised hand needs attention";
   if (snapshot.meeting.status === "live") return "Meeting is live";
   return "Ready for the next scheduled study";
+}
+
+function getZoomJoinUrl(snapshot: StudyBoxSnapshot): string | undefined {
+  const configuredUrl = snapshot.settings.zoom.joinUrl?.trim();
+  if (configuredUrl) {
+    return configuredUrl;
+  }
+
+  const meetingNumber = snapshot.settings.zoom.meetingNumber.replace(/\D/g, "");
+  return meetingNumber ? `https://zoom.us/j/${meetingNumber}` : undefined;
 }
 
 function podcastPrimaryAction(snapshot: StudyBoxSnapshot): string {

@@ -153,6 +153,7 @@ export interface MeetingModerationSettings {
 
 export interface ZoomSettings {
   meetingNumber: string;
+  joinUrl?: string;
   displayName: string;
   clientIdConfigured?: boolean;
   sdkSecretConfigured: boolean;

@@ -26,6 +26,149 @@ input {
   justify-content: center;
 }
 
+.publicPage {
+  background: #eef2ef;
+  color: #17211c;
+  display: grid;
+  gap: 24px;
+  min-height: 100vh;
+  padding: 24px;
+}
+
+.publicHeader {
+  align-items: center;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  margin: 0 auto;
+  max-width: 860px;
+  width: 100%;
+}
+
+.publicBrand {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+}
+
+.publicBrand strong,
+.publicBrand span {
+  display: block;
+}
+
+.publicBrand span {
+  color: #62736a;
+  font-size: 13px;
+  margin-top: 2px;
+}
+
+.adminLink {
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid #d6dfd9;
+  border-radius: 6px;
+  color: #244638;
+  display: inline-flex;
+  font-weight: 800;
+  gap: 8px;
+  min-height: 38px;
+  padding: 0 12px;
+  text-decoration: none;
+}
+
+.joinSurface {
+  align-self: center;
+  background: #ffffff;
+  border: 1px solid #d6dfd9;
+  border-radius: 8px;
+  display: grid;
+  gap: 18px;
+  margin: 0 auto;
+  max-width: 860px;
+  padding: 34px;
+  width: 100%;
+}
+
+.joinSurface h1 {
+  font-size: 42px;
+  line-height: 1.05;
+}
+
+.joinSurface p {
+  color: #52645b;
+  font-size: 18px;
+  line-height: 1.45;
+  max-width: 620px;
+}
+
+.meetingStatus {
+  align-items: center;
+  color: #52645b;
+  display: flex;
+  font-weight: 800;
+  gap: 9px;
+  text-transform: uppercase;
+}
+
+.liveDot {
+  background: #9caaa3;
+  border-radius: 999px;
+  display: inline-block;
+  height: 12px;
+  width: 12px;
+}
+
+.liveDot.on {
+  background: #19b86a;
+}
+
+.joinButton {
+  align-items: center;
+  background: #244638;
+  border: 0;
+  border-radius: 8px;
+  color: #ffffff;
+  cursor: pointer;
+  display: inline-flex;
+  font-size: 19px;
+  font-weight: 900;
+  gap: 10px;
+  justify-content: center;
+  min-height: 58px;
+  padding: 0 20px;
+  text-decoration: none;
+  width: min(100%, 360px);
+}
+
+.joinButton.disabled {
+  background: #9caaa3;
+  cursor: not-allowed;
+}
+
+.publicMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.publicMeta span {
+  align-items: center;
+  background: #f7faf8;
+  border: 1px solid #e0e7e2;
+  border-radius: 6px;
+  color: #52645b;
+  display: inline-flex;
+  gap: 7px;
+  min-height: 36px;
+  padding: 0 10px;
+}
+
+.publicNotice {
+  margin: 0 auto;
+  max-width: 860px;
+  width: 100%;
+}
+
 .appShell {
   display: grid;
   grid-template-columns: 236px minmax(0, 1fr);
@@ -557,6 +700,18 @@ select {
 }
 
 @media (max-width: 620px) {
+  .publicPage {
+    padding: 16px;
+  }
+
+  .joinSurface {
+    padding: 22px;
+  }
+
+  .joinSurface h1 {
+    font-size: 34px;
+  }
+
   .main {
     padding: 16px;
   }
