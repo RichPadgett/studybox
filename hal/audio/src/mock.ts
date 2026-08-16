@@ -1,16 +1,15 @@
 import type { AudioDevice, AudioDeviceOption, AudioRoutingContext, AudioService, AudioServiceState } from "@studybox/shared";
 
 const inputDevices: AudioDeviceOption[] = [
-  { id: "dji-receiver", label: "DJI Mic Receiver (Mock)", kind: "input", connected: true },
-  { id: "conference-speakerphone-mic", label: "Conference Speakerphone Mic (Mock)", kind: "input", connected: true },
-  { id: "usb-audio-interface", label: "USB Audio Interface (Mock)", kind: "input", connected: true },
-  { id: "offline-boundary-mic", label: "Boundary Mic (Disconnected Mock)", kind: "input", connected: false }
+  { id: "dji-receiver", label: "DJI Mic Receiver", kind: "input", connected: true },
+  { id: "conference-speakerphone-mic", label: "Conference Speakerphone Mic", kind: "input", connected: false },
+  { id: "usb-audio-interface", label: "USB Audio Interface", kind: "input", connected: false }
 ];
 
 const outputDevices: AudioDeviceOption[] = [
-  { id: "conference-speakerphone-output", label: "Conference Speakerphone Speaker (Mock)", kind: "output", connected: true },
-  { id: "hdmi-monitor-audio", label: "HDMI Monitor Audio (Mock)", kind: "output", connected: true },
-  { id: "offline-usb-speaker", label: "USB Speaker (Disconnected Mock)", kind: "output", connected: false }
+  { id: "conference-speakerphone-output", label: "Conference Speakerphone Speaker", kind: "output", connected: false },
+  { id: "hdmi-monitor-audio", label: "HDMI Monitor Audio", kind: "output", connected: true },
+  { id: "usb-speaker", label: "USB Speaker", kind: "output", connected: false }
 ];
 
 export class MockAudioDevice implements AudioDevice {
@@ -26,8 +25,8 @@ export class MockAudioDevice implements AudioDevice {
 export class MockAudioService implements AudioService {
   private teacherInputDeviceId = "dji-receiver";
   private audienceInputDeviceId = "conference-speakerphone-mic";
-  private speakerOutputDeviceId = "conference-speakerphone-output";
-  private lastEvent = "Mock audio routing service ready";
+  private speakerOutputDeviceId = "hdmi-monitor-audio";
+  private lastEvent = "Audio routing model ready; live ALSA device discovery is not connected yet";
 
   getState(context: AudioRoutingContext): AudioServiceState {
     const audioLevel = 42 + Math.round((Math.sin(Date.now() / 2500) + 1) * 18);
@@ -138,13 +137,13 @@ export class MockAudioService implements AudioService {
 
   private assertInputDevice(deviceId: string): void {
     if (!inputDevices.some((device) => device.id === deviceId)) {
-      throw new Error(`Unknown mock input device: ${deviceId}`);
+      throw new Error(`Unknown input device: ${deviceId}`);
     }
   }
 
   private assertOutputDevice(deviceId: string): void {
     if (!outputDevices.some((device) => device.id === deviceId)) {
-      throw new Error(`Unknown mock output device: ${deviceId}`);
+      throw new Error(`Unknown output device: ${deviceId}`);
     }
   }
 

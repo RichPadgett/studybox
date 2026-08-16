@@ -85,8 +85,16 @@ input {
   gap: 18px;
   margin: 0 auto;
   max-width: 860px;
-  padding: 34px;
+  padding: 28px;
   width: 100%;
+}
+
+.joinLogo {
+  aspect-ratio: 1;
+  border-radius: 8px;
+  max-width: 220px;
+  object-fit: cover;
+  width: min(46vw, 220px);
 }
 
 .joinSurface h1 {

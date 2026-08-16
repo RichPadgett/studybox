@@ -1,23 +1,10 @@
 import type { PodcastService, PodcastState, Recording, RecordingDownload } from "@studybox/shared";
 
-const previousRecordingStartedAt = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-
 export class MockPodcastService implements PodcastService {
   private state: PodcastState = {
     status: "idle",
     elapsedSeconds: 0,
-    recordings: [
-      {
-        id: "rec-001",
-        title: formatRecordingTitle(previousRecordingStartedAt),
-        startedAt: previousRecordingStartedAt,
-        endedAt: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000 + 4_200_000).toISOString(),
-        durationSeconds: 4200,
-        sizeBytes: 86_500_000,
-        downloadFileName: formatRecordingFileName(previousRecordingStartedAt),
-        downloadMimeType: "audio/wav"
-      }
-    ],
+    recordings: [],
     lastEvent: "Podcast service ready"
   };
 

@@ -1,15 +1,5 @@
 import type { MeetingModerationMode, MeetingService, MeetingState, Participant } from "@studybox/shared";
 
-const initialParticipants: Participant[] = [
-  { id: "p1", displayName: "Mary Johnson", status: "joined", audioState: "muted", joinedAt: new Date().toISOString() },
-  { id: "p2", displayName: "David Lee", status: "joined", audioState: "muted", joinedAt: new Date().toISOString() },
-  { id: "p3", displayName: "Anna Smith", status: "raised-hand", audioState: "muted", joinedAt: new Date().toISOString() }
-];
-
-const initialWaitingRoom: Participant[] = [
-  { id: "w1", displayName: "Robert Garcia", status: "waiting" }
-];
-
 export class MockMeetingService implements MeetingService {
   private state: MeetingState = {
     status: "idle",
@@ -26,16 +16,15 @@ export class MockMeetingService implements MeetingService {
   }
 
   async startMeeting(): Promise<MeetingState> {
-    const participants = [...initialParticipants];
     this.state = {
       ...this.state,
       status: "live",
-      meetingId: "mock-2026-weekly",
+      meetingId: "studybox-local-session",
       startedAt: new Date().toISOString(),
-      participants,
-      waitingRoom: [...initialWaitingRoom],
-      raisedHands: participants.filter((participant) => participant.status === "raised-hand"),
-      lastEvent: "Mock Zoom meeting started"
+      participants: [],
+      waitingRoom: [],
+      raisedHands: [],
+      lastEvent: "Meeting marked live; Zoom moderation sync is not connected yet"
     };
     return this.state;
   }

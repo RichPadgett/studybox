@@ -31,7 +31,7 @@ export const defaultSettings: StudyBoxSettings = {
     deviceOAuthEnabled: true
   },
   audio: {
-    inputDevice: "DJI Mic Receiver (Mock)",
+    inputDevice: "DJI Mic Receiver",
     gain: 70,
     monitorEnabled: false
   },

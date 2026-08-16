@@ -95,7 +95,7 @@ export class StudyBoxAppliance {
       level: "info",
       action: "system.initialize",
       result: "success",
-      message: "StudyBox mock appliance initialized"
+      message: "StudyBox appliance initialized with mock service adapters"
     });
   }
 

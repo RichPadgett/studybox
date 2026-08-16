@@ -43,7 +43,7 @@ export class MockOledDisplay implements OledDisplay {
         title: "System",
         lines: [
           `CPU ${metrics.cpuPercent}%`,
-          `SSD ${metrics.ssdPercent}%`,
+          `Disk ${metrics.ssdPercent}%`,
           `WiFi ${metrics.wifiConnected ? "OK" : "OFF"}`,
           `Temp ${metrics.temperatureC}C`
         ]

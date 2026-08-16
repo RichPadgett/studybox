@@ -155,7 +155,7 @@ export function App() {
           <Radio size={24} />
           <div>
             <strong>StudyBox</strong>
-            <span>Mock Appliance</span>
+            <span>Pi Appliance</span>
           </div>
         </div>
         <nav>
@@ -233,6 +233,7 @@ function PublicJoinPage({ snapshot, error }: { snapshot: StudyBoxSnapshot; error
       {error ? <div className="publicNotice errorBanner">{error}</div> : null}
 
       <section className="joinSurface">
+        <img className="joinLogo" src="/assets/church-of-the-word.png" alt="Church of the Word" />
         <div className="meetingStatus">
           <span className={`liveDot ${meetingLive ? "on" : ""}`} />
           <span>{meetingLive ? "Meeting live now" : "Meeting ready"}</span>
@@ -281,12 +282,16 @@ function Dashboard({ snapshot, run }: { snapshot: StudyBoxSnapshot; run: (path: 
 
 function Meeting({ snapshot, run, compact = false }: { snapshot: StudyBoxSnapshot; run: (path: string, body?: unknown) => Promise<void>; compact?: boolean }) {
   const activeSpeaker = snapshot.meeting.activeSpeaker;
+  const moderationConnected = snapshot.zoom.mode === "runner" && snapshot.zoom.runnerAvailable;
   return (
     <div className="stack">
       <div className="metricGrid compactMetrics">
         <Metric label="Moderation" value={snapshot.meeting.moderationMode} detail="default meeting mode" />
-        <Metric label="Remote Speaker" value={activeSpeaker?.displayName ?? "None"} detail={activeSpeaker ? activeSpeaker.includedInPodcast ? "included in podcast" : "room audio only" : "raised hand required"} />
+        <Metric label="Remote Speaker" value={activeSpeaker?.displayName ?? "None"} detail={moderationConnected ? activeSpeaker ? activeSpeaker.includedInPodcast ? "included in podcast" : "room audio only" : "raised hand required" : "Zoom sync pending"} />
       </div>
+      {!moderationConnected ? (
+        <p className="inlineNotice">Live Zoom waiting room, participant, and raised-hand sync is not connected yet. Use the Zoom client controls for admission during this test.</p>
+      ) : null}
       {activeSpeaker ? (
         <div className="toolbar">
           <Command icon={<Radio size={17} />} label={activeSpeaker.includedInPodcast ? "Exclude from Podcast" : "Include in Podcast"} onClick={() => run(`/api/meeting/participants/${activeSpeaker.id}/podcast-inclusion`, { included: !activeSpeaker.includedInPodcast })} />
@@ -300,7 +305,7 @@ function Meeting({ snapshot, run, compact = false }: { snapshot: StudyBoxSnapsho
       ) : null}
       <div className="twoColumn">
         <Panel title="Participants">
-          <List>
+          <List empty={moderationConnected ? "No participants" : "Participant sync not connected"}>
             {snapshot.meeting.participants.map((participant) => (
               <li key={participant.id}>
                 <span>{participant.displayName}</span>
@@ -321,7 +326,7 @@ function Meeting({ snapshot, run, compact = false }: { snapshot: StudyBoxSnapsho
           </List>
         </Panel>
       <Panel title="Waiting Room">
-          <List empty="No one waiting">
+          <List empty={moderationConnected ? "No one waiting" : "Waiting room sync not connected"}>
             {snapshot.meeting.waitingRoom.map((participant) => (
               <li key={participant.id}>
                 <span>{participant.displayName}</span>
@@ -333,7 +338,7 @@ function Meeting({ snapshot, run, compact = false }: { snapshot: StudyBoxSnapsho
           </List>
       </Panel>
       <Panel title="Raised Hands">
-        <List empty="No raised hands">
+        <List empty={moderationConnected ? "No raised hands" : "Raised-hand sync not connected"}>
           {snapshot.meeting.raisedHands.map((participant) => (
             <li key={participant.id}>
               <span>{participant.displayName}</span>
@@ -412,7 +417,7 @@ function Audio({ snapshot, run, adminUnlocked }: { snapshot: StudyBoxSnapshot; r
         </div>
       </Panel>
       <Panel title="Level">
-        <div className="levelMeter"><span style={{ width: `${snapshot.metrics.cpuPercent + 20}%` }} /></div>
+        <div className="levelMeter"><span style={{ width: `${snapshot.hardware.audio.mixedLevelPercent}%` }} /></div>
       </Panel>
       <Panel title="Hardware Routes">
         <List empty="No audio routes">
@@ -681,10 +686,10 @@ function Diagnostics({ snapshot }: { snapshot: StudyBoxSnapshot }) {
   return (
     <div className="stack">
       <div className="metricGrid">
-        <Metric label="CPU" value={`${snapshot.metrics.cpuPercent}%`} detail="mock telemetry" />
+        <Metric label="CPU" value={`${snapshot.metrics.cpuPercent}%`} detail="placeholder until Pi metrics are wired" />
         <Metric label="Storage" value={`${snapshot.metrics.ssdPercent}%`} detail="microSD now, NVMe later" />
         <Metric label="WiFi" value={snapshot.metrics.wifiConnected ? "Connected" : "Offline"} detail={snapshot.settings.wifi.ssid || "Ethernet preferred"} />
-        <Metric label="Temperature" value={`${snapshot.metrics.temperatureC}C`} detail="Pi active cooler" />
+        <Metric label="Temperature" value={`${snapshot.metrics.temperatureC}C`} detail="placeholder until Pi metrics are wired" />
       </div>
       <div className="metricGrid">
         <Metric label="Zoom Mode" value={snapshot.zoom.mode} detail={snapshot.zoom.configured ? "credentials loaded" : "credentials missing"} />

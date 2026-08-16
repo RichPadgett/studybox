@@ -2,14 +2,8 @@
 import { createInterface } from "node:readline";
 import type { MeetingState, Participant, ZoomRunnerCommand, ZoomRunnerEvent, ZoomRunnerResponse } from "@studybox/shared";
 
-const initialParticipants: Participant[] = [
-  { id: "runner-p1", displayName: "Runner Mary", status: "joined", audioState: "muted", joinedAt: new Date().toISOString() },
-  { id: "runner-p2", displayName: "Runner David", status: "raised-hand", audioState: "muted", joinedAt: new Date().toISOString() }
-];
-
-const initialWaitingRoom: Participant[] = [
-  { id: "runner-w1", displayName: "Runner Robert", status: "waiting" }
-];
+const initialParticipants: Participant[] = [];
+const initialWaitingRoom: Participant[] = [];
 
 let state: MeetingState = {
   status: "idle",
@@ -18,7 +12,7 @@ let state: MeetingState = {
   participants: [],
   waitingRoom: [],
   raisedHands: [],
-  lastEvent: "Mock Zoom runner ready"
+  lastEvent: "Zoom runner mock ready with no synced participants"
 };
 
 emit({ type: "ready", state });
@@ -61,7 +55,7 @@ async function execute(command: ZoomRunnerCommand): Promise<ZoomRunnerResponse> 
       participants,
       waitingRoom: [...initialWaitingRoom],
       raisedHands: participants.filter((participant) => participant.status === "raised-hand"),
-      lastEvent: "Mock runner started meeting"
+      lastEvent: "Mock runner marked meeting live; no Zoom participants are synced"
     };
     emit({ type: "meeting.state", state });
     return { id: command.id, ok: true, state };
