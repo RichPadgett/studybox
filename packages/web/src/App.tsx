@@ -502,10 +502,26 @@ function BackupView({ snapshot, run, adminUnlocked }: { snapshot: StudyBoxSnapsh
 
 function SettingsView({ snapshot, saving, save, adminUnlocked, lockAdmin }: { snapshot: StudyBoxSnapshot; saving: boolean; save: (settings: StudyBoxSettings) => Promise<void>; adminUnlocked: boolean; lockAdmin: () => void }) {
   const [draft, setDraft] = useState(snapshot.settings);
+  const [dirty, setDirty] = useState(false);
   const [deviceAuthorization, setDeviceAuthorization] = useState<ZoomDeviceAuthorization>();
   const [authMessage, setAuthMessage] = useState<string>();
 
-  useEffect(() => setDraft(snapshot.settings), [snapshot.settings]);
+  useEffect(() => {
+    if (!dirty) {
+      setDraft(snapshot.settings);
+    }
+  }, [dirty, snapshot.settings]);
+
+  function updateDraft(settings: StudyBoxSettings) {
+    setDirty(true);
+    setDraft(settings);
+  }
+
+  async function saveDraft() {
+    await save(draft);
+    setDirty(false);
+    setDraft(draft);
+  }
 
   async function startDeviceAuthorization() {
     try {
@@ -551,9 +567,9 @@ function SettingsView({ snapshot, saving, save, adminUnlocked, lockAdmin }: { sn
     <div className="stack">
       <Panel title="Schedule">
         <div className="formGrid">
-          <label>Day<input value={draft.schedule.dayOfWeek} onChange={(event) => setDraft({ ...draft, schedule: { ...draft.schedule, dayOfWeek: event.target.value as StudyBoxSettings["schedule"]["dayOfWeek"] } })} /></label>
-          <label>Time<input type="time" value={draft.schedule.time} onChange={(event) => setDraft({ ...draft, schedule: { ...draft.schedule, time: event.target.value } })} /></label>
-          <label>Timezone<input value={draft.schedule.timezone} onChange={(event) => setDraft({ ...draft, schedule: { ...draft.schedule, timezone: event.target.value } })} /></label>
+          <label>Day<input value={draft.schedule.dayOfWeek} onChange={(event) => updateDraft({ ...draft, schedule: { ...draft.schedule, dayOfWeek: event.target.value as StudyBoxSettings["schedule"]["dayOfWeek"] } })} /></label>
+          <label>Time<input type="time" value={draft.schedule.time} onChange={(event) => updateDraft({ ...draft, schedule: { ...draft.schedule, time: event.target.value } })} /></label>
+          <label>Timezone<input value={draft.schedule.timezone} onChange={(event) => updateDraft({ ...draft, schedule: { ...draft.schedule, timezone: event.target.value } })} /></label>
         </div>
       </Panel>
       <Panel title="Moderation">
@@ -562,7 +578,7 @@ function SettingsView({ snapshot, saving, save, adminUnlocked, lockAdmin }: { sn
           <label>Remote Speaker Podcast
             <select
               value={draft.moderation.includeApprovedRemoteSpeakersInPodcast ? "include" : "exclude"}
-              onChange={(event) => setDraft({
+              onChange={(event) => updateDraft({
                 ...draft,
                 moderation: {
                   ...draft.moderation,
@@ -579,10 +595,10 @@ function SettingsView({ snapshot, saving, save, adminUnlocked, lockAdmin }: { sn
       </Panel>
       <Panel title="Zoom">
         <div className="formGrid">
-          <label>Meeting Number<input value={draft.zoom.meetingNumber} onChange={(event) => setDraft({ ...draft, zoom: { ...draft.zoom, meetingNumber: event.target.value } })} /></label>
-          <label>Join URL<input value={draft.zoom.joinUrl ?? ""} onChange={(event) => setDraft({ ...draft, zoom: { ...draft.zoom, joinUrl: event.target.value } })} /></label>
-          <label>Display Name<input value={draft.zoom.displayName} onChange={(event) => setDraft({ ...draft, zoom: { ...draft.zoom, displayName: event.target.value } })} /></label>
-          <label>Redirect URI<input value={draft.zoom.redirectUri ?? ""} onChange={(event) => setDraft({ ...draft, zoom: { ...draft.zoom, redirectUri: event.target.value } })} /></label>
+          <label>Meeting Number<input value={draft.zoom.meetingNumber} onChange={(event) => updateDraft({ ...draft, zoom: { ...draft.zoom, meetingNumber: event.target.value } })} /></label>
+          <label>Join URL<input value={draft.zoom.joinUrl ?? ""} onChange={(event) => updateDraft({ ...draft, zoom: { ...draft.zoom, joinUrl: event.target.value } })} /></label>
+          <label>Display Name<input value={draft.zoom.displayName} onChange={(event) => updateDraft({ ...draft, zoom: { ...draft.zoom, displayName: event.target.value } })} /></label>
+          <label>Redirect URI<input value={draft.zoom.redirectUri ?? ""} onChange={(event) => updateDraft({ ...draft, zoom: { ...draft.zoom, redirectUri: event.target.value } })} /></label>
         </div>
       </Panel>
       <Panel title="Zoom Runtime">
@@ -613,7 +629,7 @@ function SettingsView({ snapshot, saving, save, adminUnlocked, lockAdmin }: { sn
         </div>
       </Panel>
       <div className="toolbar">
-        <Command icon={<Save size={17} />} label={saving ? "Saving" : "Save Settings"} onClick={() => save(draft)} disabled={saving || !adminUnlocked} />
+        <Command icon={<Save size={17} />} label={saving ? "Saving" : dirty ? "Save Settings" : "Settings Saved"} onClick={() => void saveDraft()} disabled={saving || !adminUnlocked || !dirty} />
       </div>
     </div>
   );
