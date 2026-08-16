@@ -230,6 +230,54 @@ Stop the manual tmux session before enabling the services, otherwise ports `4000
 tmux kill-session -t studybox
 ```
 
+## Cloudflare Tunnel
+
+First remote access route:
+
+```text
+https://studybox.enochscalendar.com -> Raspberry Pi cloudflared tunnel -> http://localhost:5173
+```
+
+The Pi connector is installed with the Cloudflare-provided command:
+
+```bash
+sudo cloudflared service install <cloudflare-tunnel-token>
+```
+
+Check tunnel status:
+
+```bash
+systemctl status cloudflared --no-pager
+journalctl -u cloudflared -n 60 --no-pager
+```
+
+In Cloudflare Zero Trust, use:
+
+```text
+Networks -> Tunnels & Mesh -> studybox -> Published application routes
+```
+
+Route values:
+
+```text
+Subdomain: studybox
+Domain: enochscalendar.com
+Path: blank
+Service: http://localhost:5173
+```
+
+Remove any old DNS record that points `studybox.enochscalendar.com` to Hetzner before saving the route:
+
+```text
+A studybox 178.156.141.174
+```
+
+While the web UI is running through Vite, `studybox.enochscalendar.com` must be listed in `server.allowedHosts` in `packages/web/vite.config.ts`. Otherwise Vite returns:
+
+```text
+Blocked request. This host ("studybox.enochscalendar.com") is not allowed.
+```
+
 ## Next Step
 
 Replace the temporary Vite web service with a production static web service or Nginx reverse proxy before treating the Pi image as final.
