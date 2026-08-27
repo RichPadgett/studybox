@@ -7,6 +7,7 @@ import {
   ClipboardList,
   Disc3,
   Download,
+  Eye,
   ExternalLink,
   Gauge,
   Hand,
@@ -23,7 +24,7 @@ import {
   Users
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { ApiError, downloadRecording, getSnapshot, loginAdmin, pollZoomDeviceToken, postAction, refreshZoomToken, requestMeetingJoin, saveSettings, setAdminToken, startZoomDeviceAuthorization, validateAdminSession } from "./api.js";
+import { ApiError, downloadRecording, getSnapshot, loginAdmin, pollZoomDeviceToken, postAction, refreshZoomToken, requestMeetingJoin, saveSettings, setAdminToken, setDashboardViewerId, startZoomDeviceAuthorization, validateAdminSession } from "./api.js";
 
 const navItems = [
   { id: "dashboard", label: "Dashboard", icon: Gauge },
@@ -41,6 +42,7 @@ const navItems = [
 type NavId = (typeof navItems)[number]["id"];
 const adminSessionStorageKey = "studybox.adminSession";
 const publicJoinStorageKey = "studybox.publicJoin";
+const dashboardViewerStorageKey = "studybox.dashboardViewerId";
 
 export function App() {
   const [snapshot, setSnapshot] = useState<StudyBoxSnapshot>();
@@ -50,6 +52,16 @@ export function App() {
   const [adminSession, setAdminSession] = useState<AdminSession>();
   const adminUnlocked = isAdminSessionActive(adminSession);
   const isAdminRoute = window.location.pathname === "/admin" || window.location.pathname.startsWith("/admin/");
+
+  useEffect(() => {
+    if (!isAdminRoute) {
+      setDashboardViewerId(undefined);
+      return;
+    }
+
+    setDashboardViewerId(readOrCreateDashboardViewerId());
+    return () => setDashboardViewerId(undefined);
+  }, [isAdminRoute]);
 
   async function refresh() {
     try {
@@ -179,6 +191,7 @@ export function App() {
             <p>{statusCopy(snapshot)}</p>
           </div>
           <div className="topbarActions">
+            <ViewerPresence presence={snapshot.presence} />
             <AdminUnlock session={adminSession} unlock={unlockAdmin} lock={lockAdmin} />
             <StatusPill status={snapshot.systemStatus} />
           </div>
@@ -218,9 +231,11 @@ function PublicJoinPage({ snapshot, error }: { snapshot: StudyBoxSnapshot; error
   const [participant, setParticipant] = useState<Participant | undefined>(() => readStoredPublicParticipant());
   const [joining, setJoining] = useState(false);
   const [joinError, setJoinError] = useState<string>();
-  const waitingParticipant = participant ? snapshot.meeting.waitingRoom.find((item) => item.id === participant.id) : undefined;
+  const syncedLobbyParticipant = participant ? snapshot.meeting.lobbyRequests.find((item) => item.id === participant.id) : undefined;
+  const zoomWaitingParticipant = participant ? snapshot.meeting.waitingRoom.find((item) => item.id === participant.id) : undefined;
   const admittedParticipant = participant ? snapshot.meeting.participants.find((item) => item.id === participant.id) : undefined;
-  const activeRequest = Boolean(waitingParticipant || admittedParticipant);
+  const lobbyParticipant = syncedLobbyParticipant || (!zoomWaitingParticipant && !admittedParticipant ? participant : undefined);
+  const activeRequest = Boolean(lobbyParticipant || zoomWaitingParticipant || admittedParticipant);
 
   async function submitJoinRequest(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -232,7 +247,7 @@ function PublicJoinPage({ snapshot, error }: { snapshot: StudyBoxSnapshot; error
       setDisplayName("");
       window.localStorage.setItem(publicJoinStorageKey, JSON.stringify(requestedParticipant));
     } catch (caught) {
-      setJoinError(caught instanceof Error ? caught.message : "Unable to enter StudyBox waiting room");
+      setJoinError(caught instanceof Error ? caught.message : "Unable to enter StudyBox room");
     } finally {
       setJoining(false);
     }
@@ -263,22 +278,22 @@ function PublicJoinPage({ snapshot, error }: { snapshot: StudyBoxSnapshot; error
           <span>{zoomHostConnected ? "Zoom host connected" : "StudyBox room ready"}</span>
         </div>
         <h1>Weekly Bible Study</h1>
-        <p>{activeRequest ? admittedParticipant ? "You have been admitted by StudyBox." : "You are in the StudyBox waiting room. Please wait for the room assistant." : `Enter the StudyBox room first. Next meeting: ${snapshot.settings.schedule.dayOfWeek} at ${snapshot.settings.schedule.time}`}</p>
-        {admittedParticipant && joinUrl ? (
+        <p>{activeRequest ? admittedParticipant ? "You have joined the Zoom meeting." : zoomWaitingParticipant ? "You are in the Zoom waiting room. Please wait for the room assistant." : "Open Zoom and wait for the room assistant to admit you." : `Enter the StudyBox room first. Next meeting: ${snapshot.settings.schedule.dayOfWeek} at ${snapshot.settings.schedule.time}`}</p>
+        {(lobbyParticipant || admittedParticipant) && joinUrl ? (
           <a className="joinButton" href={joinUrl} target="_blank" rel="noreferrer">
             <ExternalLink size={22} />
             Join Bible Study Zoom
           </a>
-        ) : admittedParticipant ? (
+        ) : zoomWaitingParticipant ? (
+          <div className="waitingCard">
+            <Users size={22} />
+            <span>{zoomWaitingParticipant.displayName} is waiting in Zoom</span>
+          </div>
+        ) : lobbyParticipant || admittedParticipant ? (
           <button className="joinButton disabled" disabled>
             <ExternalLink size={22} />
             Join Link Not Set
           </button>
-        ) : waitingParticipant ? (
-          <div className="waitingCard">
-            <Users size={22} />
-            <span>{waitingParticipant.displayName} is waiting for admission</span>
-          </div>
         ) : (
           <form className="joinRequestForm" onSubmit={(event) => void submitJoinRequest(event)}>
             <input
@@ -306,7 +321,7 @@ function Dashboard({ snapshot, run }: { snapshot: StudyBoxSnapshot; run: (path: 
     <div className="stack">
       <div className="metricGrid">
         <Metric label="Meeting" value={snapshot.meeting.status} detail={`${snapshot.meeting.participants.length} participants`} />
-        <Metric label="Waiting" value={snapshot.meeting.waitingRoom.length.toString()} detail={`${snapshot.meeting.raisedHands.length} raised hands`} />
+        <Metric label="Zoom Waiting" value={snapshot.meeting.waitingRoom.length.toString()} detail={`${snapshot.meeting.lobbyRequests.length} lobby · ${snapshot.meeting.raisedHands.length} raised hands`} />
         <Metric label="Podcast" value={snapshot.podcast.status} detail={formatDuration(snapshot.podcast.elapsedSeconds)} />
         <Metric label="Next Meeting" value={`${snapshot.settings.schedule.dayOfWeek}`} detail={snapshot.settings.schedule.time} />
       </div>
@@ -365,7 +380,17 @@ function Meeting({ snapshot, run, compact = false }: { snapshot: StudyBoxSnapsho
             ))}
           </List>
         </Panel>
-      <Panel title="Waiting Room">
+      <Panel title="StudyBox Lobby">
+          <List empty="No web join requests">
+            {snapshot.meeting.lobbyRequests.map((participant) => (
+              <li key={participant.id}>
+                <span>{participant.displayName}</span>
+                <small>sent to Zoom join link</small>
+              </li>
+            ))}
+          </List>
+      </Panel>
+      <Panel title="Zoom Waiting Room">
           <List empty={moderationConnected ? "No one waiting" : "Waiting room sync not connected"}>
             {snapshot.meeting.waitingRoom.map((participant) => (
               <li key={participant.id}>
@@ -854,6 +879,17 @@ function StatusPill({ status }: { status: string }) {
   return <span className={`statusPill ${status}`}>{status}</span>;
 }
 
+function ViewerPresence({ presence }: { presence: StudyBoxSnapshot["presence"] }) {
+  const count = presence.activeViewerCount;
+  const active = count > 1;
+  return (
+    <span className={`viewerPresence ${active ? "active" : ""}`} title={active ? `${count} admin screens active` : "One admin screen active"} aria-label={active ? `${count} admin screens active` : "One admin screen active"}>
+      <Eye size={16} />
+      <span>{count}</span>
+    </span>
+  );
+}
+
 function statusCopy(snapshot: StudyBoxSnapshot): string {
   if (snapshot.systemStatus === "attention") return "Waiting room or raised hand needs attention";
   if (snapshot.meeting.status === "live") return "Meeting is live";
@@ -875,7 +911,9 @@ function isZoomHostConnected(snapshot: StudyBoxSnapshot): boolean {
 }
 
 function meetingPrimaryAction(snapshot: StudyBoxSnapshot): string {
-  if (snapshot.meeting.status === "live") return "End Local Session";
+  if (snapshot.meeting.status === "live") {
+    return snapshot.zoom.mode === "runner" && snapshot.zoom.runnerAvailable ? "End Zoom Meeting" : "End Local Session";
+  }
   return snapshot.zoom.mode === "runner" && snapshot.zoom.runnerAvailable ? "Start Zoom Meeting" : "Start Local Session";
 }
 
@@ -900,6 +938,17 @@ function formatDuration(seconds: number): string {
 
 function formatBytes(bytes: number): string {
   return `${(bytes / 1_000_000).toFixed(1)} MB`;
+}
+
+function readOrCreateDashboardViewerId(): string {
+  const stored = window.sessionStorage.getItem(dashboardViewerStorageKey);
+  if (stored) {
+    return stored;
+  }
+
+  const viewerId = crypto.randomUUID();
+  window.sessionStorage.setItem(dashboardViewerStorageKey, viewerId);
+  return viewerId;
 }
 
 function formatLogDetails(details: Record<string, string | number | boolean | undefined>): string {

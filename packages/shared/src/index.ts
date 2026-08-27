@@ -27,6 +27,7 @@ export interface MeetingState {
   meetingId?: string;
   startedAt?: string;
   participants: Participant[];
+  lobbyRequests: Participant[];
   waitingRoom: Participant[];
   raisedHands: Participant[];
   activeSpeaker?: Participant;
@@ -42,6 +43,7 @@ export interface Recording {
   sizeBytes: number;
   downloadFileName?: string;
   downloadMimeType?: string;
+  filePath?: string;
 }
 
 export interface RecordingDownload {
@@ -59,7 +61,7 @@ export interface PodcastState {
   lastEvent?: string;
 }
 
-export type OledPageId = "home" | "meeting" | "podcast" | "system";
+export type OledPageId = "home" | "meeting" | "podcast" | "recordingStop" | "system";
 
 export interface OledPage {
   id: OledPageId;
@@ -222,8 +224,15 @@ export interface StudyBoxSnapshot {
     pages: OledPage[];
   };
   metrics: SystemMetrics;
+  presence: DashboardPresence;
   settings: StudyBoxSettings;
   logs: LogEntry[];
+}
+
+export interface DashboardPresence {
+  activeViewerCount: number;
+  currentViewerId?: string;
+  lastSeenAt?: string;
 }
 
 export interface ZoomRuntimeStatus {
@@ -318,6 +327,7 @@ export interface BackupSyncService {
 
 export interface MeetingService {
   getState(): MeetingState;
+  syncState(): Promise<MeetingState>;
   requestParticipantJoin(displayName: string): Promise<Participant>;
   startMeeting(): Promise<MeetingState>;
   endMeeting(): Promise<MeetingState>;

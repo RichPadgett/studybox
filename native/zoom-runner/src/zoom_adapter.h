@@ -20,6 +20,7 @@ public:
   virtual MeetingState admitParticipant(const std::string& participantId, const MeetingState& current) = 0;
   virtual MeetingState allowParticipantToSpeak(const std::string& participantId, const MeetingState& current) = 0;
   virtual MeetingState muteParticipant(const std::string& participantId, const MeetingState& current) = 0;
+  virtual MeetingState syncState(const MeetingState& current) = 0;
 };
 
 ZoomAdapter& zoomAdapter();

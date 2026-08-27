@@ -206,6 +206,50 @@ The first version intentionally mirrors the manual test:
 - Both run as the `studybox` user from `/opt/studybox`.
 - Optional environment values can be placed in `/etc/studybox/studybox.env`.
 
+For the Waveshare 2.42 inch SSD1309 OLED wired over SPI, add:
+
+```bash
+sudo tee -a /etc/studybox/studybox.env >/dev/null <<'EOF'
+STUDYBOX_HARDWARE_MODE=raspberryPi
+STUDYBOX_OLED_SPI_DEVICE=/dev/spidev0.0
+STUDYBOX_GPIO_CHIP=gpiochip4
+STUDYBOX_OLED_DC_GPIO=25
+STUDYBOX_OLED_RST_GPIO=27
+EOF
+```
+
+OLED wiring:
+
+```text
+RST -> GPIO27 / physical pin 13
+DC  -> GPIO25 / physical pin 22
+CS  -> GPIO8  / physical pin 24
+CLK -> GPIO11 / physical pin 23
+DIN -> GPIO10 / physical pin 19
+GND -> GND    / physical pin 6
+VCC -> 3.3V   / physical pin 1
+```
+
+When the physical PAGE and ACTION buttons are wired, enable the real button HAL in the same env file:
+
+```bash
+sudo tee -a /etc/studybox/studybox.env >/dev/null <<'EOF'
+STUDYBOX_BUTTON_MODE=raspberryPi
+STUDYBOX_PAGE_BUTTON_GPIO=5
+STUDYBOX_ACTION_BUTTON_GPIO=6
+STUDYBOX_BUTTON_EDGE=falling
+STUDYBOX_BUTTON_BIAS=pull-up
+STUDYBOX_BUTTON_DEBOUNCE_MS=250
+EOF
+```
+
+Default button wiring assumes each momentary switch connects its GPIO to `GND` when pressed:
+
+```text
+PAGE button   -> GPIO5  / physical pin 29, other leg -> GND
+ACTION button -> GPIO6  / physical pin 31, other leg -> GND
+```
+
 Install them on the Pi:
 
 ```bash

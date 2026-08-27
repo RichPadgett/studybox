@@ -5,6 +5,7 @@
 #include <iomanip>
 #include <sstream>
 #include <stdexcept>
+#include <vector>
 
 namespace {
 
@@ -65,6 +66,38 @@ std::string extractStringField(const std::string& json, const std::string& key) 
   return "";
 }
 
+std::string participantJson(const Participant& participant) {
+  std::ostringstream output;
+  output
+    << "{\"id\":\"" << jsonEscape(participant.id) << "\""
+    << ",\"displayName\":\"" << jsonEscape(participant.displayName) << "\""
+    << ",\"status\":\"" << jsonEscape(participant.status) << "\"";
+
+  if (!participant.audioState.empty()) {
+    output << ",\"audioState\":\"" << jsonEscape(participant.audioState) << "\"";
+  }
+
+  if (participant.includedInPodcast) {
+    output << ",\"includedInPodcast\":true";
+  }
+
+  output << "}";
+  return output.str();
+}
+
+std::string participantsJson(const std::vector<Participant>& participants) {
+  std::ostringstream output;
+  output << "[";
+  for (std::size_t index = 0; index < participants.size(); ++index) {
+    if (index > 0) {
+      output << ",";
+    }
+    output << participantJson(participants[index]);
+  }
+  output << "]";
+  return output.str();
+}
+
 std::string stateJson(const MeetingState& state) {
   std::ostringstream output;
   output
@@ -81,9 +114,10 @@ std::string stateJson(const MeetingState& state) {
   }
 
   output
-    << ",\"participants\":[]"
-    << ",\"waitingRoom\":[]"
-    << ",\"raisedHands\":[]";
+    << ",\"participants\":" << participantsJson(state.participants)
+    << ",\"lobbyRequests\":[]"
+    << ",\"waitingRoom\":" << participantsJson(state.waitingRoom)
+    << ",\"raisedHands\":" << participantsJson(state.raisedHands);
 
   if (!state.lastEvent.empty()) {
     output << ",\"lastEvent\":\"" << jsonEscape(state.lastEvent) << "\"";

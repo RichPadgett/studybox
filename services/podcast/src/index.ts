@@ -1,3 +1,6 @@
+import { spawn, type ChildProcess } from "node:child_process";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import type { PodcastService, PodcastState, Recording, RecordingDownload } from "@studybox/shared";
 
 export class MockPodcastService implements PodcastService {
@@ -129,6 +132,227 @@ export class MockPodcastService implements PodcastService {
   }
 }
 
+export interface LocalPodcastServiceOptions {
+  recordingsDir: string;
+  manifestPath: string;
+  arecordPath?: string;
+  device?: string;
+  format?: string;
+  sampleRate?: number;
+  channels?: number;
+}
+
+interface RecordingManifestEntry extends Recording {
+  filePath: string;
+}
+
+export class LocalPodcastService implements PodcastService {
+  private state: PodcastState = {
+    status: "idle",
+    elapsedSeconds: 0,
+    recordings: [],
+    lastEvent: "Local podcast recorder ready"
+  };
+  private process?: ChildProcess;
+  private activeFilePath?: string;
+  private activeRecording?: RecordingManifestEntry;
+  private recordings: RecordingManifestEntry[] = [];
+  private startedAtMs?: number;
+  private elapsedBeforePause = 0;
+
+  constructor(private readonly options: LocalPodcastServiceOptions) {}
+
+  async load(): Promise<void> {
+    await mkdir(this.options.recordingsDir, { recursive: true });
+    await mkdir(dirname(this.options.manifestPath), { recursive: true });
+    try {
+      const parsed = JSON.parse(await readFile(this.options.manifestPath, "utf8")) as { recordings?: RecordingManifestEntry[] };
+      this.recordings = Array.isArray(parsed.recordings) ? parsed.recordings : [];
+      this.state = {
+        ...this.state,
+        recordings: this.recordings,
+        lastEvent: "Local podcast recorder loaded"
+      };
+    } catch {
+      await this.saveManifest();
+    }
+  }
+
+  getState(): PodcastState {
+    return {
+      ...this.state,
+      activeRecording: this.activeRecording,
+      recordings: this.recordings,
+      elapsedSeconds: this.currentElapsedSeconds()
+    };
+  }
+
+  async startRecording(): Promise<PodcastState> {
+    if (this.process || this.activeRecording) {
+      return this.getState();
+    }
+
+    await mkdir(this.options.recordingsDir, { recursive: true });
+    const startedAt = new Date().toISOString();
+    const fileName = formatRecordingFileName(startedAt);
+    const filePath = join(this.options.recordingsDir, fileName);
+    const recording: RecordingManifestEntry = {
+      id: `rec-${Date.now()}`,
+      title: formatRecordingTitle(startedAt),
+      startedAt,
+      durationSeconds: 0,
+      sizeBytes: 0,
+      downloadFileName: fileName,
+      downloadMimeType: "audio/wav",
+      filePath
+    };
+
+    const args = [
+      "-D", this.options.device ?? "default",
+      "-f", this.options.format ?? "S16_LE",
+      "-r", String(this.options.sampleRate ?? 48000),
+      "-c", String(this.options.channels ?? 2),
+      filePath
+    ];
+    const recorderProcess = spawn(this.options.arecordPath ?? "arecord", args, { stdio: ["ignore", "pipe", "pipe"] });
+    this.process = recorderProcess;
+    this.activeFilePath = filePath;
+    this.activeRecording = recording;
+    this.startedAtMs = Date.now();
+    this.elapsedBeforePause = 0;
+    this.state = {
+      ...this.state,
+      status: "recording",
+      activeRecording: recording,
+      elapsedSeconds: 0,
+      lastEvent: `Recording started: ${fileName}`
+    };
+
+    recorderProcess.once("exit", (code, signal) => {
+      if (this.state.status === "recording" || this.state.status === "paused") {
+        this.state = {
+          ...this.state,
+          status: "error",
+          lastEvent: `Recorder exited unexpectedly with ${signal ?? code ?? "unknown"}`
+        };
+      }
+      this.process = undefined;
+    });
+
+    recorderProcess.stderr?.on("data", (chunk: Buffer) => {
+      const message = chunk.toString("utf8").trim();
+      if (message) {
+        this.state = { ...this.state, lastEvent: message.slice(0, 160) };
+      }
+    });
+
+    return this.getState();
+  }
+
+  async pauseRecording(): Promise<PodcastState> {
+    if (this.state.status !== "recording" || !this.process) {
+      return this.getState();
+    }
+
+    this.elapsedBeforePause = this.currentElapsedSeconds();
+    this.startedAtMs = undefined;
+    this.process.kill("SIGSTOP");
+    this.state = {
+      ...this.state,
+      status: "paused",
+      elapsedSeconds: this.elapsedBeforePause,
+      lastEvent: "Recording paused"
+    };
+    return this.getState();
+  }
+
+  async resumeRecording(): Promise<PodcastState> {
+    if (this.state.status !== "paused" || !this.process) {
+      return this.getState();
+    }
+
+    this.startedAtMs = Date.now();
+    this.process.kill("SIGCONT");
+    this.state = {
+      ...this.state,
+      status: "recording",
+      lastEvent: "Recording resumed"
+    };
+    return this.getState();
+  }
+
+  async stopRecording(): Promise<PodcastState> {
+    if (!this.activeRecording) {
+      return this.getState();
+    }
+
+    const process = this.process;
+    if (process) {
+      if (this.state.status === "paused") {
+        process.kill("SIGCONT");
+      }
+      await stopProcess(process);
+    }
+
+    const durationSeconds = this.currentElapsedSeconds();
+    const sizeBytes = this.activeFilePath ? await fileSize(this.activeFilePath) : 0;
+    const completed: RecordingManifestEntry = {
+      ...this.activeRecording,
+      endedAt: new Date().toISOString(),
+      durationSeconds,
+      sizeBytes
+    };
+
+    this.recordings = [completed, ...this.recordings];
+    this.activeRecording = undefined;
+    this.activeFilePath = undefined;
+    this.process = undefined;
+    this.startedAtMs = undefined;
+    this.elapsedBeforePause = 0;
+    await this.saveManifest();
+    this.state = {
+      ...this.state,
+      status: "idle",
+      activeRecording: undefined,
+      elapsedSeconds: 0,
+      recordings: this.recordings,
+      lastEvent: `Recording stopped: ${completed.downloadFileName ?? completed.id}`
+    };
+    return this.getState();
+  }
+
+  async listRecordings(): Promise<Recording[]> {
+    return this.recordings;
+  }
+
+  async getRecordingDownload(recordingId: string): Promise<RecordingDownload | undefined> {
+    const recording = this.recordings.find((candidate) => candidate.id === recordingId);
+    if (!recording) {
+      return undefined;
+    }
+
+    return {
+      recording,
+      fileName: recording.downloadFileName ?? formatRecordingFileName(recording.startedAt),
+      mimeType: recording.downloadMimeType ?? "audio/wav",
+      contentBase64: (await readFile(recording.filePath)).toString("base64")
+    };
+  }
+
+  private currentElapsedSeconds(): number {
+    if (!this.startedAtMs) {
+      return this.elapsedBeforePause;
+    }
+
+    return this.elapsedBeforePause + Math.floor((Date.now() - this.startedAtMs) / 1000);
+  }
+
+  private async saveManifest(): Promise<void> {
+    await mkdir(dirname(this.options.manifestPath), { recursive: true });
+    await writeFile(this.options.manifestPath, JSON.stringify({ recordings: this.recordings }, null, 2));
+  }
+}
+
 function formatRecordingTitle(startedAt: string): string {
   const date = new Date(startedAt);
   const datePart = date.toLocaleDateString("en-US", {
@@ -177,4 +401,30 @@ function createSilentWavBase64(): string {
   buffer.writeUInt32LE(dataSize, 40);
 
   return buffer.toString("base64");
+}
+
+async function stopProcess(process: ChildProcess): Promise<void> {
+  if (process.exitCode !== null || process.signalCode !== null) {
+    return;
+  }
+
+  await new Promise<void>((resolve) => {
+    const timeout = setTimeout(() => {
+      process.kill("SIGKILL");
+      resolve();
+    }, 5000);
+    process.once("exit", () => {
+      clearTimeout(timeout);
+      resolve();
+    });
+    process.kill("SIGINT");
+  });
+}
+
+async function fileSize(filePath: string): Promise<number> {
+  try {
+    return (await stat(filePath)).size;
+  } catch {
+    return 0;
+  }
 }

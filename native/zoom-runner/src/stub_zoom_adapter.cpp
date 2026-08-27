@@ -49,6 +49,10 @@ public:
     state.lastEvent = "Cannot mute Zoom participant " + participantId + " until Zoom SDK adapter is linked";
     return state;
   }
+
+  MeetingState syncState(const MeetingState& current) override {
+    return current;
+  }
 };
 
 } // namespace

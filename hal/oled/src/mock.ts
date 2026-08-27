@@ -15,12 +15,14 @@ export class MockOledDisplay implements OledDisplay {
     const podcast = this.getPodcast();
     const metrics = this.getMetrics();
 
-    return [
+    const pages: OledPage[] = [
       {
         id: "home",
         title: "StudyBox",
         lines: meeting.waitingRoom[0]
           ? ["WAITING ROOM", meeting.waitingRoom[0].displayName, "ACTION: Admit"]
+          : meeting.lobbyRequests[0]
+          ? ["LOBBY", meeting.lobbyRequests[0].displayName, "OPENING ZOOM"]
           : meeting.raisedHands[0]
           ? ["HAND RAISED", meeting.raisedHands[0].displayName, "ACTION: Allow"]
           : meeting.activeSpeaker
@@ -31,7 +33,7 @@ export class MockOledDisplay implements OledDisplay {
       {
         id: "meeting",
         title: meeting.status === "live" ? "Meeting Live" : "Meeting",
-        lines: [`${meeting.participants.length} Participants`, `Waiting: ${meeting.waitingRoom.length}`],
+        lines: [`${meeting.participants.length} Participants`, `Lobby: ${meeting.lobbyRequests.length}`, `Waiting: ${meeting.waitingRoom.length}`],
         actionLabel: meeting.status === "live" ? "End Meeting" : "Start Meeting"
       },
       {
@@ -39,7 +41,19 @@ export class MockOledDisplay implements OledDisplay {
         title: "Podcast",
         lines: [podcast.status.toUpperCase(), formatDuration(podcast.elapsedSeconds)],
         actionLabel: podcast.status === "recording" ? "Pause Recording" : podcast.status === "paused" ? "Resume Recording" : "Start Recording"
-      },
+      }
+    ];
+
+    if (podcast.status === "recording" || podcast.status === "paused") {
+      pages.push({
+        id: "recordingStop",
+        title: "Finish Rec",
+        lines: [podcast.status.toUpperCase(), formatDuration(podcast.elapsedSeconds), "Save recording"],
+        actionLabel: "Finish Recording"
+      });
+    }
+
+    pages.push(
       {
         id: "system",
         title: "System",
@@ -50,7 +64,9 @@ export class MockOledDisplay implements OledDisplay {
           `Temp ${metrics.temperatureC}C`
         ]
       }
-    ];
+    );
+
+    return pages;
   }
 
   getCurrentPage(): OledPage {

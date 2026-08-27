@@ -10,6 +10,7 @@ let state: MeetingState = {
   title: "Weekly Bible Study",
   moderationMode: "moderated",
   participants: [],
+  lobbyRequests: [],
   waitingRoom: [],
   raisedHands: [],
   lastEvent: "Zoom runner mock ready with no synced participants"
@@ -53,6 +54,7 @@ async function execute(command: ZoomRunnerCommand): Promise<ZoomRunnerResponse> 
       meetingId: "runner-mock-2026-weekly",
       startedAt: new Date().toISOString(),
       participants,
+      lobbyRequests: state.lobbyRequests,
       waitingRoom: [...initialWaitingRoom],
       raisedHands: participants.filter((participant) => participant.status === "raised-hand"),
       lastEvent: command.meetingNumber
@@ -70,6 +72,7 @@ async function execute(command: ZoomRunnerCommand): Promise<ZoomRunnerResponse> 
       meetingId: undefined,
       startedAt: undefined,
       participants: [],
+      lobbyRequests: [],
       waitingRoom: [],
       raisedHands: [],
       activeSpeaker: undefined,

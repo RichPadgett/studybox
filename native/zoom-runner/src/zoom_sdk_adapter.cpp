@@ -5,11 +5,18 @@
 #include "meeting_service_components/meeting_participants_ctrl_interface.h"
 #include "meeting_service_components/meeting_waiting_room_interface.h"
 #include "meeting_service_interface.h"
+#include "setting_service_interface.h"
 #include "zoom_sdk.h"
 
+#include <glib.h>
+
+#include <atomic>
+#include <chrono>
 #include <cstdlib>
 #include <sstream>
 #include <stdexcept>
+#include <thread>
+#include <vector>
 
 namespace {
 
@@ -18,6 +25,47 @@ using namespace ZOOMSDK;
 std::string sdkErrorMessage(const std::string& action, SDKError error) {
   std::ostringstream output;
   output << action << " failed with SDKError " << static_cast<int>(error);
+  return output.str();
+}
+
+std::string authResultMessage(AuthResult result) {
+  switch (result) {
+  case AUTHRET_SUCCESS:
+    return "AUTHRET_SUCCESS";
+  case AUTHRET_KEYORSECRETEMPTY:
+    return "AUTHRET_KEYORSECRETEMPTY";
+  case AUTHRET_KEYORSECRETWRONG:
+    return "AUTHRET_KEYORSECRETWRONG";
+  case AUTHRET_ACCOUNTNOTSUPPORT:
+    return "AUTHRET_ACCOUNTNOTSUPPORT";
+  case AUTHRET_ACCOUNTNOTENABLESDK:
+    return "AUTHRET_ACCOUNTNOTENABLESDK";
+  case AUTHRET_UNKNOWN:
+    return "AUTHRET_UNKNOWN";
+  case AUTHRET_SERVICE_BUSY:
+    return "AUTHRET_SERVICE_BUSY";
+  case AUTHRET_NONE:
+    return "AUTHRET_NONE";
+  case AUTHRET_OVERTIME:
+    return "AUTHRET_OVERTIME";
+  case AUTHRET_NETWORKISSUE:
+    return "AUTHRET_NETWORKISSUE";
+  case AUTHRET_CLIENT_INCOMPATIBLE:
+    return "AUTHRET_CLIENT_INCOMPATIBLE";
+  case AUTHRET_JWTTOKENWRONG:
+    return "AUTHRET_JWTTOKENWRONG";
+  case AUTHRET_LIMIT_EXCEEDED_EXCEPTION:
+    return "AUTHRET_LIMIT_EXCEEDED_EXCEPTION";
+  }
+
+  std::ostringstream output;
+  output << "AuthResult " << static_cast<int>(result);
+  return output.str();
+}
+
+std::string authFailureMessage(const std::string& action, AuthResult result) {
+  std::ostringstream output;
+  output << action << " failed with " << authResultMessage(result) << " (" << static_cast<int>(result) << ")";
   return output.str();
 }
 
@@ -43,12 +91,36 @@ unsigned int parseUserId(const std::string& participantId) {
   return static_cast<unsigned int>(std::strtoul(participantId.c_str(), nullptr, 10));
 }
 
+std::string stringFromZchar(const zchar_t* value) {
+  return value ? value : "";
+}
+
+std::string participantId(unsigned int userId) {
+  std::ostringstream output;
+  output << userId;
+  return output.str();
+}
+
+Participant participantFromUser(unsigned int userId, IUserInfo* user, const std::string& fallbackStatus) {
+  Participant participant;
+  participant.id = participantId(userId);
+  participant.displayName = user ? stringFromZchar(user->GetUserName()) : "";
+  if (participant.displayName.empty()) {
+    participant.displayName = "Zoom User " + participant.id;
+  }
+  participant.status = user && user->IsRaiseHand() ? "raised-hand" : fallbackStatus;
+  if (fallbackStatus == "joined") {
+    participant.audioState = user && !user->IsAudioMuted() ? "allowed-to-speak" : "muted";
+  }
+  return participant;
+}
+
 class AuthEvents final : public IAuthServiceEvent {
 public:
-  AuthResult lastResult = AUTHRET_NONE;
+  std::atomic<int> lastResult{AUTHRET_NONE};
 
   void onAuthenticationReturn(AuthResult ret) override {
-    lastResult = ret;
+    lastResult.store(static_cast<int>(ret));
   }
 
   void onLoginReturnWithReason(LOGINSTATUS, IAccountInfo*, LoginFailReason) override {}
@@ -142,7 +214,7 @@ public:
       throw std::runtime_error(sdkErrorMessage("Admit participant", error));
     }
 
-    MeetingState state = current;
+    MeetingState state = syncState(current);
     state.lastEvent = "Zoom SDK admit participant command accepted";
     return state;
   }
@@ -159,7 +231,7 @@ public:
       throw std::runtime_error(sdkErrorMessage("Unmute participant", error));
     }
 
-    MeetingState state = current;
+    MeetingState state = syncState(current);
     state.lastEvent = "Zoom SDK unmute participant command accepted";
     return state;
   }
@@ -176,8 +248,26 @@ public:
       throw std::runtime_error(sdkErrorMessage("Mute participant", error));
     }
 
-    MeetingState state = current;
+    MeetingState state = syncState(current);
     state.lastEvent = "Zoom SDK mute participant command accepted";
+    return state;
+  }
+
+  MeetingState syncState(const MeetingState& current) override {
+    if (!meetingService_) {
+      return current;
+    }
+
+    MeetingState state = current;
+    state.waitingRoom = waitingRoomParticipants();
+    state.participants = meetingParticipants();
+    state.raisedHands.clear();
+    for (const Participant& participant : state.participants) {
+      if (participant.status == "raised-hand") {
+        state.raisedHands.push_back(participant);
+      }
+    }
+    state.lastEvent = "Zoom SDK state synced";
     return state;
   }
 
@@ -185,8 +275,53 @@ private:
   bool initialized_ = false;
   IAuthService* authService_ = nullptr;
   IMeetingService* meetingService_ = nullptr;
+  ISettingService* settingService_ = nullptr;
   AuthEvents authEvents_;
   MeetingEvents meetingEvents_;
+
+  std::vector<Participant> waitingRoomParticipants() {
+    std::vector<Participant> participants;
+    auto* waitingRoom = meetingService_->GetMeetingWaitingRoomController();
+    if (!waitingRoom) {
+      return participants;
+    }
+
+    IList<unsigned int>* waitingList = waitingRoom->GetWaitingRoomLst();
+    if (!waitingList) {
+      return participants;
+    }
+
+    for (int index = 0; index < waitingList->GetCount(); ++index) {
+      const unsigned int userId = waitingList->GetItem(index);
+      participants.push_back(participantFromUser(userId, waitingRoom->GetWaitingRoomUserInfoByID(userId), "waiting"));
+    }
+
+    return participants;
+  }
+
+  std::vector<Participant> meetingParticipants() {
+    std::vector<Participant> participants;
+    auto* participantController = meetingService_->GetMeetingParticipantsController();
+    if (!participantController) {
+      return participants;
+    }
+
+    IList<unsigned int>* participantList = participantController->GetParticipantsList();
+    if (!participantList) {
+      return participants;
+    }
+
+    for (int index = 0; index < participantList->GetCount(); ++index) {
+      const unsigned int userId = participantList->GetItem(index);
+      IUserInfo* user = participantController->GetUserByUserID(userId);
+      if (user && user->IsMySelf()) {
+        continue;
+      }
+      participants.push_back(participantFromUser(userId, user, "joined"));
+    }
+
+    return participants;
+  }
 
   void ensureInitialized(const std::string& sdkJwt) {
     if (!initialized_) {
@@ -202,20 +337,60 @@ private:
         throw std::runtime_error(sdkErrorMessage("InitSDK", initError));
       }
 
+      ensureMeetingService();
+      const SDKError settingCreateError = CreateSettingService(&settingService_);
+      if (settingCreateError != SDKERR_SUCCESS || !settingService_) {
+        throw std::runtime_error(sdkErrorMessage("CreateSettingService", settingCreateError));
+      }
+
       const SDKError authCreateError = CreateAuthService(&authService_);
       if (authCreateError != SDKERR_SUCCESS || !authService_) {
         throw std::runtime_error(sdkErrorMessage("CreateAuthService", authCreateError));
       }
-      authService_->SetEvent(&authEvents_);
+      const SDKError authEventError = authService_->SetEvent(&authEvents_);
+      if (authEventError != SDKERR_SUCCESS) {
+        throw std::runtime_error(sdkErrorMessage("Auth SetEvent", authEventError));
+      }
       initialized_ = true;
     }
 
+    authEvents_.lastResult.store(AUTHRET_NONE);
     AuthContext authContext;
     authContext.jwt_token = sdkJwt.c_str();
     const SDKError authError = authService_->SDKAuth(authContext);
     if (authError != SDKERR_SUCCESS) {
       throw std::runtime_error(sdkErrorMessage("SDKAuth", authError));
     }
+
+    waitForAuthentication();
+  }
+
+  void waitForAuthentication() {
+    constexpr int maxAttempts = 100;
+    constexpr auto delay = std::chrono::milliseconds(100);
+
+    for (int attempt = 0; attempt < maxAttempts; ++attempt) {
+      const AuthResult serviceResult = authService_->GetAuthResult();
+      const AuthResult callbackResult = static_cast<AuthResult>(authEvents_.lastResult.load());
+      const AuthResult result = serviceResult != AUTHRET_NONE ? serviceResult : callbackResult;
+
+      if (result == AUTHRET_SUCCESS) {
+        return;
+      }
+
+      if (result != AUTHRET_NONE) {
+        throw std::runtime_error(authFailureMessage("SDKAuth", result));
+      }
+
+      while (g_main_context_iteration(nullptr, false)) {
+      }
+      std::this_thread::sleep_for(delay);
+    }
+
+    const AuthResult serviceResult = authService_->GetAuthResult();
+    const AuthResult callbackResult = static_cast<AuthResult>(authEvents_.lastResult.load());
+    const AuthResult result = serviceResult != AUTHRET_NONE ? serviceResult : callbackResult;
+    throw std::runtime_error(authFailureMessage("SDKAuth timed out", result));
   }
 
   void ensureMeetingService() {
@@ -228,8 +403,12 @@ private:
       throw std::runtime_error(sdkErrorMessage("CreateMeetingService", createError));
     }
 
-    meetingService_->SetEvent(&meetingEvents_);
+    const SDKError eventError = meetingService_->SetEvent(&meetingEvents_);
+    if (eventError != SDKERR_SUCCESS) {
+      throw std::runtime_error(sdkErrorMessage("Meeting SetEvent", eventError));
+    }
   }
+
 };
 
 } // namespace

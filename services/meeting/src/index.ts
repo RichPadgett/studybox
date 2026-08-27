@@ -6,12 +6,17 @@ export class MockMeetingService implements MeetingService {
     title: "Weekly Bible Study",
     moderationMode: "moderated",
     participants: [],
+    lobbyRequests: [],
     waitingRoom: [],
     raisedHands: [],
     lastEvent: "Meeting service ready"
   };
 
   getState(): MeetingState {
+    return this.state;
+  }
+
+  async syncState(): Promise<MeetingState> {
     return this.state;
   }
 
@@ -29,8 +34,8 @@ export class MockMeetingService implements MeetingService {
 
     this.state = {
       ...this.state,
-      waitingRoom: [...this.state.waitingRoom, participant],
-      lastEvent: `${participant.displayName} entered the StudyBox waiting room`
+      lobbyRequests: [...this.state.lobbyRequests, participant],
+      lastEvent: `${participant.displayName} entered the StudyBox lobby`
     };
 
     return participant;
@@ -54,6 +59,7 @@ export class MockMeetingService implements MeetingService {
       meetingId: undefined,
       startedAt: undefined,
       participants: [],
+      lobbyRequests: [],
       waitingRoom: [],
       raisedHands: [],
       activeSpeaker: undefined,
@@ -65,7 +71,7 @@ export class MockMeetingService implements MeetingService {
   async admitParticipant(participantId: string): Promise<MeetingState> {
     const participant = this.state.waitingRoom.find((item) => item.id === participantId);
     if (!participant) {
-      return this.state;
+      throw new Error("Participant is not in the Zoom waiting room yet. Ask them to open the Zoom join link first.");
     }
 
     const admitted: Participant = {
@@ -174,6 +180,7 @@ export interface ZoomMeetingRunnerClient {
   muteParticipant(participantId: string): Promise<void>;
   setParticipantPodcastInclusion(participantId: string, included: boolean): Promise<void>;
   setModerationMode(mode: MeetingModerationMode): Promise<void>;
+  syncState(): Promise<MeetingState>;
   getState(): Promise<MeetingState>;
 }
 
@@ -183,6 +190,7 @@ export class ZoomMeetingService implements MeetingService {
     title: "Weekly Bible Study",
     moderationMode: "moderated",
     participants: [],
+    lobbyRequests: [],
     waitingRoom: [],
     raisedHands: [],
     lastEvent: "Zoom runner adapter initialized"
@@ -195,6 +203,10 @@ export class ZoomMeetingService implements MeetingService {
 
   getState(): MeetingState {
     return this.state;
+  }
+
+  async syncState(): Promise<MeetingState> {
+    return this.refreshState();
   }
 
   async requestParticipantJoin(displayName: string): Promise<Participant> {
@@ -211,8 +223,8 @@ export class ZoomMeetingService implements MeetingService {
 
     this.state = {
       ...this.state,
-      waitingRoom: [...this.state.waitingRoom, participant],
-      lastEvent: `${participant.displayName} entered the StudyBox waiting room`
+      lobbyRequests: [...this.state.lobbyRequests, participant],
+      lastEvent: `${participant.displayName} entered the StudyBox lobby`
     };
 
     return participant;
@@ -235,10 +247,19 @@ export class ZoomMeetingService implements MeetingService {
       lastEvent: "Ending Zoom meeting through runner"
     };
     await this.runner.endMeeting();
-    return this.refreshState();
+    const state = await this.refreshState();
+    this.state = {
+      ...state,
+      lobbyRequests: []
+    };
+    return this.state;
   }
 
   async admitParticipant(participantId: string): Promise<MeetingState> {
+    const participant = this.state.waitingRoom.find((item) => item.id === participantId);
+    if (!participant) {
+      throw new Error("Participant is not in the Zoom waiting room yet. Ask them to open the Zoom join link first.");
+    }
     await this.runner.admitParticipant(participantId);
     return this.refreshState();
   }
@@ -269,7 +290,12 @@ export class ZoomMeetingService implements MeetingService {
   }
 
   private async refreshState(): Promise<MeetingState> {
-    this.state = await this.runner.getState();
+    const currentLobbyRequests = this.state.lobbyRequests;
+    const runnerState = await this.runner.getState();
+    this.state = {
+      ...runnerState,
+      lobbyRequests: currentLobbyRequests
+    };
     return this.state;
   }
 }
@@ -307,12 +333,17 @@ export class MissingZoomRunnerClient implements ZoomMeetingRunnerClient {
     throw new Error("Zoom runner is not available. Build and configure the ARM64 Meeting SDK runner first.");
   }
 
+  async syncState(): Promise<MeetingState> {
+    return this.getState();
+  }
+
   async getState(): Promise<MeetingState> {
     return {
       status: "error",
       title: "Weekly Bible Study",
       moderationMode: "moderated",
       participants: [],
+      lobbyRequests: [],
       waitingRoom: [],
       raisedHands: [],
       lastEvent: "Zoom runner missing"

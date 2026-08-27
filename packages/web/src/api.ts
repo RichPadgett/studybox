@@ -11,8 +11,14 @@ export class ApiError extends Error {
   }
 }
 
+let dashboardViewerId: string | undefined;
+
 export function setAdminToken(token?: string): void {
   adminToken = token;
+}
+
+export function setDashboardViewerId(viewerId?: string): void {
+  dashboardViewerId = viewerId;
 }
 
 export async function loginAdmin(pin: string): Promise<AdminSession> {
@@ -105,6 +111,9 @@ function authorizedHeaders(headersInit?: HeadersInit): Headers {
   const headers = new Headers(headersInit);
   if (adminToken) {
     headers.set("Authorization", `Bearer ${adminToken}`);
+  }
+  if (dashboardViewerId) {
+    headers.set("X-StudyBox-Viewer-Id", dashboardViewerId);
   }
   return headers;
 }

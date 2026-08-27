@@ -1,0 +1,155 @@
+{
+  "display_information": {
+    "description": "StudyBox is a dedicated appliance for hosting a weekly Bible study Zoom meeting and coordinating local podcast recording.",
+    "display_name": "StudyBox Dev",
+    "long_description": "StudyBox is a Raspberry Pi based appliance that starts and manages an organization's scheduled Zoom meeting through the Linux Meeting SDK. It provides local web, OLED, and hardware button controls for meeting and podcast workflows.",
+    "discover_type": "UNLISTED",
+    "install_type": "APP_DIRECTORY",
+    "marketplace_categories": ["collaboration"],
+    "privacy_url": "https://enochscalendar.com/privacy",
+    "terms_url": "https://enochscalendar.com/terms",
+    "support_url": "https://enochscalendar.com",
+    "doc_url": "https://enochscalendar.com",
+    "config_url": "https://studybox.enochscalendar.com"
+  },
+  "oauth_information": {
+    "usage": "User authorization is used by the StudyBox appliance to identify the authorized Zoom host, list/fetch the host's scheduled meeting details, and retrieve a short-lived ZAK token immediately before starting the meeting through the Linux Meeting SDK.",
+    "development_redirect_uri": "https://studybox.enochscalendar.com/zoom/oauth/callback",
+    "production_redirect_uri": "https://studybox.enochscalendar.com/zoom/oauth/callback",
+    "oauth_allow_list": [
+      "https://studybox.enochscalendar.com/zoom/oauth/callback",
+      "https://studybox.enochscalendar.com"
+    ],
+    "strict_mode": true,
+    "subdomain_strict_mode": true,
+    "scopes": [
+      {
+        "scope": "user:read:user",
+        "optional": false
+      },
+      {
+        "scope": "user:read:zak",
+        "optional": false
+      },
+      {
+        "scope": "meeting:read:list_meetings",
+        "optional": false
+      },
+      {
+        "scope": "meeting:read:meeting",
+        "optional": false
+      },
+      {
+        "scope": "meeting:write:meeting",
+        "optional": false
+      }
+    ],
+    "scope_description": "StudyBox reads the authorized host profile, lists and reads scheduled meetings, creates or updates scheduled meetings when configured, and requests a ZAK token so the appliance can start the host's meeting through the Linux Meeting SDK."
+  },
+  "developer_information": {
+    "contact_details": [
+      {
+        "contact_name": "Richard Padgett",
+        "contact_email": "",
+        "role": "Developer"
+      }
+    ]
+  },
+  "features": {
+    "products": ["ZOOM_MEETING"],
+    "development_home_uri": "https://studybox.enochscalendar.com",
+    "production_home_uri": "https://studybox.enochscalendar.com",
+    "domain_allow_list": [
+      {
+        "domain": "studybox.enochscalendar.com",
+        "explanation": "StudyBox web UI, OAuth callback, and Zoom webhook endpoint."
+      },
+      {
+        "domain": "enochscalendar.com",
+        "explanation": "Existing public project/support site."
+      }
+    ],
+    "in_client_feature": {
+      "zoom_app_api": {
+        "enable": false,
+        "zoom_app_apis": []
+      },
+      "guest_mode": {
+        "enable": false,
+        "enable_test_guest_mode": false
+      },
+      "in_client_oauth": {
+        "enable": false
+      },
+      "collaborate_mode": {
+        "enable": false,
+        "enable_screen_sharing": false,
+        "enable_play_together": false,
+        "enable_digital_signage": false,
+        "enable_zoom_rooms_controller": false
+      }
+    },
+    "zoom_client_support": {
+      "mobile": {
+        "enable": false,
+        "apple_developer_program_team_id": ""
+      },
+      "zoom_room": {
+        "enable": false,
+        "enable_personal_zoom_room": false,
+        "enable_shared_zoom_room": false,
+        "enable_digital_signage": false,
+        "enable_zoom_rooms_controller": false
+      },
+      "pwa_client": {
+        "enable": false
+      }
+    },
+    "embed": {
+      "meeting_sdk": {
+        "enable": true,
+        "enable_device": true,
+        "devices": ["linux"]
+      },
+      "contact_center_sdk": {
+        "enable": false
+      },
+      "phone_sdk": {
+        "enable": false,
+        "fcm_token": null
+      }
+    },
+    "team_chat_subscription": {
+      "enable": false
+    },
+    "event_subscription": {
+      "enable": true,
+      "events": [
+        {
+          "subscription_id": "studybox-meeting-events-dev",
+          "subscription_name": "StudyBox Meeting Events Dev",
+          "event_types": [
+            "meeting.started",
+            "meeting.ended",
+            "meeting.participant_joined",
+            "meeting.participant_left",
+            "meeting.participant_joined_waiting_room",
+            "meeting.participant_left_waiting_room"
+          ],
+          "development_webhook_url": "https://studybox.enochscalendar.com/api/zoom/webhooks",
+          "production_webhook_url": "https://studybox.enochscalendar.com/api/zoom/webhooks",
+          "development_event_custom_header": null,
+          "production_event_custom_header": null,
+          "event_usage": "EVENT_FOR_USER"
+        }
+      ]
+    },
+    "connect": {},
+    "custom_form": {},
+    "marketplace_actions": {},
+    "marketplace_triggers": {},
+    "plugin_sdk": {
+      "enable": false
+    }
+  }
+}

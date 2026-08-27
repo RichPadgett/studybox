@@ -1,5 +1,7 @@
 import cors from "cors";
 import express from "express";
+import { createReadStream } from "node:fs";
+import { stat } from "node:fs/promises";
 import { createAdminSession, getAdminSession, requireAdmin } from "./adminAuth.js";
 import { StudyBoxAppliance } from "./appliance.js";
 import { LogStore } from "./logStore.js";
@@ -25,8 +27,13 @@ app.use(express.json({
   }
 }));
 
-app.get("/api/snapshot", (_request, response) => {
-  response.json(appliance.snapshot());
+app.get("/api/snapshot", async (request, response, next) => {
+  try {
+    await appliance.syncMeetingState();
+    response.json(appliance.snapshot(getDashboardViewerId(request)));
+  } catch (error) {
+    next(error);
+  }
 });
 
 app.post("/api/admin/login", async (request, response, next) => {
@@ -339,6 +346,17 @@ app.post("/api/podcast/stop", requireAdmin, async (_request, response, next) => 
 
 app.get("/api/podcast/recordings/:recordingId/download", requireAdmin, async (request, response, next) => {
   try {
+    const recordingFile = await appliance.getRecordingFile(request.params.recordingId, webAdminContext);
+    if (recordingFile) {
+      const fileStats = await stat(recordingFile.filePath);
+      response
+        .setHeader("Content-Type", recordingFile.mimeType)
+        .setHeader("Content-Length", fileStats.size.toString())
+        .setHeader("Content-Disposition", `attachment; filename="${recordingFile.fileName}"`);
+      createReadStream(recordingFile.filePath).pipe(response);
+      return;
+    }
+
     const download = await appliance.getRecordingDownload(request.params.recordingId, webAdminContext);
     if (!download) {
       response.status(404).json({ error: "Recording not found" });
@@ -383,6 +401,10 @@ startBackupRetryLoop();
 app.listen(port, () => {
   console.log(`StudyBox API listening on http://localhost:${port}`);
 });
+
+function getDashboardViewerId(request: express.Request): string | undefined {
+  return request.header("x-studybox-viewer-id")?.trim() || undefined;
+}
 
 function startBackupRetryLoop(): void {
   const retrySeconds = Number(process.env.STUDYBOX_BACKUP_RETRY_SECONDS ?? 300);

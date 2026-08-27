@@ -2,6 +2,7 @@
 
 #include <map>
 #include <string>
+#include <vector>
 
 struct RunnerCommand {
   std::string id;
@@ -14,6 +15,7 @@ struct Participant {
   std::string displayName;
   std::string status;
   std::string audioState;
+  bool includedInPodcast = false;
 };
 
 struct MeetingState {
@@ -22,6 +24,9 @@ struct MeetingState {
   std::string moderationMode = "moderated";
   std::string meetingId;
   std::string startedAt;
+  std::vector<Participant> participants;
+  std::vector<Participant> waitingRoom;
+  std::vector<Participant> raisedHands;
   std::string lastEvent = "Native Zoom runner initialized";
 };
 

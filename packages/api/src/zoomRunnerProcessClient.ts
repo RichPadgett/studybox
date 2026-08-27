@@ -1,4 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { isAbsolute } from "node:path";
 import { createInterface } from "node:readline";
 import type { MeetingModerationMode, MeetingState, ZoomRunnerCommand, ZoomRunnerResponse, ZoomRunnerStartMeetingPayload } from "@studybox/shared";
 import type { ZoomMeetingRunnerClient } from "@studybox/meeting";
@@ -17,6 +18,7 @@ export class ZoomRunnerProcessClient implements ZoomMeetingRunnerClient {
     title: "Weekly Bible Study",
     moderationMode: "moderated",
     participants: [],
+    lobbyRequests: [],
     waitingRoom: [],
     raisedHands: [],
     lastEvent: "Zoom runner process client initialized"
@@ -57,6 +59,10 @@ export class ZoomRunnerProcessClient implements ZoomMeetingRunnerClient {
     await this.send({ id: createId(), type: "setModerationMode", mode });
   }
 
+  async syncState(): Promise<MeetingState> {
+    return this.getState();
+  }
+
   async getState(): Promise<MeetingState> {
     return this.send({ id: createId(), type: "getState" });
   }
@@ -67,7 +73,7 @@ export class ZoomRunnerProcessClient implements ZoomMeetingRunnerClient {
       const timeout = setTimeout(() => {
         this.pending.delete(command.id);
         reject(new Error(`Zoom runner command timed out: ${command.type}`));
-      }, 5000);
+      }, command.type === "startMeeting" ? 30_000 : 5_000);
 
       this.pending.set(command.id, { resolve, reject, timeout });
       child.stdin.write(`${JSON.stringify(command)}\n`);
@@ -79,8 +85,8 @@ export class ZoomRunnerProcessClient implements ZoomMeetingRunnerClient {
       return this.child;
     }
 
-    this.child = spawn(this.command, this.args, {
-      cwd: projectPath(),
+    this.child = spawn(isAbsolute(this.command) ? this.command : projectPath(this.command), this.args, {
+      cwd: process.env.ZOOM_RUNNER_CWD?.trim() || projectPath(),
       env: process.env
     });
 
@@ -128,7 +134,7 @@ export class ZoomRunnerProcessClient implements ZoomMeetingRunnerClient {
     }
 
     if (message.kind === "event" && "state" in message && message.state) {
-      this.state = message.state;
+      this.state = this.mergeRunnerState(message.state);
       return;
     }
 
@@ -145,7 +151,7 @@ export class ZoomRunnerProcessClient implements ZoomMeetingRunnerClient {
     this.pending.delete(message.id);
 
     if (message.state) {
-      this.state = message.state;
+      this.state = this.mergeRunnerState(message.state);
     }
 
     if (message.ok) {
@@ -153,6 +159,13 @@ export class ZoomRunnerProcessClient implements ZoomMeetingRunnerClient {
     } else {
       pending.reject(new Error(message.error));
     }
+  }
+
+  private mergeRunnerState(runnerState: MeetingState): MeetingState {
+    return {
+      ...runnerState,
+      lobbyRequests: this.state.lobbyRequests
+    };
   }
 }
 

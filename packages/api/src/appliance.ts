@@ -1,14 +1,14 @@
 import { readFileSync, statfsSync } from "node:fs";
 import { availableParallelism, loadavg } from "node:os";
 import { MockAudioService } from "@studybox/audio";
-import { MockButtonController } from "@studybox/buttons";
+import { MockButtonController, RaspberryPiButtonController } from "@studybox/buttons";
 import { MockLedController } from "@studybox/led";
 import { MissingZoomRunnerClient, MockMeetingService, ZoomMeetingService } from "@studybox/meeting";
-import { MockOledDisplay } from "@studybox/oled";
-import { MockPodcastService } from "@studybox/podcast";
+import { MockOledDisplay, RaspberryPiOledDisplay } from "@studybox/oled";
+import { LocalPodcastService, MockPodcastService } from "@studybox/podcast";
 import { MockSchedulerService } from "@studybox/scheduler";
 import { MockBackupSyncService } from "@studybox/sync";
-import type { BackupSyncService, HardwareState, LedColor, LogEntry, LogLevel, LogResult, LogSource, MeetingService, OledPageId, Participant, Recording, RecordingDownload, StudyBoxSettings, StudyBoxSnapshot, SystemMetrics, SystemStatus } from "@studybox/shared";
+import type { BackupSyncService, ButtonController, HardwareMode, HardwareState, LedColor, LogEntry, LogLevel, LogResult, LogSource, MeetingService, MeetingState, OledDisplay, OledPageId, Participant, PodcastService, Recording, RecordingDownload, StudyBoxSettings, StudyBoxSnapshot, SystemMetrics, SystemStatus } from "@studybox/shared";
 import { LogStore } from "./logStore.js";
 import { projectPath } from "./paths.js";
 import { SettingsStore } from "./settingsStore.js";
@@ -29,17 +29,21 @@ export interface AuditContext extends ActionContext {
 
 export class StudyBoxAppliance {
   readonly meeting: MeetingService;
-  readonly podcast = new MockPodcastService();
+  readonly podcast: PodcastService;
   readonly scheduler = new MockSchedulerService();
   readonly backup: BackupSyncService;
   readonly audio = new MockAudioService();
   readonly leds = new MockLedController();
-  readonly oled = new MockOledDisplay(
+  private readonly hardwareMode: HardwareMode = process.env.STUDYBOX_HARDWARE_MODE === "raspberryPi" ? "raspberryPi" : "mock";
+  private readonly buttonMode: HardwareMode = this.hardwareMode === "raspberryPi" && process.env.STUDYBOX_BUTTON_MODE === "raspberryPi" ? "raspberryPi" : "mock";
+  readonly oled: OledDisplay = createOledDisplay(
+    this.hardwareMode,
     () => this.meeting.getState(),
     () => this.podcast.getState(),
     () => this.getMetrics()
   );
-  readonly buttons = new MockButtonController(
+  readonly buttons: ButtonController = createButtonController(
+    this.buttonMode,
     async () => {
       this.lastPagePressedAt = new Date().toISOString();
       const page = await this.oled.nextPage();
@@ -60,12 +64,14 @@ export class StudyBoxAppliance {
   private finalizedRecordingId?: string;
   private lastPagePressedAt?: string;
   private lastActionPressedAt?: string;
+  private readonly dashboardViewers = new Map<string, number>();
 
   constructor(
     private readonly settingsStore: SettingsStore,
     private readonly logStore: LogStore
   ) {
     const zoomConfig = getZoomConfig();
+    this.podcast = createPodcastService();
     this.backup = new MockBackupSyncService({
       queuePath: process.env.STUDYBOX_BACKUP_QUEUE_PATH ?? projectPath("data", "backup-queue.json"),
       bundleDir: process.env.STUDYBOX_BACKUP_DIR ?? projectPath("data", "backup-bundles"),
@@ -105,6 +111,9 @@ export class StudyBoxAppliance {
   async initialize(): Promise<void> {
     await this.settingsStore.load();
     await this.logStore.load();
+    if ("load" in this.podcast && typeof this.podcast.load === "function") {
+      await this.podcast.load();
+    }
     await this.backup.load();
     await this.oled.render(this.oled.getCurrentPage());
     await this.syncLeds();
@@ -117,7 +126,8 @@ export class StudyBoxAppliance {
     });
   }
 
-  snapshot(): StudyBoxSnapshot {
+  snapshot(viewerId?: string): StudyBoxSnapshot {
+    const presence = this.updateDashboardPresence(viewerId);
     return {
       systemStatus: this.getSystemStatus(),
       meeting: this.meeting.getState(),
@@ -130,9 +140,14 @@ export class StudyBoxAppliance {
         pages: this.oled.getPages()
       },
       metrics: this.getMetrics(),
+      presence,
       settings: this.settingsStore.get(),
       logs: this.logStore.get(100)
     };
+  }
+
+  async syncMeetingState(): Promise<MeetingState> {
+    return this.meeting.syncState();
   }
 
   async updateSettings(settings: StudyBoxSettings, context: ActionContext = {}): Promise<StudyBoxSettings> {
@@ -161,18 +176,18 @@ export class StudyBoxAppliance {
 
   async requestParticipantJoin(displayName: string, context: ActionContext = {}): Promise<Participant> {
     const participant = await this.meeting.requestParticipantJoin(displayName);
-    await this.logAction("meeting.participant.requestJoin", "Participant entered StudyBox waiting room", context, {
+    await this.logAction("meeting.participant.requestJoin", "Participant entered StudyBox lobby", context, {
       participantId: participant.id,
       displayName: participant.displayName
     });
-    await this.syncLeds();
+    await this.syncHardwareIndicators();
     return participant;
   }
 
   async startMeeting(context: ActionContext = {}): Promise<StudyBoxSnapshot> {
     await this.meeting.startMeeting();
     await this.logAction("meeting.start", "Meeting started", context);
-    await this.syncLeds();
+    await this.syncHardwareIndicators();
     return this.snapshot();
   }
 
@@ -180,21 +195,21 @@ export class StudyBoxAppliance {
     await this.meeting.endMeeting();
     await this.logAction("meeting.end", "Meeting ended", context);
     await this.queueBackupIfSessionFinalized(context);
-    await this.syncLeds();
+    await this.syncHardwareIndicators();
     return this.snapshot();
   }
 
   async admitParticipant(participantId: string, context: ActionContext = {}): Promise<StudyBoxSnapshot> {
     await this.meeting.admitParticipant(participantId);
     await this.logAction("meeting.participant.admit", "Participant admitted", context, { participantId });
-    await this.syncLeds();
+    await this.syncHardwareIndicators();
     return this.snapshot();
   }
 
   async dismissRaisedHand(participantId: string, context: ActionContext = {}): Promise<StudyBoxSnapshot> {
     await this.meeting.dismissRaisedHand(participantId);
     await this.logAction("meeting.raisedHand.dismiss", "Raised hand dismissed", context, { participantId });
-    await this.syncLeds();
+    await this.syncHardwareIndicators();
     return this.snapshot();
   }
 
@@ -204,14 +219,14 @@ export class StudyBoxAppliance {
       await this.meeting.setParticipantPodcastInclusion(participantId, true);
     }
     await this.logAction("meeting.participant.allowToSpeak", "Participant allowed to speak", context, { participantId });
-    await this.syncLeds();
+    await this.syncHardwareIndicators();
     return this.snapshot();
   }
 
   async muteParticipant(participantId: string, context: ActionContext = {}): Promise<StudyBoxSnapshot> {
     await this.meeting.muteParticipant(participantId);
     await this.logAction("meeting.participant.mute", "Participant muted", context, { participantId });
-    await this.syncLeds();
+    await this.syncHardwareIndicators();
     return this.snapshot();
   }
 
@@ -223,7 +238,7 @@ export class StudyBoxAppliance {
       context,
       { participantId, included }
     );
-    await this.syncLeds();
+    await this.syncHardwareIndicators();
     return this.snapshot();
   }
 
@@ -248,21 +263,21 @@ export class StudyBoxAppliance {
   async startRecording(context: ActionContext = {}): Promise<StudyBoxSnapshot> {
     await this.podcast.startRecording();
     await this.logAction("podcast.recording.start", "Recording started", context);
-    await this.syncLeds();
+    await this.syncHardwareIndicators();
     return this.snapshot();
   }
 
   async pauseRecording(context: ActionContext = {}): Promise<StudyBoxSnapshot> {
     await this.podcast.pauseRecording();
     await this.logAction("podcast.recording.pause", "Recording paused", context);
-    await this.syncLeds();
+    await this.syncHardwareIndicators();
     return this.snapshot();
   }
 
   async resumeRecording(context: ActionContext = {}): Promise<StudyBoxSnapshot> {
     await this.podcast.resumeRecording();
     await this.logAction("podcast.recording.resume", "Recording resumed", context);
-    await this.syncLeds();
+    await this.syncHardwareIndicators();
     return this.snapshot();
   }
 
@@ -274,7 +289,7 @@ export class StudyBoxAppliance {
     }
     await this.logAction("podcast.recording.finish", "Recording finished", context);
     await this.queueBackupIfSessionFinalized(context);
-    await this.syncLeds();
+    await this.syncHardwareIndicators();
     return this.snapshot();
   }
 
@@ -284,6 +299,23 @@ export class StudyBoxAppliance {
       await this.logAction("podcast.recording.download", `Recording download prepared: ${download.fileName}`, context, { recordingId, fileName: download.fileName });
     }
     return download;
+  }
+
+  async getRecordingFile(recordingId: string, context: ActionContext = {}): Promise<{ recording: Recording; filePath: string; fileName: string; mimeType: string } | undefined> {
+    const recording = (await this.podcast.listRecordings()).find((candidate) => candidate.id === recordingId);
+    if (!recording?.filePath) {
+      return undefined;
+    }
+
+    const fileName = recording.downloadFileName ?? recording.id;
+    const mimeType = recording.downloadMimeType ?? "audio/wav";
+    await this.logAction("podcast.recording.download", `Recording download prepared: ${fileName}`, context, { recordingId, fileName });
+    return {
+      recording,
+      filePath: recording.filePath,
+      fileName,
+      mimeType
+    };
   }
 
   async syncBackups(context: ActionContext = {}): Promise<StudyBoxSnapshot> {
@@ -336,23 +368,13 @@ export class StudyBoxAppliance {
 
   private async executeCurrentPageAction(): Promise<void> {
     const pageId: OledPageId = this.oled.getCurrentPage().id;
-    const meeting = this.meeting.getState();
-    if (meeting.activeSpeaker) {
-      await this.muteParticipant(meeting.activeSpeaker.id, { source: "button" });
-      return;
-    }
-
-    if (meeting.waitingRoom[0]) {
-      await this.admitParticipant(meeting.waitingRoom[0].id, { source: "button" });
-      return;
-    }
-
-    if (meeting.raisedHands[0]) {
-      await this.allowParticipantToSpeak(meeting.raisedHands[0].id, { source: "button" });
+    if (pageId === "home") {
+      await this.executeHomePageAction();
       return;
     }
 
     if (pageId === "meeting") {
+      const meeting = this.meeting.getState();
       if (meeting.status === "live") {
         await this.endMeeting({ source: "button" });
       } else {
@@ -373,6 +395,13 @@ export class StudyBoxAppliance {
       return;
     }
 
+    if (pageId === "recordingStop") {
+      if (this.podcast.getState().status !== "idle") {
+        await this.stopRecording({ source: "button" });
+      }
+      return;
+    }
+
     await this.log({
       source: "button",
       level: "info",
@@ -380,6 +409,33 @@ export class StudyBoxAppliance {
       result: "success",
       message: "Action button has no action on this page",
       details: { pageId }
+    });
+  }
+
+  private async executeHomePageAction(): Promise<void> {
+    const meeting = this.meeting.getState();
+    if (meeting.activeSpeaker) {
+      await this.muteParticipant(meeting.activeSpeaker.id, { source: "button" });
+      return;
+    }
+
+    if (meeting.waitingRoom[0]) {
+      await this.admitParticipant(meeting.waitingRoom[0].id, { source: "button" });
+      return;
+    }
+
+    if (meeting.raisedHands[0]) {
+      await this.allowParticipantToSpeak(meeting.raisedHands[0].id, { source: "button" });
+      return;
+    }
+
+    await this.log({
+      source: "button",
+      level: "info",
+      action: "button.action.noop",
+      result: "success",
+      message: "Action button has no action on this page",
+      details: { pageId: "home" }
     });
   }
 
@@ -410,7 +466,7 @@ export class StudyBoxAppliance {
     const podcast = this.podcast.getState();
     return {
       oled: {
-        mode: "mock",
+        mode: this.hardwareMode,
         health: "ready",
         connected: true,
         currentPageId: currentPage.id,
@@ -418,17 +474,17 @@ export class StudyBoxAppliance {
         lastEvent: `Rendered ${currentPage.title}`
       },
       pageButton: {
-        mode: "mock",
+        mode: this.buttonMode,
         health: "ready",
-        connected: true,
+        connected: this.buttonMode === "raspberryPi" || true,
         label: "PAGE",
         lastPressedAt: this.lastPagePressedAt,
         lastEvent: this.lastPagePressedAt ? "Page button pressed" : "Ready"
       },
       actionButton: {
-        mode: "mock",
+        mode: this.buttonMode,
         health: "ready",
-        connected: true,
+        connected: this.buttonMode === "raspberryPi" || true,
         label: "ACTION",
         ringColor,
         ringMode: ringColor === "off" ? "off" : this.getSystemStatus() === "attention" ? "pulsing" : "solid",
@@ -458,6 +514,32 @@ export class StudyBoxAppliance {
     if (status === "wifi-setup") return "purple";
     if (status === "booting") return "white";
     return "red";
+  }
+
+  private updateDashboardPresence(viewerId?: string): StudyBoxSnapshot["presence"] {
+    const now = Date.now();
+    const activeWindowMs = 10_000;
+    const normalizedViewerId = viewerId?.trim().slice(0, 80);
+    if (normalizedViewerId) {
+      this.dashboardViewers.set(normalizedViewerId, now);
+    }
+
+    for (const [id, lastSeenMs] of this.dashboardViewers) {
+      if (now - lastSeenMs > activeWindowMs) {
+        this.dashboardViewers.delete(id);
+      }
+    }
+
+    return {
+      activeViewerCount: this.dashboardViewers.size,
+      currentViewerId: normalizedViewerId,
+      lastSeenAt: normalizedViewerId ? new Date(now).toISOString() : undefined
+    };
+  }
+
+  private async syncHardwareIndicators(): Promise<void> {
+    await this.syncLeds();
+    await this.oled.render(this.oled.getCurrentPage());
   }
 
   private async syncLeds(): Promise<void> {
@@ -601,4 +683,45 @@ function getTemperatureC(): number {
 
 function clampPercent(value: number): number {
   return Math.max(0, Math.min(100, value));
+}
+
+function createOledDisplay(
+  mode: HardwareMode,
+  getMeeting: () => MeetingState,
+  getPodcast: () => ReturnType<PodcastService["getState"]>,
+  getMetrics: () => SystemMetrics
+): OledDisplay {
+  if (mode === "raspberryPi") {
+    return new RaspberryPiOledDisplay(getMeeting, getPodcast, getMetrics);
+  }
+
+  return new MockOledDisplay(getMeeting, getPodcast, getMetrics);
+}
+
+function createButtonController(
+  mode: HardwareMode,
+  onPage: () => Promise<void>,
+  onAction: () => Promise<void>
+): ButtonController {
+  if (mode === "raspberryPi") {
+    return new RaspberryPiButtonController(onPage, onAction);
+  }
+
+  return new MockButtonController(onPage, onAction);
+}
+
+function createPodcastService(): PodcastService {
+  if (process.env.STUDYBOX_PODCAST_MODE === "alsa") {
+    return new LocalPodcastService({
+      recordingsDir: process.env.STUDYBOX_RECORDINGS_DIR ?? "/var/lib/studybox/recordings",
+      manifestPath: process.env.STUDYBOX_RECORDINGS_MANIFEST ?? "/var/lib/studybox/recordings/manifest.json",
+      arecordPath: process.env.STUDYBOX_ARECORD_PATH,
+      device: process.env.STUDYBOX_AUDIO_CAPTURE_DEVICE ?? "default",
+      format: process.env.STUDYBOX_AUDIO_CAPTURE_FORMAT ?? "S16_LE",
+      sampleRate: process.env.STUDYBOX_AUDIO_SAMPLE_RATE ? Number(process.env.STUDYBOX_AUDIO_SAMPLE_RATE) : 48000,
+      channels: process.env.STUDYBOX_AUDIO_CHANNELS ? Number(process.env.STUDYBOX_AUDIO_CHANNELS) : 2
+    });
+  }
+
+  return new MockPodcastService();
 }

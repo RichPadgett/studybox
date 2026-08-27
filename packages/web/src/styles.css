@@ -331,6 +331,27 @@ h1 {
   background: #ffe18d;
 }
 
+.viewerPresence {
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid #d6dfd9;
+  border-radius: 999px;
+  color: #62736a;
+  display: inline-flex;
+  font-size: 13px;
+  font-weight: 800;
+  gap: 6px;
+  min-height: 38px;
+  padding: 0 11px;
+  white-space: nowrap;
+}
+
+.viewerPresence.active {
+  background: #fff4ce;
+  border-color: #e4bd4e;
+  color: #5c4211;
+}
+
 .adminUnlock,
 .adminBadge {
   align-items: center;
