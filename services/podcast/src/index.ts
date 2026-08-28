@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import type { PodcastService, PodcastState, Recording, RecordingDownload } from "@studybox/shared";
 
 export class MockPodcastService implements PodcastService {
@@ -228,11 +229,22 @@ export class LocalPodcastService implements PodcastService {
       lastEvent: `Recording started: ${fileName}`
     };
 
+    const earlyExit = new Promise<boolean>((resolve) => {
+      recorderProcess.once("exit", () => resolve(true));
+    });
+
     recorderProcess.once("exit", (code, signal) => {
       if (this.state.status === "recording" || this.state.status === "paused") {
+        const elapsedSeconds = this.currentElapsedSeconds();
+        this.activeRecording = undefined;
+        this.activeFilePath = undefined;
+        this.startedAtMs = undefined;
+        this.elapsedBeforePause = 0;
         this.state = {
           ...this.state,
           status: "error",
+          activeRecording: undefined,
+          elapsedSeconds,
           lastEvent: `Recorder exited unexpectedly with ${signal ?? code ?? "unknown"}`
         };
       }
@@ -246,6 +258,7 @@ export class LocalPodcastService implements PodcastService {
       }
     });
 
+    await Promise.race([earlyExit, sleep(250).then(() => false)]);
     return this.getState();
   }
 
@@ -286,18 +299,25 @@ export class LocalPodcastService implements PodcastService {
       return this.getState();
     }
 
+    const activeRecording = this.activeRecording;
+    const activeFilePath = this.activeFilePath;
     const process = this.process;
     if (process) {
       if (this.state.status === "paused") {
         process.kill("SIGCONT");
       }
+      this.state = {
+        ...this.state,
+        status: "stopping",
+        lastEvent: "Recording stopping"
+      };
       await stopProcess(process);
     }
 
     const durationSeconds = this.currentElapsedSeconds();
-    const sizeBytes = this.activeFilePath ? await fileSize(this.activeFilePath) : 0;
+    const sizeBytes = activeFilePath ? await fileSize(activeFilePath) : 0;
     const completed: RecordingManifestEntry = {
-      ...this.activeRecording,
+      ...activeRecording,
       endedAt: new Date().toISOString(),
       durationSeconds,
       sizeBytes

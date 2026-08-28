@@ -2,13 +2,13 @@ import { readFileSync, statfsSync } from "node:fs";
 import { availableParallelism, loadavg } from "node:os";
 import { MockAudioService } from "@studybox/audio";
 import { MockButtonController, RaspberryPiButtonController } from "@studybox/buttons";
-import { MockLedController } from "@studybox/led";
+import { MockLedController, RaspberryPiLedController } from "@studybox/led";
 import { MissingZoomRunnerClient, MockMeetingService, ZoomMeetingService } from "@studybox/meeting";
 import { MockOledDisplay, RaspberryPiOledDisplay } from "@studybox/oled";
 import { LocalPodcastService, MockPodcastService } from "@studybox/podcast";
 import { MockSchedulerService } from "@studybox/scheduler";
 import { MockBackupSyncService } from "@studybox/sync";
-import type { BackupSyncService, ButtonController, HardwareMode, HardwareState, LedColor, LogEntry, LogLevel, LogResult, LogSource, MeetingService, MeetingState, OledDisplay, OledPageId, Participant, PodcastService, Recording, RecordingDownload, StudyBoxSettings, StudyBoxSnapshot, SystemMetrics, SystemStatus } from "@studybox/shared";
+import type { BackupSyncService, ButtonController, HardwareMode, HardwareState, LedColor, LedController, LogEntry, LogLevel, LogResult, LogSource, MeetingService, MeetingState, OledDisplay, OledPageId, Participant, PodcastService, RecLedState, Recording, RecordingDownload, StudyBoxSettings, StudyBoxSnapshot, SystemMetrics, SystemStatus } from "@studybox/shared";
 import { LogStore } from "./logStore.js";
 import { projectPath } from "./paths.js";
 import { SettingsStore } from "./settingsStore.js";
@@ -33,9 +33,10 @@ export class StudyBoxAppliance {
   readonly scheduler = new MockSchedulerService();
   readonly backup: BackupSyncService;
   readonly audio = new MockAudioService();
-  readonly leds = new MockLedController();
   private readonly hardwareMode: HardwareMode = process.env.STUDYBOX_HARDWARE_MODE === "raspberryPi" ? "raspberryPi" : "mock";
   private readonly buttonMode: HardwareMode = this.hardwareMode === "raspberryPi" && process.env.STUDYBOX_BUTTON_MODE === "raspberryPi" ? "raspberryPi" : "mock";
+  private readonly ledMode: HardwareMode = this.hardwareMode === "raspberryPi" && process.env.STUDYBOX_LED_MODE === "raspberryPi" ? "raspberryPi" : "mock";
+  readonly leds: LedController = createLedController(this.ledMode);
   readonly oled: OledDisplay = createOledDisplay(
     this.hardwareMode,
     () => this.meeting.getState(),
@@ -64,6 +65,7 @@ export class StudyBoxAppliance {
   private finalizedRecordingId?: string;
   private lastPagePressedAt?: string;
   private lastActionPressedAt?: string;
+  private recordingLedState: RecLedState = "off";
   private readonly dashboardViewers = new Map<string, number>();
 
   constructor(
@@ -288,8 +290,8 @@ export class StudyBoxAppliance {
       this.finalizedRecordingId = activeRecordingId;
     }
     await this.logAction("podcast.recording.finish", "Recording finished", context);
-    await this.queueBackupIfSessionFinalized(context);
     await this.syncHardwareIndicators();
+    await this.queueBackupIfSessionFinalized(context);
     return this.snapshot();
   }
 
@@ -441,6 +443,10 @@ export class StudyBoxAppliance {
 
   private getSystemStatus(): SystemStatus {
     const meeting = this.meeting.getState();
+    const podcast = this.podcast.getState();
+    if (meeting.status === "error" || podcast.status === "error") {
+      return "error";
+    }
     if (meeting.waitingRoom.length > 0 || meeting.raisedHands.length > 0) {
       return "attention";
     }
@@ -492,11 +498,11 @@ export class StudyBoxAppliance {
         lastEvent: this.lastActionPressedAt ? "Action button pressed" : "Ready"
       },
       recordingLed: {
-        mode: "mock",
+        mode: this.ledMode,
         health: "ready",
         connected: true,
-        state: this.leds.recordingState,
-        lastEvent: `REC LED ${this.leds.recordingState}`
+        state: this.recordingLedState,
+        lastEvent: `REC LED ${this.recordingLedState}`
       },
       audio: this.audio.getState({
         meetingStatus: meeting.status,
@@ -547,7 +553,8 @@ export class StudyBoxAppliance {
     await this.leds.setSystem(status === "ready" ? "green" : status === "meeting-live" ? "blue" : status === "attention" ? "yellow" : "red");
 
     const recordingStatus = this.podcast.getState().status;
-    await this.leds.setRecording(recordingStatus === "recording" ? "solid" : recordingStatus === "paused" ? "blinking" : "off");
+    this.recordingLedState = recordingStatus === "recording" ? "solid" : recordingStatus === "paused" ? "blinking" : "off";
+    await this.leds.setRecording(this.recordingLedState);
   }
 
   private async logAction(action: string, message: string, context: ActionContext = {}, details?: Record<string, string | number | boolean | undefined>): Promise<void> {
@@ -708,6 +715,14 @@ function createButtonController(
   }
 
   return new MockButtonController(onPage, onAction);
+}
+
+function createLedController(mode: HardwareMode): LedController {
+  if (mode === "raspberryPi") {
+    return new RaspberryPiLedController();
+  }
+
+  return new MockLedController();
 }
 
 function createPodcastService(): PodcastService {

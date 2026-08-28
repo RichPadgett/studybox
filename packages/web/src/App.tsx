@@ -15,6 +15,8 @@ import {
   Mic,
   MonitorDot,
   Network,
+  Pause,
+  Play,
   Radio,
   RefreshCw,
   Save,
@@ -327,8 +329,7 @@ function Dashboard({ snapshot, run }: { snapshot: StudyBoxSnapshot; run: (path: 
       </div>
       <div className="toolbar">
         <Command icon={<Users size={17} />} label={meetingPrimaryAction(snapshot)} onClick={() => run(snapshot.meeting.status === "live" ? "/api/meeting/end" : "/api/meeting/start")} />
-        <Command icon={<Mic size={17} />} label={podcastPrimaryAction(snapshot)} onClick={() => run(podcastPrimaryPath(snapshot))} />
-        <Command icon={<Square size={17} />} label="Finish Recording" onClick={() => run("/api/podcast/stop")} disabled={snapshot.podcast.status === "idle"} />
+        <PodcastControls snapshot={snapshot} run={run} />
       </div>
       <Meeting snapshot={snapshot} run={run} compact />
     </div>
@@ -427,10 +428,20 @@ function Podcast({ snapshot, run }: { snapshot: StudyBoxSnapshot; run: (path: st
         <strong>{formatDuration(snapshot.podcast.elapsedSeconds)}</strong>
       </div>
       <div className="toolbar">
-        <Command icon={<Mic size={17} />} label={podcastPrimaryAction(snapshot)} onClick={() => run(podcastPrimaryPath(snapshot))} />
-        <Command icon={<Square size={17} />} label="Finish Recording" onClick={() => run("/api/podcast/stop")} disabled={snapshot.podcast.status === "idle"} />
+        <PodcastControls snapshot={snapshot} run={run} />
       </div>
     </div>
+  );
+}
+
+function PodcastControls({ snapshot, run }: { snapshot: StudyBoxSnapshot; run: (path: string, body?: unknown) => Promise<void> }) {
+  const recordingActive = snapshot.podcast.status === "recording" || snapshot.podcast.status === "paused";
+  return (
+    <>
+      <Command icon={<Play size={17} />} label={snapshot.podcast.status === "error" ? "Retry Recording" : "Start Recording"} onClick={() => run("/api/podcast/start")} disabled={recordingActive} />
+      <Command icon={<Pause size={17} />} label={snapshot.podcast.status === "paused" ? "Resume Recording" : "Pause Recording"} onClick={() => run(snapshot.podcast.status === "paused" ? "/api/podcast/resume" : "/api/podcast/pause")} disabled={!recordingActive} />
+      <Command icon={<Square size={17} />} label="Finish Recording" onClick={() => run("/api/podcast/stop")} disabled={!recordingActive} />
+    </>
   );
 }
 
@@ -915,18 +926,6 @@ function meetingPrimaryAction(snapshot: StudyBoxSnapshot): string {
     return snapshot.zoom.mode === "runner" && snapshot.zoom.runnerAvailable ? "End Zoom Meeting" : "End Local Session";
   }
   return snapshot.zoom.mode === "runner" && snapshot.zoom.runnerAvailable ? "Start Zoom Meeting" : "Start Local Session";
-}
-
-function podcastPrimaryAction(snapshot: StudyBoxSnapshot): string {
-  if (snapshot.podcast.status === "recording") return "Pause Recording";
-  if (snapshot.podcast.status === "paused") return "Resume Recording";
-  return "Start Recording";
-}
-
-function podcastPrimaryPath(snapshot: StudyBoxSnapshot): string {
-  if (snapshot.podcast.status === "recording") return "/api/podcast/pause";
-  if (snapshot.podcast.status === "paused") return "/api/podcast/resume";
-  return "/api/podcast/start";
 }
 
 function formatDuration(seconds: number): string {

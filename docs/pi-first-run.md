@@ -235,7 +235,7 @@ When the physical PAGE and ACTION buttons are wired, enable the real button HAL 
 ```bash
 sudo tee -a /etc/studybox/studybox.env >/dev/null <<'EOF'
 STUDYBOX_BUTTON_MODE=raspberryPi
-STUDYBOX_PAGE_BUTTON_GPIO=5
+STUDYBOX_PAGE_BUTTON_GPIO=17
 STUDYBOX_ACTION_BUTTON_GPIO=6
 STUDYBOX_BUTTON_EDGE=falling
 STUDYBOX_BUTTON_BIAS=pull-up
@@ -246,8 +246,35 @@ EOF
 Default button wiring assumes each momentary switch connects its GPIO to `GND` when pressed:
 
 ```text
-PAGE button   -> GPIO5  / physical pin 29, other leg -> GND
+PAGE button   -> GPIO17 / physical pin 11, other leg -> GND / physical pin 9
 ACTION button -> GPIO6  / physical pin 31, other leg -> GND
+```
+
+Temporary breadboard status as of 2026-08-27:
+
+```text
+OLED is wired and working on the SPI pins listed above.
+PAGE button is wired and working on GPIO17 / physical pin 11 to GND / physical pin 9.
+REC LED is wired and working on GPIO23 / physical pin 16 through a resistor to LED positive.
+LED negative goes to the breadboard negative rail, which is tied to Pi GND / physical pin 14.
+ACTION button is not physically wired yet; software default remains GPIO6 / physical pin 31.
+```
+
+For the dedicated recording LED, enable the real LED HAL:
+
+```bash
+sudo tee -a /etc/studybox/studybox.env >/dev/null <<'EOF'
+STUDYBOX_LED_MODE=raspberryPi
+STUDYBOX_REC_LED_GPIO=23
+STUDYBOX_REC_LED_ACTIVE_LOW=false
+EOF
+```
+
+Default REC LED wiring:
+
+```text
+GPIO23 / physical pin 16 -> resistor -> LED positive
+LED negative -> breadboard negative rail -> Pi GND / physical pin 14
 ```
 
 Install them on the Pi:
