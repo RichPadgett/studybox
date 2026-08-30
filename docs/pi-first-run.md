@@ -257,16 +257,19 @@ OLED is wired and working on the SPI pins listed above.
 PAGE button is wired and working on GPIO17 / physical pin 11 to GND / physical pin 9.
 REC LED is wired and working on GPIO23 / physical pin 16 through a resistor to LED positive.
 LED negative goes to the breadboard negative rail, which is tied to Pi GND / physical pin 14.
+ZOOM LED planned default is GPIO24 / physical pin 18 through a resistor to green LED positive.
 ACTION button is not physically wired yet; software default remains GPIO6 / physical pin 31.
 ```
 
-For the dedicated recording LED, enable the real LED HAL:
+For the dedicated recording and Zoom connection LEDs, enable the real LED HAL:
 
 ```bash
 sudo tee -a /etc/studybox/studybox.env >/dev/null <<'EOF'
 STUDYBOX_LED_MODE=raspberryPi
 STUDYBOX_REC_LED_GPIO=23
 STUDYBOX_REC_LED_ACTIVE_LOW=false
+STUDYBOX_ZOOM_LED_GPIO=24
+STUDYBOX_ZOOM_LED_ACTIVE_LOW=false
 EOF
 ```
 
@@ -275,6 +278,22 @@ Default REC LED wiring:
 ```text
 GPIO23 / physical pin 16 -> resistor -> LED positive
 LED negative -> breadboard negative rail -> Pi GND / physical pin 14
+```
+
+Default ZOOM LED wiring:
+
+```text
+GPIO24 / physical pin 18 -> resistor -> green LED positive
+LED negative -> breadboard negative rail -> Pi GND
+```
+
+ZOOM LED behavior:
+
+```text
+OFF         StudyBox is not in a Zoom meeting
+SOLID      StudyBox is connected to the meeting
+SLOW BLINK StudyBox is joining or reconnecting
+FAST BLINK StudyBox has a connection problem or is attempting recovery
 ```
 
 Install them on the Pi:

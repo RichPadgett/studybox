@@ -743,6 +743,12 @@ select {
 .led.yellow { background: #f1c232; }
 .led.red { background: #e53935; }
 .led.off { background: #aab5af; }
+.led.blinkSlow { animation: ledBlink 1s steps(2, jump-none) infinite; }
+.led.blinkFast { animation: ledBlink 250ms steps(2, jump-none) infinite; }
+
+@keyframes ledBlink {
+  50% { opacity: 0.25; }
+}
 
 @media (max-width: 980px) {
   .appShell {

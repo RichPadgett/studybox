@@ -864,10 +864,24 @@ function LedPanel({ snapshot }: { snapshot: StudyBoxSnapshot }) {
     <Panel title="LEDs">
       <div className="ledRows">
         <span><i className={`led ${systemColor}`} />System {systemColor}</span>
+        <span><i className={`led ${zoomLedClass(snapshot.hardware.zoomLed.state)}`} />Zoom {formatZoomLedState(snapshot.hardware.zoomLed.state)}</span>
         <span><i className={`led ${snapshot.podcast.status === "recording" ? "red" : "off"}`} />REC {snapshot.podcast.status}</span>
       </div>
     </Panel>
   );
+}
+
+function formatZoomLedState(state: StudyBoxSnapshot["hardware"]["zoomLed"]["state"]): string {
+  if (state === "slowBlink") return "joining";
+  if (state === "fastBlink") return "problem";
+  return state;
+}
+
+function zoomLedClass(state: StudyBoxSnapshot["hardware"]["zoomLed"]["state"]): string {
+  if (state === "off") return "off";
+  if (state === "slowBlink") return "green blinkSlow";
+  if (state === "fastBlink") return "green blinkFast";
+  return "green";
 }
 
 function Panel({ title, children }: { title: string; children: React.ReactNode }) {

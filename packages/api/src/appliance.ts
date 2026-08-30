@@ -8,7 +8,7 @@ import { MockOledDisplay, RaspberryPiOledDisplay } from "@studybox/oled";
 import { LocalPodcastService, MockPodcastService } from "@studybox/podcast";
 import { MockSchedulerService } from "@studybox/scheduler";
 import { MockBackupSyncService } from "@studybox/sync";
-import type { BackupSyncService, ButtonController, HardwareMode, HardwareState, LedColor, LedController, LogEntry, LogLevel, LogResult, LogSource, MeetingService, MeetingState, OledDisplay, OledPageId, Participant, PodcastService, RecLedState, Recording, RecordingDownload, StudyBoxSettings, StudyBoxSnapshot, SystemMetrics, SystemStatus } from "@studybox/shared";
+import type { BackupSyncService, ButtonController, HardwareMode, HardwareState, LedColor, LedController, LogEntry, LogLevel, LogResult, LogSource, MeetingService, MeetingState, OledDisplay, OledPageId, Participant, PodcastService, RecLedState, Recording, RecordingDownload, StudyBoxSettings, StudyBoxSnapshot, SystemMetrics, SystemStatus, ZoomLedState } from "@studybox/shared";
 import { LogStore } from "./logStore.js";
 import { projectPath } from "./paths.js";
 import { SettingsStore } from "./settingsStore.js";
@@ -66,6 +66,7 @@ export class StudyBoxAppliance {
   private lastPagePressedAt?: string;
   private lastActionPressedAt?: string;
   private recordingLedState: RecLedState = "off";
+  private zoomLedState: ZoomLedState = "off";
   private readonly dashboardViewers = new Map<string, number>();
 
   constructor(
@@ -504,6 +505,13 @@ export class StudyBoxAppliance {
         state: this.recordingLedState,
         lastEvent: `REC LED ${this.recordingLedState}`
       },
+      zoomLed: {
+        mode: this.ledMode,
+        health: "ready",
+        connected: true,
+        state: this.zoomLedState,
+        lastEvent: `Zoom LED ${this.zoomLedState}`
+      },
       audio: this.audio.getState({
         meetingStatus: meeting.status,
         podcastStatus: podcast.status,
@@ -555,6 +563,10 @@ export class StudyBoxAppliance {
     const recordingStatus = this.podcast.getState().status;
     this.recordingLedState = recordingStatus === "recording" ? "solid" : recordingStatus === "paused" ? "blinking" : "off";
     await this.leds.setRecording(this.recordingLedState);
+
+    const meetingStatus = this.meeting.getState().status;
+    this.zoomLedState = meetingStatus === "live" ? "solid" : meetingStatus === "starting" || meetingStatus === "ending" ? "slowBlink" : meetingStatus === "error" ? "fastBlink" : "off";
+    await this.leds.setZoomConnection(this.zoomLedState);
   }
 
   private async logAction(action: string, message: string, context: ActionContext = {}, details?: Record<string, string | number | boolean | undefined>): Promise<void> {

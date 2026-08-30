@@ -3,6 +3,7 @@ export type SystemStatus = "booting" | "ready" | "meeting-live" | "attention" | 
 export type LedColor = "green" | "blue" | "yellow" | "red" | "purple" | "white" | "off";
 
 export type RecLedState = "solid" | "blinking" | "off";
+export type ZoomLedState = "off" | "solid" | "slowBlink" | "fastBlink";
 
 export type ParticipantStatus = "joined" | "waiting" | "raised-hand";
 
@@ -133,6 +134,9 @@ export interface HardwareState {
   };
   recordingLed: HardwareComponentStatus & {
     state: RecLedState;
+  };
+  zoomLed: HardwareComponentStatus & {
+    state: ZoomLedState;
   };
   audio: AudioServiceState;
 }
@@ -369,6 +373,7 @@ export interface ButtonController {
 export interface LedController {
   setSystem(color: LedColor): Promise<void>;
   setRecording(state: RecLedState): Promise<void>;
+  setZoomConnection(state: ZoomLedState): Promise<void>;
 }
 
 export interface AudioDevice {
