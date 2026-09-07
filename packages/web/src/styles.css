@@ -580,6 +580,13 @@ h1 {
   background: #66766e;
 }
 
+.recordingDownloads {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
 .inlineActions {
   display: inline-flex;
   flex-wrap: wrap;

@@ -374,6 +374,42 @@ app.get("/api/podcast/recordings/:recordingId/download", requireAdmin, async (re
   }
 });
 
+app.get("/api/podcast/recordings/:recordingId/assets/:assetKind/download", requireAdmin, async (request, response, next) => {
+  try {
+    const assetKind = request.params.assetKind === "zoom" ? "zoom" : request.params.assetKind === "audio" ? "audio" : undefined;
+    if (!assetKind) {
+      response.status(400).json({ error: "Recording asset must be audio or zoom" });
+      return;
+    }
+
+    const recordingFile = await appliance.getRecordingFile(request.params.recordingId, webAdminContext, assetKind);
+    if (recordingFile) {
+      const fileStats = await stat(recordingFile.filePath);
+      response
+        .setHeader("Content-Type", recordingFile.mimeType)
+        .setHeader("Content-Length", fileStats.size.toString())
+        .setHeader("Content-Disposition", `attachment; filename="${recordingFile.fileName}"`);
+      createReadStream(recordingFile.filePath).pipe(response);
+      return;
+    }
+
+    const download = await appliance.getRecordingAssetDownload(request.params.recordingId, assetKind, webAdminContext);
+    if (!download) {
+      response.status(404).json({ error: "Recording asset not found" });
+      return;
+    }
+
+    const content = Buffer.from(download.contentBase64, "base64");
+    response
+      .setHeader("Content-Type", download.mimeType)
+      .setHeader("Content-Length", content.length.toString())
+      .setHeader("Content-Disposition", `attachment; filename="${download.fileName}"`)
+      .send(content);
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.post("/api/backup/sync", requireAdmin, async (_request, response, next) => {
   try {
     response.json(await appliance.syncBackups(webAdminContext));

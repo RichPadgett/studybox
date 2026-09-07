@@ -1,4 +1,4 @@
-import type { AdminSession, Participant, StudyBoxSettings, StudyBoxSnapshot, ZoomDeviceAuthorization, ZoomOAuthStatus } from "@studybox/shared";
+import type { AdminSession, Participant, RecordingAssetKind, StudyBoxSettings, StudyBoxSnapshot, ZoomDeviceAuthorization, ZoomOAuthStatus } from "@studybox/shared";
 
 let adminToken: string | undefined;
 
@@ -78,15 +78,23 @@ export async function refreshZoomToken(): Promise<ZoomOAuthStatus> {
 }
 
 export async function downloadRecording(recordingId: string): Promise<void> {
-  const response = await fetch(`/api/podcast/recordings/${encodeURIComponent(recordingId)}/download`, {
+  return downloadRecordingAsset(recordingId, "audio");
+}
+
+export async function downloadRecordingAsset(recordingId: string, assetKind: RecordingAssetKind): Promise<void> {
+  const response = await fetch(`/api/podcast/recordings/${encodeURIComponent(recordingId)}/assets/${encodeURIComponent(assetKind)}/download`, {
     headers: authorizedHeaders()
   });
+  return downloadRecordingResponse(response, `${recordingId}-${assetKind}`);
+}
+
+async function downloadRecordingResponse(response: Response, fallbackName: string): Promise<void> {
   if (!response.ok) {
     throw await createApiError(response);
   }
 
   const blob = await response.blob();
-  const fileName = getDownloadFileName(response.headers.get("Content-Disposition")) ?? `${recordingId}.wav`;
+  const fileName = getDownloadFileName(response.headers.get("Content-Disposition")) ?? `${fallbackName}.wav`;
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;

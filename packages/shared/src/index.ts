@@ -45,6 +45,23 @@ export interface Recording {
   downloadFileName?: string;
   downloadMimeType?: string;
   filePath?: string;
+  expiresAt?: string;
+  assets?: RecordingAsset[];
+}
+
+export type RecordingAssetKind = "audio" | "zoom";
+
+export type RecordingAssetStatus = "available" | "pending" | "expired" | "missing";
+
+export interface RecordingAsset {
+  kind: RecordingAssetKind;
+  label: string;
+  status: RecordingAssetStatus;
+  fileName?: string;
+  mimeType?: string;
+  filePath?: string;
+  sizeBytes?: number;
+  availableUntil?: string;
 }
 
 export interface RecordingDownload {
@@ -351,6 +368,7 @@ export interface PodcastService {
   stopRecording(): Promise<PodcastState>;
   listRecordings(): Promise<Recording[]>;
   getRecordingDownload(recordingId: string): Promise<RecordingDownload | undefined>;
+  getRecordingAssetDownload(recordingId: string, assetKind: RecordingAssetKind): Promise<RecordingDownload | undefined>;
 }
 
 export interface SchedulerService {

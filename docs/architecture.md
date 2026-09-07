@@ -32,6 +32,10 @@ Within one recording session, pause and resume continue writing to the same logi
 
 The web admin downloads recordings through the API. The UI should never read local audio files directly; the real recorder should replace the mock download implementation behind `PodcastService`.
 
+Recordings can expose multiple downloadable assets. The `audio` asset is the local StudyBox room capture, currently recorded from the DJI receiver through ALSA. The `zoom` asset is reserved for the Zoom-generated recording once that integration produces a file. New local recordings default to a 14-day availability window, controlled by `STUDYBOX_RECORDING_RETENTION_DAYS`, so the Pi can keep recent downloads available without becoming a long-term archive.
+
+On Ubuntu Server builds where PulseAudio can hold the USB microphone, set `STUDYBOX_AUDIO_CAPTURE_WRAPPER=pasuspender` so the local recorder launches `pasuspender -- arecord ...` and uses the same capture path that worked in direct DJI tests.
+
 ## Remote Speaker Podcast Routing
 
 Remote Zoom audio is always routed to the room speakerphone output when the meeting is live, but it is not automatically part of the podcast mix. In moderated mode, a remote participant must first be approved to speak through `MeetingService`. That approval creates an active remote speaker route that the admin can include in or exclude from the podcast.

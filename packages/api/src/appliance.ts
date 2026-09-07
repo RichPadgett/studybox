@@ -8,7 +8,7 @@ import { MockOledDisplay, RaspberryPiOledDisplay } from "@studybox/oled";
 import { LocalPodcastService, MockPodcastService } from "@studybox/podcast";
 import { MockSchedulerService } from "@studybox/scheduler";
 import { MockBackupSyncService } from "@studybox/sync";
-import type { BackupSyncService, ButtonController, HardwareMode, HardwareState, LedColor, LedController, LogEntry, LogLevel, LogResult, LogSource, MeetingService, MeetingState, OledDisplay, OledPageId, Participant, PodcastService, RecLedState, Recording, RecordingDownload, StudyBoxSettings, StudyBoxSnapshot, SystemMetrics, SystemStatus, ZoomLedState } from "@studybox/shared";
+import type { BackupSyncService, ButtonController, HardwareMode, HardwareState, LedColor, LedController, LogEntry, LogLevel, LogResult, LogSource, MeetingService, MeetingState, OledDisplay, OledPageId, Participant, PodcastService, RecLedState, Recording, RecordingAssetKind, RecordingDownload, StudyBoxSettings, StudyBoxSnapshot, SystemMetrics, SystemStatus, ZoomLedState } from "@studybox/shared";
 import { LogStore } from "./logStore.js";
 import { projectPath } from "./paths.js";
 import { SettingsStore } from "./settingsStore.js";
@@ -304,18 +304,28 @@ export class StudyBoxAppliance {
     return download;
   }
 
-  async getRecordingFile(recordingId: string, context: ActionContext = {}): Promise<{ recording: Recording; filePath: string; fileName: string; mimeType: string } | undefined> {
+  async getRecordingAssetDownload(recordingId: string, assetKind: RecordingAssetKind, context: ActionContext = {}): Promise<RecordingDownload | undefined> {
+    const download = await this.podcast.getRecordingAssetDownload(recordingId, assetKind);
+    if (download) {
+      await this.logAction("podcast.recording.download", `${assetKind} download prepared: ${download.fileName}`, context, { recordingId, fileName: download.fileName, assetKind });
+    }
+    return download;
+  }
+
+  async getRecordingFile(recordingId: string, context: ActionContext = {}, assetKind: RecordingAssetKind = "audio"): Promise<{ recording: Recording; filePath: string; fileName: string; mimeType: string } | undefined> {
     const recording = (await this.podcast.listRecordings()).find((candidate) => candidate.id === recordingId);
-    if (!recording?.filePath) {
+    const asset = recording?.assets?.find((candidate) => candidate.kind === assetKind);
+    const filePath = asset?.filePath ?? (assetKind === "audio" ? recording?.filePath : undefined);
+    if (!recording || !filePath || (asset && asset.status !== "available")) {
       return undefined;
     }
 
-    const fileName = recording.downloadFileName ?? recording.id;
-    const mimeType = recording.downloadMimeType ?? "audio/wav";
-    await this.logAction("podcast.recording.download", `Recording download prepared: ${fileName}`, context, { recordingId, fileName });
+    const fileName = asset?.fileName ?? recording.downloadFileName ?? recording.id;
+    const mimeType = asset?.mimeType ?? recording.downloadMimeType ?? "audio/wav";
+    await this.logAction("podcast.recording.download", `${assetKind} download prepared: ${fileName}`, context, { recordingId, fileName, assetKind });
     return {
       recording,
-      filePath: recording.filePath,
+      filePath,
       fileName,
       mimeType
     };
@@ -743,6 +753,8 @@ function createPodcastService(): PodcastService {
       recordingsDir: process.env.STUDYBOX_RECORDINGS_DIR ?? "/var/lib/studybox/recordings",
       manifestPath: process.env.STUDYBOX_RECORDINGS_MANIFEST ?? "/var/lib/studybox/recordings/manifest.json",
       arecordPath: process.env.STUDYBOX_ARECORD_PATH,
+      captureWrapperPath: process.env.STUDYBOX_AUDIO_CAPTURE_WRAPPER,
+      retentionDays: process.env.STUDYBOX_RECORDING_RETENTION_DAYS ? Number(process.env.STUDYBOX_RECORDING_RETENTION_DAYS) : 14,
       device: process.env.STUDYBOX_AUDIO_CAPTURE_DEVICE ?? "default",
       format: process.env.STUDYBOX_AUDIO_CAPTURE_FORMAT ?? "S16_LE",
       sampleRate: process.env.STUDYBOX_AUDIO_SAMPLE_RATE ? Number(process.env.STUDYBOX_AUDIO_SAMPLE_RATE) : 48000,

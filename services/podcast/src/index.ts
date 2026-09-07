@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import type { PodcastService, PodcastState, Recording, RecordingDownload } from "@studybox/shared";
+import type { PodcastService, PodcastState, Recording, RecordingAssetKind, RecordingDownload } from "@studybox/shared";
 
 export class MockPodcastService implements PodcastService {
   private state: PodcastState = {
@@ -90,7 +90,15 @@ export class MockPodcastService implements PodcastService {
       durationSeconds,
       sizeBytes: Math.max(1, durationSeconds) * 21_000,
       downloadFileName: formatRecordingFileName(this.state.activeRecording.startedAt),
-      downloadMimeType: "audio/wav"
+      downloadMimeType: "audio/wav",
+      expiresAt: retentionDate(this.state.activeRecording.startedAt, 14),
+      assets: createRecordingAssets({
+        startedAt: this.state.activeRecording.startedAt,
+        fileName: formatRecordingFileName(this.state.activeRecording.startedAt),
+        mimeType: "audio/wav",
+        sizeBytes: Math.max(1, durationSeconds) * 21_000,
+        retentionDays: 14
+      })
     };
 
     this.startedAtMs = undefined;
@@ -111,8 +119,15 @@ export class MockPodcastService implements PodcastService {
   }
 
   async getRecordingDownload(recordingId: string): Promise<RecordingDownload | undefined> {
+    return this.getRecordingAssetDownload(recordingId, "audio");
+  }
+
+  async getRecordingAssetDownload(recordingId: string, assetKind: RecordingAssetKind): Promise<RecordingDownload | undefined> {
     const recording = this.state.recordings.find((candidate) => candidate.id === recordingId);
     if (!recording) {
+      return undefined;
+    }
+    if (assetKind !== "audio") {
       return undefined;
     }
 
@@ -137,6 +152,8 @@ export interface LocalPodcastServiceOptions {
   recordingsDir: string;
   manifestPath: string;
   arecordPath?: string;
+  captureWrapperPath?: string;
+  retentionDays?: number;
   device?: string;
   format?: string;
   sampleRate?: number;
@@ -205,7 +222,16 @@ export class LocalPodcastService implements PodcastService {
       sizeBytes: 0,
       downloadFileName: fileName,
       downloadMimeType: "audio/wav",
-      filePath
+      filePath,
+      expiresAt: retentionDate(startedAt, this.options.retentionDays ?? 14),
+      assets: createRecordingAssets({
+        startedAt,
+        fileName,
+        mimeType: "audio/wav",
+        filePath,
+        sizeBytes: 0,
+        retentionDays: this.options.retentionDays ?? 14
+      })
     };
 
     const args = [
@@ -215,7 +241,10 @@ export class LocalPodcastService implements PodcastService {
       "-c", String(this.options.channels ?? 2),
       filePath
     ];
-    const recorderProcess = spawn(this.options.arecordPath ?? "arecord", args, { stdio: ["ignore", "pipe", "pipe"] });
+    const recorderCommand = this.options.arecordPath ?? "arecord";
+    const recorderProcess = this.options.captureWrapperPath
+      ? spawn(this.options.captureWrapperPath, ["--", recorderCommand, ...args], { stdio: ["ignore", "pipe", "pipe"] })
+      : spawn(recorderCommand, args, { stdio: ["ignore", "pipe", "pipe"] });
     this.process = recorderProcess;
     this.activeFilePath = filePath;
     this.activeRecording = recording;
@@ -320,7 +349,16 @@ export class LocalPodcastService implements PodcastService {
       ...activeRecording,
       endedAt: new Date().toISOString(),
       durationSeconds,
-      sizeBytes
+      sizeBytes,
+      assets: createRecordingAssets({
+        startedAt: activeRecording.startedAt,
+        fileName: activeRecording.downloadFileName ?? formatRecordingFileName(activeRecording.startedAt),
+        mimeType: activeRecording.downloadMimeType ?? "audio/wav",
+        filePath: activeRecording.filePath,
+        sizeBytes,
+        retentionDays: this.options.retentionDays ?? 14,
+        zoomAsset: activeRecording.assets?.find((asset) => asset.kind === "zoom")
+      })
     };
 
     this.recordings = [completed, ...this.recordings];
@@ -346,16 +384,24 @@ export class LocalPodcastService implements PodcastService {
   }
 
   async getRecordingDownload(recordingId: string): Promise<RecordingDownload | undefined> {
+    return this.getRecordingAssetDownload(recordingId, "audio");
+  }
+
+  async getRecordingAssetDownload(recordingId: string, assetKind: RecordingAssetKind): Promise<RecordingDownload | undefined> {
     const recording = this.recordings.find((candidate) => candidate.id === recordingId);
     if (!recording) {
+      return undefined;
+    }
+    const asset = getRecordingAsset(recording, assetKind);
+    if (!asset?.filePath || asset.status !== "available") {
       return undefined;
     }
 
     return {
       recording,
-      fileName: recording.downloadFileName ?? formatRecordingFileName(recording.startedAt),
-      mimeType: recording.downloadMimeType ?? "audio/wav",
-      contentBase64: (await readFile(recording.filePath)).toString("base64")
+      fileName: asset.fileName ?? recording.downloadFileName ?? formatRecordingFileName(recording.startedAt),
+      mimeType: asset.mimeType ?? recording.downloadMimeType ?? "audio/wav",
+      contentBase64: (await readFile(asset.filePath)).toString("base64")
     };
   }
 
@@ -395,6 +441,60 @@ function formatRecordingFileName(startedAt: string): string {
   const hour = String(date.getHours()).padStart(2, "0");
   const minute = String(date.getMinutes()).padStart(2, "0");
   return `bible-study-${year}-${month}-${day}-${hour}-${minute}.wav`;
+}
+
+function retentionDate(startedAt: string, retentionDays: number): string {
+  return new Date(new Date(startedAt).getTime() + retentionDays * 24 * 60 * 60 * 1000).toISOString();
+}
+
+function createRecordingAssets(input: {
+  startedAt: string;
+  fileName: string;
+  mimeType: string;
+  filePath?: string;
+  sizeBytes: number;
+  retentionDays: number;
+  zoomAsset?: NonNullable<Recording["assets"]>[number];
+}): NonNullable<Recording["assets"]> {
+  const availableUntil = retentionDate(input.startedAt, input.retentionDays);
+  return [
+    {
+      kind: "audio",
+      label: "Room audio",
+      status: "available",
+      fileName: input.fileName,
+      mimeType: input.mimeType,
+      filePath: input.filePath,
+      sizeBytes: input.sizeBytes,
+      availableUntil
+    },
+    input.zoomAsset ?? {
+      kind: "zoom",
+      label: "Zoom recording",
+      status: "pending",
+      availableUntil
+    }
+  ];
+}
+
+function getRecordingAsset(recording: RecordingManifestEntry, assetKind: RecordingAssetKind): NonNullable<Recording["assets"]>[number] | undefined {
+  const asset = recording.assets?.find((candidate) => candidate.kind === assetKind);
+  if (asset) {
+    return asset;
+  }
+  if (assetKind === "audio" && recording.filePath) {
+    return {
+      kind: "audio",
+      label: "Room audio",
+      status: "available",
+      fileName: recording.downloadFileName ?? formatRecordingFileName(recording.startedAt),
+      mimeType: recording.downloadMimeType ?? "audio/wav",
+      filePath: recording.filePath,
+      sizeBytes: recording.sizeBytes,
+      availableUntil: recording.expiresAt
+    };
+  }
+  return undefined;
 }
 
 function createSilentWavBase64(): string {

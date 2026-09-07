@@ -1,4 +1,4 @@
-import type { AdminSession, LogEntry, Participant, StudyBoxSettings, StudyBoxSnapshot, ZoomDeviceAuthorization } from "@studybox/shared";
+import type { AdminSession, LogEntry, Participant, Recording, RecordingAssetKind, StudyBoxSettings, StudyBoxSnapshot, ZoomDeviceAuthorization } from "@studybox/shared";
 import {
   Activity,
   AudioLines,
@@ -26,7 +26,7 @@ import {
   Users
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { ApiError, downloadRecording, getSnapshot, loginAdmin, pollZoomDeviceToken, postAction, refreshZoomToken, requestMeetingJoin, saveSettings, setAdminToken, setDashboardViewerId, startZoomDeviceAuthorization, validateAdminSession } from "./api.js";
+import { ApiError, downloadRecordingAsset, getSnapshot, loginAdmin, pollZoomDeviceToken, postAction, refreshZoomToken, requestMeetingJoin, saveSettings, setAdminToken, setDashboardViewerId, startZoomDeviceAuthorization, validateAdminSession } from "./api.js";
 
 const navItems = [
   { id: "dashboard", label: "Dashboard", icon: Gauge },
@@ -514,14 +514,14 @@ function Audio({ snapshot, run, adminUnlocked }: { snapshot: StudyBoxSnapshot; r
 }
 
 function Recordings({ snapshot, adminUnlocked, setError, lockAdmin }: { snapshot: StudyBoxSnapshot; adminUnlocked: boolean; setError: (error?: string) => void; lockAdmin: () => void }) {
-  async function download(recordingId: string) {
+  async function download(recordingId: string, assetKind: RecordingAssetKind) {
     if (!adminUnlocked) {
       setError("Enter the admin PIN before downloading recordings.");
       return;
     }
 
     try {
-      await downloadRecording(recordingId);
+      await downloadRecordingAsset(recordingId, assetKind);
       setError(undefined);
     } catch (caught) {
       if (isAdminAuthError(caught)) {
@@ -534,17 +534,29 @@ function Recordings({ snapshot, adminUnlocked, setError, lockAdmin }: { snapshot
   return (
     <Panel title="Recordings">
       <List empty="No recordings">
-        {snapshot.podcast.recordings.map((recording) => (
-          <li key={recording.id}>
-            <span className="listMain">
-              <span>{recording.title}</span>
-              <small>{formatDuration(recording.durationSeconds)} · {formatBytes(recording.sizeBytes)}</small>
-            </span>
-            <button className="inlineButton" onClick={() => void download(recording.id)} disabled={!adminUnlocked}>
-              <Download size={14} /> Download
-            </button>
-          </li>
-        ))}
+        {snapshot.podcast.recordings.map((recording) => {
+          const audioAsset = getRecordingAsset(recording, "audio");
+          const zoomAsset = getRecordingAsset(recording, "zoom");
+          const audioAvailable = audioAsset?.status === "available";
+          const zoomAvailable = zoomAsset?.status === "available";
+          return (
+            <li key={recording.id}>
+              <span className="listMain">
+                <span>{recording.title}</span>
+                <small>{formatDuration(recording.durationSeconds)} · {formatBytes(recording.sizeBytes)}</small>
+                {recording.expiresAt ? <small>available until {formatDateTime(recording.expiresAt)}</small> : null}
+              </span>
+              <span className="recordingDownloads">
+                <button className="inlineButton" onClick={() => void download(recording.id, "audio")} disabled={!adminUnlocked || !audioAvailable}>
+                  <Download size={14} /> Audio
+                </button>
+                <button className="inlineButton secondary" onClick={() => void download(recording.id, "zoom")} disabled={!adminUnlocked || !zoomAvailable}>
+                  <Download size={14} /> {zoomAvailable ? "Zoom" : "Zoom pending"}
+                </button>
+              </span>
+            </li>
+          );
+        })}
       </List>
     </Panel>
   );
@@ -951,6 +963,34 @@ function formatDuration(seconds: number): string {
 
 function formatBytes(bytes: number): string {
   return `${(bytes / 1_000_000).toFixed(1)} MB`;
+}
+
+function formatDateTime(value: string): string {
+  return new Date(value).toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit"
+  });
+}
+
+function getRecordingAsset(recording: Recording, assetKind: RecordingAssetKind): NonNullable<Recording["assets"]>[number] | undefined {
+  const asset = recording.assets?.find((candidate) => candidate.kind === assetKind);
+  if (asset) {
+    return asset;
+  }
+  if (assetKind === "audio" && recording.downloadFileName) {
+    return {
+      kind: "audio",
+      label: "Room audio",
+      status: "available",
+      fileName: recording.downloadFileName,
+      mimeType: recording.downloadMimeType ?? "audio/wav",
+      sizeBytes: recording.sizeBytes,
+      availableUntil: recording.expiresAt
+    };
+  }
+  return undefined;
 }
 
 function readOrCreateDashboardViewerId(): string {
