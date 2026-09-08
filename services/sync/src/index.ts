@@ -8,6 +8,7 @@ export interface MockBackupSyncServiceOptions {
   bundleDir: string;
   target: string;
   mode?: BackupSyncState["mode"];
+  onStateChange?: (state: BackupSyncState) => void;
   rsync?: {
     host?: string;
     user?: string;
@@ -65,19 +66,35 @@ export class MockBackupSyncService implements BackupSyncService {
       recordingStartedAt: input.recording.startedAt,
       recordingEndedAt: input.recording.endedAt ?? createdAt,
       createdAt,
-      status: "pending",
+      status: "zipping",
       target: this.options.target,
-      logEntryCount: input.logs.length
+      logEntryCount: input.logs.length,
+      progressPercent: 0,
+      stage: "Packaging meeting"
     };
 
-    await this.writeBundleFiles(bundle, input.download, input.logs);
     this.state = recalculate({
       ...this.state,
       bundles: [bundle, ...this.state.bundles],
+      lastEvent: `Zipping meeting: ${input.download.fileName}`
+    });
+    await this.save();
+    this.notifyStateChange();
+    await this.writeBundleFiles(bundle, input.download, input.logs);
+    const pendingBundle = {
+      ...bundle,
+      status: "pending" as const,
+      progressPercent: 100,
+      stage: "Ready to upload"
+    };
+    this.state = recalculate({
+      ...this.state,
+      bundles: replaceBundle(this.state.bundles, pendingBundle),
       lastEvent: `Backup bundle queued: ${input.download.fileName}`
     });
     await this.save();
-    return bundle;
+    this.notifyStateChange();
+    return pendingBundle;
   }
 
   async syncPending(): Promise<BackupSyncState> {
@@ -92,10 +109,13 @@ export class MockBackupSyncService implements BackupSyncService {
         ...bundle,
         status: "uploading" as const,
         lastAttemptAt: new Date().toISOString(),
+        progressPercent: 0,
+        stage: "Uploading meeting",
         error: undefined
       };
       this.state = recalculate({ ...this.state, bundles: replaceBundle(this.state.bundles, uploading) });
       await this.save();
+      this.notifyStateChange();
 
       bundles.push(await this.uploadBundle(uploading));
     }
@@ -108,6 +128,7 @@ export class MockBackupSyncService implements BackupSyncService {
         : "Pending backup bundles synced to mock Hetzner repo"
     });
     await this.save();
+    this.notifyStateChange();
     return this.getState();
   }
 
@@ -124,6 +145,10 @@ export class MockBackupSyncService implements BackupSyncService {
     await writeFile(this.options.queuePath, JSON.stringify(this.state, null, 2));
   }
 
+  private notifyStateChange(): void {
+    this.options.onStateChange?.(this.getState());
+  }
+
   private async uploadBundle(bundle: BackupBundle): Promise<BackupBundle> {
     if (this.options.mode !== "rsync") {
       return markUploaded(bundle);
@@ -138,6 +163,16 @@ export class MockBackupSyncService implements BackupSyncService {
         stageRemoteDir: this.options.rsync?.stageRemoteDir,
         sshKeyPath: this.options.rsync?.sshKeyPath,
         port: this.options.rsync?.port
+      }, async (progress) => {
+        const updated = {
+          ...bundle,
+          status: progress.stage,
+          progressPercent: progress.percent,
+          stage: progress.label
+        };
+        this.state = recalculate({ ...this.state, bundles: replaceBundle(this.state.bundles, updated), lastEvent: `${progress.label}: ${progress.percent}%` });
+        await this.save();
+        this.notifyStateChange();
       });
       return markUploaded(bundle);
     } catch (error) {
@@ -160,7 +195,13 @@ interface RsyncInput {
   port?: number;
 }
 
-async function runRsync(input: RsyncInput): Promise<void> {
+interface RsyncProgress {
+  stage: "uploading" | "promoting";
+  label: string;
+  percent: number;
+}
+
+async function runRsync(input: RsyncInput, onProgress?: (progress: RsyncProgress) => Promise<void>): Promise<void> {
   const sshArgs = buildSshArgs(input);
   const bundleName = input.sourceDir.split("/").at(-1);
   if (!bundleName) {
@@ -176,17 +217,38 @@ async function runRsync(input: RsyncInput): Promise<void> {
     "-az",
     "--partial",
     "--delete",
+    "--info=progress2",
     "-e",
     sshArgs.join(" "),
     `${input.sourceDir}/`,
     remoteTarget
   ];
 
+  await onProgress?.({ stage: "uploading", label: "Uploading meeting", percent: 0 });
+
   await new Promise<void>((resolve, reject) => {
     const child = spawn("rsync", args, { stdio: ["ignore", "pipe", "pipe"] });
     let stderr = "";
+    let stdout = "";
+    let latestProgress = 0;
+    const handleProgress = (chunk: Buffer): void => {
+      stdout += chunk.toString();
+      const matches = [...stdout.matchAll(/\s(\d{1,3})%\s/g)];
+      const match = matches.at(-1);
+      if (!match) {
+        return;
+      }
+      const nextProgress = Math.min(100, Math.max(0, Number(match[1])));
+      if (nextProgress !== latestProgress) {
+        latestProgress = nextProgress;
+        void onProgress?.({ stage: "uploading", label: "Uploading meeting", percent: nextProgress });
+      }
+      stdout = stdout.slice(-200);
+    };
+    child.stdout.on("data", handleProgress);
     child.stderr.on("data", (chunk: Buffer) => {
       stderr += chunk.toString();
+      handleProgress(chunk);
     });
     child.on("error", reject);
     child.on("close", (code) => {
@@ -199,6 +261,7 @@ async function runRsync(input: RsyncInput): Promise<void> {
   });
 
   if (input.stageRemoteDir) {
+    await onProgress?.({ stage: "promoting", label: "Finalizing upload", percent: 100 });
     const finalBaseDir = trimTrailingSlash(input.remoteDir);
     const finalBundleDir = `${finalBaseDir}/${bundleName}`;
     await runSshCommand(
@@ -258,6 +321,8 @@ function markUploaded(bundle: BackupBundle): BackupBundle {
     status: "uploaded",
     lastAttemptAt: bundle.lastAttemptAt ?? now,
     uploadedAt: now,
+    progressPercent: 100,
+    stage: "Upload completed",
     error: undefined
   };
 }
@@ -289,17 +354,20 @@ function emptyState(target: string, mode: BackupSyncState["mode"]): BackupSyncSt
 function normalizeState(state: BackupSyncState, target: string, mode: BackupSyncState["mode"]): BackupSyncState {
   return recalculate({
     ...state,
-    mode,
-    target,
-    bundles: state.bundles ?? []
+      mode,
+      target,
+      bundles: state.bundles ?? []
   });
 }
 
 function recalculate(state: BackupSyncState): BackupSyncState {
   return {
     ...state,
-    pendingCount: state.bundles.filter((bundle) => bundle.status === "pending" || bundle.status === "uploading").length,
+    pendingCount: state.bundles.filter((bundle) => bundle.status === "pending" || bundle.status === "zipping" || bundle.status === "uploading" || bundle.status === "promoting").length,
     uploadedCount: state.bundles.filter((bundle) => bundle.status === "uploaded").length,
-    failedCount: state.bundles.filter((bundle) => bundle.status === "failed").length
+    failedCount: state.bundles.filter((bundle) => bundle.status === "failed").length,
+    activeBundleId: state.bundles.find((bundle) => bundle.status === "zipping" || bundle.status === "uploading" || bundle.status === "promoting")?.id,
+    activeStage: state.bundles.find((bundle) => bundle.status === "zipping" || bundle.status === "uploading" || bundle.status === "promoting")?.status,
+    activeProgressPercent: state.bundles.find((bundle) => bundle.status === "zipping" || bundle.status === "uploading" || bundle.status === "promoting")?.progressPercent
   };
 }

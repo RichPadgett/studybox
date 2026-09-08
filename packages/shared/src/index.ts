@@ -305,7 +305,7 @@ export interface ZoomZakStatus {
   tokenLength?: number;
 }
 
-export type BackupBundleStatus = "pending" | "uploading" | "uploaded" | "failed";
+export type BackupBundleStatus = "pending" | "zipping" | "uploading" | "promoting" | "uploaded" | "failed";
 
 export interface BackupBundle {
   id: string;
@@ -321,6 +321,8 @@ export interface BackupBundle {
   logEntryCount: number;
   lastAttemptAt?: string;
   uploadedAt?: string;
+  progressPercent?: number;
+  stage?: string;
   error?: string;
 }
 
@@ -331,6 +333,9 @@ export interface BackupSyncState {
   uploadedCount: number;
   failedCount: number;
   bundles: BackupBundle[];
+  activeBundleId?: string;
+  activeStage?: BackupBundleStatus;
+  activeProgressPercent?: number;
   lastEvent?: string;
 }
 

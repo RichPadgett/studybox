@@ -8,7 +8,7 @@ import { MockOledDisplay, RaspberryPiOledDisplay } from "@studybox/oled";
 import { LocalPodcastService, MockPodcastService } from "@studybox/podcast";
 import { MockSchedulerService } from "@studybox/scheduler";
 import { MockBackupSyncService } from "@studybox/sync";
-import type { BackupSyncService, ButtonController, HardwareMode, HardwareState, LedColor, LedController, LogEntry, LogLevel, LogResult, LogSource, MeetingService, MeetingState, OledDisplay, OledPageId, Participant, PodcastService, RecLedState, Recording, RecordingAssetKind, RecordingDownload, StudyBoxSettings, StudyBoxSnapshot, SystemMetrics, SystemStatus, ZoomLedState } from "@studybox/shared";
+import type { BackupSyncService, BackupSyncState, ButtonController, HardwareMode, HardwareState, LedColor, LedController, LogEntry, LogLevel, LogResult, LogSource, MeetingService, MeetingState, OledDisplay, OledPageId, Participant, PodcastService, RecLedState, Recording, RecordingAssetKind, RecordingDownload, StudyBoxSettings, StudyBoxSnapshot, SystemMetrics, SystemStatus, ZoomLedState } from "@studybox/shared";
 import { LogStore } from "./logStore.js";
 import { projectPath } from "./paths.js";
 import { SettingsStore } from "./settingsStore.js";
@@ -41,7 +41,8 @@ export class StudyBoxAppliance {
     this.hardwareMode,
     () => this.meeting.getState(),
     () => this.podcast.getState(),
-    () => this.getMetrics()
+    () => this.getMetrics(),
+    () => this.backup.getState()
   );
   readonly buttons: ButtonController = createButtonController(
     this.buttonMode,
@@ -80,6 +81,11 @@ export class StudyBoxAppliance {
       bundleDir: process.env.STUDYBOX_BACKUP_DIR ?? projectPath("data", "backup-bundles"),
       target: process.env.STUDYBOX_BACKUP_REPO ?? "hetzner:studybox-backup",
       mode: process.env.STUDYBOX_BACKUP_MODE === "rsync" ? "rsync" : "mock",
+      onStateChange: () => {
+        void this.oled.render(this.oled.getCurrentPage()).catch((error: unknown) => {
+          console.error("OLED backup status render failed", error);
+        });
+      },
       rsync: {
         host: process.env.STUDYBOX_BACKUP_HOST,
         user: process.env.STUDYBOX_BACKUP_USER,
@@ -333,7 +339,9 @@ export class StudyBoxAppliance {
   }
 
   async syncBackups(context: ActionContext = {}): Promise<StudyBoxSnapshot> {
+    await this.oled.render(this.oled.getCurrentPage());
     await this.backup.syncPending();
+    await this.oled.render(this.oled.getCurrentPage());
     await this.log({
       source: "backup",
       actor: context.actor,
@@ -357,6 +365,7 @@ export class StudyBoxAppliance {
     }
 
     const after = await this.backup.syncPending();
+    await this.oled.render(this.oled.getCurrentPage());
     const failed = after.failedCount;
     await this.log({
       source: "backup",
@@ -624,6 +633,7 @@ export class StudyBoxAppliance {
       logs: this.logsForRecording(latestRecording),
       meetingEndedAt: new Date().toISOString()
     });
+    await this.oled.render(this.oled.getCurrentPage());
 
     await this.log({
       source: context.source ?? "system",
@@ -636,6 +646,7 @@ export class StudyBoxAppliance {
     });
 
     await this.backup.syncPending();
+    await this.oled.render(this.oled.getCurrentPage());
     this.finalizedRecordingId = undefined;
     await this.log({
       source: "backup",
@@ -719,13 +730,14 @@ function createOledDisplay(
   mode: HardwareMode,
   getMeeting: () => MeetingState,
   getPodcast: () => ReturnType<PodcastService["getState"]>,
-  getMetrics: () => SystemMetrics
+  getMetrics: () => SystemMetrics,
+  getBackup: () => BackupSyncState
 ): OledDisplay {
   if (mode === "raspberryPi") {
-    return new RaspberryPiOledDisplay(getMeeting, getPodcast, getMetrics);
+    return new RaspberryPiOledDisplay(getMeeting, getPodcast, getMetrics, getBackup);
   }
 
-  return new MockOledDisplay(getMeeting, getPodcast, getMetrics);
+  return new MockOledDisplay(getMeeting, getPodcast, getMetrics, getBackup);
 }
 
 function createButtonController(

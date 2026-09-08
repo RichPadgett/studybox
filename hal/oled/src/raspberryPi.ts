@@ -1,6 +1,6 @@
 import { closeSync, openSync, writeFileSync } from "node:fs";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import type { MeetingState, OledDisplay, OledPage, PodcastState, SystemMetrics } from "@studybox/shared";
+import type { BackupSyncState, MeetingState, OledDisplay, OledPage, PodcastState, SystemMetrics } from "@studybox/shared";
 import { MockOledDisplay } from "./mock.js";
 
 export class RaspberryPiOledDisplay implements OledDisplay {
@@ -20,9 +20,10 @@ export class RaspberryPiOledDisplay implements OledDisplay {
   constructor(
     getMeeting: () => MeetingState,
     getPodcast: () => PodcastState,
-    getMetrics: () => SystemMetrics
+    getMetrics: () => SystemMetrics,
+    getBackup?: () => BackupSyncState
   ) {
-    this.pages = new MockOledDisplay(getMeeting, getPodcast, getMetrics);
+    this.pages = new MockOledDisplay(getMeeting, getPodcast, getMetrics, getBackup);
     process.once("beforeExit", () => this.close());
     process.once("exit", () => this.close());
     process.once("uncaughtException", (error) => {

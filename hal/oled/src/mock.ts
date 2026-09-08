@@ -1,4 +1,4 @@
-import type { MeetingState, OledDisplay, OledPage, PodcastState, SystemMetrics } from "@studybox/shared";
+import type { BackupSyncState, MeetingState, OledDisplay, OledPage, PodcastState, SystemMetrics } from "@studybox/shared";
 
 export class MockOledDisplay implements OledDisplay {
   private pageIndex = 0;
@@ -7,13 +7,20 @@ export class MockOledDisplay implements OledDisplay {
   constructor(
     private readonly getMeeting: () => MeetingState,
     private readonly getPodcast: () => PodcastState,
-    private readonly getMetrics: () => SystemMetrics
+    private readonly getMetrics: () => SystemMetrics,
+    private readonly getBackup?: () => BackupSyncState
   ) {}
 
   getPages(): OledPage[] {
     const meeting = this.getMeeting();
     const podcast = this.getPodcast();
     const metrics = this.getMetrics();
+    const backup = this.getBackup?.();
+    const activeBackupPage = backup ? getActiveBackupPage(backup) : undefined;
+
+    if (activeBackupPage) {
+      return [activeBackupPage];
+    }
 
     const pages: OledPage[] = [
       {
@@ -87,6 +94,40 @@ export class MockOledDisplay implements OledDisplay {
   getRenderedPage(): OledPage | undefined {
     return this.renderedPage;
   }
+}
+
+function getActiveBackupPage(backup: BackupSyncState): OledPage | undefined {
+  const activeBundle = backup.bundles.find((bundle) => bundle.id === backup.activeBundleId)
+    ?? backup.bundles.find((bundle) => bundle.status === "zipping" || bundle.status === "uploading" || bundle.status === "promoting");
+  if (activeBundle) {
+    const percent = Math.round(activeBundle.progressPercent ?? backup.activeProgressPercent ?? 0);
+    const title = activeBundle.status === "zipping" ? "Zipping Mtg" : activeBundle.status === "promoting" ? "Finishing Up" : "Uploading";
+    return {
+      id: "system",
+      title,
+      lines: [
+        activeBundle.recordingTitle,
+        `${percent}% COMPLETE`,
+        activeBundle.stage ?? "Please wait"
+      ]
+    };
+  }
+
+  const latestUploaded = backup.bundles.find((bundle) => bundle.status === "uploaded" && bundle.uploadedAt);
+  const uploadedAt = latestUploaded?.uploadedAt;
+  if (latestUploaded && uploadedAt && Date.now() - Date.parse(uploadedAt) < 10 * 60 * 1000) {
+    return {
+      id: "system",
+      title: "Upload Done",
+      lines: [
+        latestUploaded.recordingTitle,
+        "HETZNER BACKUP",
+        "COMPLETED"
+      ]
+    };
+  }
+
+  return undefined;
 }
 
 function formatDuration(seconds: number): string {

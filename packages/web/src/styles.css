@@ -587,6 +587,24 @@ h1 {
   justify-content: flex-end;
 }
 
+.backupProgress {
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.backupProgress span,
+.backupProgress small {
+  color: #52645b;
+  font-weight: 700;
+}
+
+.backupProgress strong {
+  color: #244638;
+  font-size: 24px;
+}
+
 .inlineActions {
   display: inline-flex;
   flex-wrap: wrap;

@@ -563,6 +563,7 @@ function Recordings({ snapshot, adminUnlocked, setError, lockAdmin }: { snapshot
 }
 
 function BackupView({ snapshot, run, adminUnlocked }: { snapshot: StudyBoxSnapshot; run: (path: string, body?: unknown) => Promise<void>; adminUnlocked: boolean }) {
+  const activeBackup = snapshot.backup.bundles.find((bundle) => bundle.id === snapshot.backup.activeBundleId);
   return (
     <div className="stack">
       <div className="metricGrid compactMetrics">
@@ -571,6 +572,15 @@ function BackupView({ snapshot, run, adminUnlocked }: { snapshot: StudyBoxSnapsh
         <Metric label="Uploaded" value={snapshot.backup.uploadedCount.toString()} detail="synced bundles" />
         <Metric label="Failed" value={snapshot.backup.failedCount.toString()} detail="needs retry" />
       </div>
+      {activeBackup ? (
+        <Panel title="Current Upload">
+          <div className="backupProgress">
+            <span>{activeBackup.stage ?? activeBackup.status}</span>
+            <strong>{Math.round(activeBackup.progressPercent ?? 0)}%</strong>
+            <small>{activeBackup.recordingTitle}</small>
+          </div>
+        </Panel>
+      ) : null}
       <div className="toolbar">
         <Command icon={<RefreshCw size={17} />} label="Retry Sync" onClick={() => run("/api/backup/sync")} disabled={!adminUnlocked} />
       </div>
@@ -580,8 +590,9 @@ function BackupView({ snapshot, run, adminUnlocked }: { snapshot: StudyBoxSnapsh
             <li key={bundle.id}>
               <span className="listMain">
                 <span>{bundle.recordingTitle}</span>
-                <small>{bundle.fileName} · {bundle.status} · {bundle.target}</small>
+                <small>{bundle.fileName} · {bundle.stage ?? bundle.status} · {bundle.target}</small>
                 <small>{new Date(bundle.createdAt).toLocaleString()} · {bundle.logEntryCount} log entries</small>
+                {bundle.progressPercent !== undefined && bundle.status !== "uploaded" ? <small>{Math.round(bundle.progressPercent)}% complete</small> : null}
                 {bundle.lastAttemptAt ? <small>Last attempt {new Date(bundle.lastAttemptAt).toLocaleString()}</small> : null}
                 {bundle.error ? <small className="errorText">{bundle.error}</small> : null}
               </span>

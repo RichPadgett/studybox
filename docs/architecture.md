@@ -56,6 +56,8 @@ For the Pi, set `STUDYBOX_BACKUP_MODE=rsync` and provide `STUDYBOX_BACKUP_HOST`,
 
 The API runs a background backup retry loop controlled by `STUDYBOX_BACKUP_RETRY_SECONDS`. Retries are skipped while a meeting is live or a recording is active so upload work does not compete with Zoom or audio capture.
 
+During backup work, the OLED temporarily shows the backup lifecycle instead of the normal page rotation: `Zipping Mtg` while packaging the bundle, `Uploading` with rsync percentage while bytes are moving, `Finishing Up` during remote promotion from stage to completed, and `Upload Done` for several minutes after success.
+
 ## Development
 
 ```bash
