@@ -117,7 +117,7 @@ export class StudyBoxAppliance {
           }
         )
       : new MockMeetingService();
-    this.podcast = createPodcastService(() => this.meeting.getState().status === "live");
+    this.podcast = createPodcastService();
   }
 
   async initialize(): Promise<void> {
@@ -778,20 +778,19 @@ function createLedController(mode: HardwareMode): LedController {
   return new MockLedController();
 }
 
-function createPodcastService(isMeetingLive: () => boolean): PodcastService {
+function createPodcastService(): PodcastService {
   if (process.env.STUDYBOX_PODCAST_MODE === "alsa") {
-    const configuredDevice = process.env.STUDYBOX_AUDIO_CAPTURE_DEVICE ?? "default";
-    const directDevice = process.env.STUDYBOX_AUDIO_CAPTURE_DIRECT_DEVICE
-      ?? (configuredDevice === "pulse" ? "plughw:CARD=MINI,DEV=0" : configuredDevice);
-    const sharedDevice = process.env.STUDYBOX_AUDIO_CAPTURE_SHARED_DEVICE ?? "pulse";
+    const captureDevice = process.env.STUDYBOX_AUDIO_CAPTURE_SHARED_DEVICE
+      ?? process.env.STUDYBOX_AUDIO_CAPTURE_DEVICE
+      ?? "pulse";
     return new LocalPodcastService({
       recordingsDir: process.env.STUDYBOX_RECORDINGS_DIR ?? "/var/lib/studybox/recordings",
       manifestPath: process.env.STUDYBOX_RECORDINGS_MANIFEST ?? "/var/lib/studybox/recordings/manifest.json",
       arecordPath: process.env.STUDYBOX_ARECORD_PATH,
       captureWrapperPath: process.env.STUDYBOX_AUDIO_CAPTURE_WRAPPER,
       retentionDays: process.env.STUDYBOX_RECORDING_RETENTION_DAYS ? Number(process.env.STUDYBOX_RECORDING_RETENTION_DAYS) : 35,
-      device: directDevice,
-      captureDeviceResolver: () => isMeetingLive() ? sharedDevice : directDevice,
+      device: captureDevice,
+      captureDeviceResolver: () => captureDevice,
       format: process.env.STUDYBOX_AUDIO_CAPTURE_FORMAT ?? "S16_LE",
       sampleRate: process.env.STUDYBOX_AUDIO_SAMPLE_RATE ? Number(process.env.STUDYBOX_AUDIO_SAMPLE_RATE) : 48000,
       channels: process.env.STUDYBOX_AUDIO_CHANNELS ? Number(process.env.STUDYBOX_AUDIO_CHANNELS) : 2
