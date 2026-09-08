@@ -68,6 +68,7 @@ export class StudyBoxAppliance {
   private lastActionPressedAt?: string;
   private recordingLedState: RecLedState = "off";
   private zoomLedState: ZoomLedState = "off";
+  private backupDoneRenderTimer?: NodeJS.Timeout;
   private readonly dashboardViewers = new Map<string, number>();
 
   constructor(
@@ -85,6 +86,7 @@ export class StudyBoxAppliance {
         void this.oled.render(this.oled.getCurrentPage()).catch((error: unknown) => {
           console.error("OLED backup status render failed", error);
         });
+        this.scheduleBackupDoneRender();
       },
       rsync: {
         host: process.env.STUDYBOX_BACKUP_HOST,
@@ -576,6 +578,20 @@ export class StudyBoxAppliance {
   private async syncHardwareIndicators(): Promise<void> {
     await this.syncLeds();
     await this.oled.render(this.oled.getCurrentPage());
+  }
+
+  private scheduleBackupDoneRender(): void {
+    if (this.backupDoneRenderTimer || !this.backup.getState().bundles.some((bundle) => bundle.status === "uploaded" && bundle.uploadedAt && Date.now() - Date.parse(bundle.uploadedAt) < 10 * 1000)) {
+      return;
+    }
+
+    this.backupDoneRenderTimer = setTimeout(() => {
+      this.backupDoneRenderTimer = undefined;
+      void this.oled.render(this.oled.getCurrentPage()).catch((error: unknown) => {
+        console.error("OLED backup completion render failed", error);
+      });
+    }, 10 * 1000);
+    this.backupDoneRenderTimer.unref();
   }
 
   private async syncLeds(): Promise<void> {

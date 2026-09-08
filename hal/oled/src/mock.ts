@@ -99,8 +99,10 @@ export class MockOledDisplay implements OledDisplay {
 }
 
 function getActiveBackupPage(backup: BackupSyncState): OledPage | undefined {
-  const activeBundle = backup.bundles.find((bundle) => bundle.id === backup.activeBundleId)
-    ?? backup.bundles.find((bundle) => bundle.status === "zipping" || bundle.status === "uploading" || bundle.status === "promoting");
+  const activeBundle = backup.bundles.find((bundle) =>
+    bundle.id === backup.activeBundleId
+    && (bundle.status === "zipping" || bundle.status === "uploading" || bundle.status === "promoting")
+  ) ?? backup.bundles.find((bundle) => bundle.status === "zipping" || bundle.status === "uploading" || bundle.status === "promoting");
   if (activeBundle) {
     const percent = Math.round(activeBundle.progressPercent ?? backup.activeProgressPercent ?? 0);
     const title = activeBundle.status === "zipping" ? "Zipping Mtg" : activeBundle.status === "promoting" ? "Finishing Up" : "Uploading";
@@ -117,7 +119,7 @@ function getActiveBackupPage(backup: BackupSyncState): OledPage | undefined {
 
   const latestUploaded = backup.bundles.find((bundle) => bundle.status === "uploaded" && bundle.uploadedAt);
   const uploadedAt = latestUploaded?.uploadedAt;
-  if (latestUploaded && uploadedAt && Date.now() - Date.parse(uploadedAt) < 10 * 60 * 1000) {
+  if (latestUploaded && uploadedAt && Date.now() - Date.parse(uploadedAt) < 10 * 1000) {
     return {
       id: "system",
       title: "Upload Done",
