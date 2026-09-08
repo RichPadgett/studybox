@@ -435,13 +435,14 @@ function Podcast({ snapshot, run }: { snapshot: StudyBoxSnapshot; run: (path: st
 }
 
 function PodcastControls({ snapshot, run }: { snapshot: StudyBoxSnapshot; run: (path: string, body?: unknown) => Promise<void> }) {
-  const recordingActive = snapshot.podcast.status === "recording" || snapshot.podcast.status === "paused" || snapshot.podcast.status === "waitingForAudio";
+  const recordingActive = snapshot.podcast.status === "recording" || snapshot.podcast.status === "paused" || snapshot.podcast.status === "waitingForAudio" || snapshot.podcast.status === "error" && Boolean(snapshot.podcast.activeRecording);
   const waitingForAudio = snapshot.podcast.status === "waitingForAudio";
+  const partialRecording = snapshot.podcast.status === "error" && Boolean(snapshot.podcast.activeRecording);
   return (
     <>
       <Command icon={<Play size={17} />} label={snapshot.podcast.status === "error" ? "Retry Recording" : "Start Recording"} onClick={() => run("/api/podcast/start")} disabled={recordingActive} />
       <Command icon={<Pause size={17} />} label={waitingForAudio ? "Waiting for Audio" : snapshot.podcast.status === "paused" ? "Resume Recording" : "Pause Recording"} onClick={() => run(snapshot.podcast.status === "paused" ? "/api/podcast/resume" : "/api/podcast/pause")} disabled={!recordingActive || waitingForAudio} />
-      <Command icon={<Square size={17} />} label="Finish Recording" onClick={() => run("/api/podcast/stop")} disabled={!recordingActive} />
+      <Command icon={<Square size={17} />} label={partialRecording ? "Save Partial Recording" : "Finish Recording"} onClick={() => run("/api/podcast/stop")} disabled={!recordingActive} />
     </>
   );
 }

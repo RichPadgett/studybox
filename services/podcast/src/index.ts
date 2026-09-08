@@ -485,19 +485,25 @@ export class LocalPodcastService implements PodcastService {
       recorderProcess.once("exit", () => resolve(true));
     });
 
-    recorderProcess.once("exit", (code, signal) => {
+    recorderProcess.once("exit", async (code, signal) => {
       if (this.state.status === "recording" || this.state.status === "paused") {
         const elapsedSeconds = this.currentElapsedSeconds();
+        const partialSizeBytes = this.activeFilePath ? await fileSize(this.activeFilePath) : 0;
         this.startedAtMs = undefined;
         this.elapsedBeforePause = elapsedSeconds;
+        const preservedPartial = partialSizeBytes > 44;
         this.state = {
           ...this.state,
-          status: "waitingForAudio",
+          status: preservedPartial ? "error" : "waitingForAudio",
           activeRecording: this.activeRecording,
           elapsedSeconds,
-          lastEvent: `Waiting for DJI audio after recorder exit (${signal ?? code ?? "unknown"})`
+          lastEvent: preservedPartial
+            ? `Recording stopped unexpectedly; partial audio preserved (${partialSizeBytes} bytes)`
+            : `Waiting for DJI audio after recorder exit (${signal ?? code ?? "unknown"})`
         };
-        this.startAudioWaitLoop();
+        if (!preservedPartial) {
+          this.startAudioWaitLoop();
+        }
       }
       this.process = undefined;
     });

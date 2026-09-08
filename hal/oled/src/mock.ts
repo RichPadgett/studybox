@@ -48,17 +48,19 @@ export class MockOledDisplay implements OledDisplay {
         title: "Podcast",
         lines: podcast.status === "waitingForAudio"
           ? ["WAITING FOR AUDIO", "Connect DJI Mic"]
+          : podcast.status === "error" && podcast.activeRecording
+          ? ["AUDIO ERROR", "Partial audio saved"]
           : [podcast.status.toUpperCase(), formatDuration(podcast.elapsedSeconds)],
-        actionLabel: podcast.status === "recording" ? "Pause Recording" : podcast.status === "paused" ? "Resume Recording" : podcast.status === "waitingForAudio" ? "Finish Recording" : podcast.status === "error" ? "Retry Recording" : "Start Recording"
+        actionLabel: podcast.status === "recording" ? "Pause Recording" : podcast.status === "paused" ? "Resume Recording" : podcast.status === "waitingForAudio" ? "Finish Recording" : podcast.status === "error" && podcast.activeRecording ? "Save Partial Recording" : podcast.status === "error" ? "Retry Recording" : "Start Recording"
       }
     ];
 
-    if (podcast.status === "recording" || podcast.status === "paused") {
+    if (podcast.status === "recording" || podcast.status === "paused" || podcast.status === "error" && podcast.activeRecording) {
       pages.push({
         id: "recordingStop",
         title: "Finish Rec",
-        lines: [podcast.status.toUpperCase(), formatDuration(podcast.elapsedSeconds), "Save recording"],
-        actionLabel: "Finish Recording"
+        lines: [podcast.status === "error" ? "PARTIAL AUDIO" : podcast.status.toUpperCase(), formatDuration(podcast.elapsedSeconds), "Save recording"],
+        actionLabel: podcast.status === "error" ? "Save Partial" : "Finish Recording"
       });
     }
 
