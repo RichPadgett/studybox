@@ -193,6 +193,7 @@ export function App() {
             <p>{statusCopy(snapshot)}</p>
           </div>
           <div className="topbarActions">
+            <AudioReadiness podcast={snapshot.podcast} />
             <ViewerPresence presence={snapshot.presence} />
             <AdminUnlock session={adminSession} unlock={unlockAdmin} lock={lockAdmin} />
             <StatusPill status={snapshot.systemStatus} />
@@ -328,7 +329,7 @@ function Dashboard({ snapshot, run }: { snapshot: StudyBoxSnapshot; run: (path: 
         <Metric label="Next Meeting" value={`${snapshot.settings.schedule.dayOfWeek}`} detail={snapshot.settings.schedule.time} />
       </div>
       <div className="toolbar">
-        <Command icon={<Users size={17} />} label={meetingPrimaryAction(snapshot)} onClick={() => run(snapshot.meeting.status === "live" ? "/api/meeting/end" : "/api/meeting/start")} />
+        <Command icon={<Users size={17} />} label={meetingPrimaryAction(snapshot)} onClick={() => run(snapshot.meeting.status === "live" ? "/api/meeting/end" : "/api/meeting/start")} disabled={snapshot.meeting.status !== "live" && snapshot.podcast.audioReady === false} />
         <PodcastControls snapshot={snapshot} run={run} />
       </div>
       <Meeting snapshot={snapshot} run={run} compact />
@@ -356,7 +357,7 @@ function Meeting({ snapshot, run, compact = false }: { snapshot: StudyBoxSnapsho
       ) : null}
       {!compact ? (
         <div className="toolbar">
-          <Command icon={<Users size={17} />} label={meetingPrimaryAction(snapshot)} onClick={() => run(snapshot.meeting.status === "live" ? "/api/meeting/end" : "/api/meeting/start")} />
+          <Command icon={<Users size={17} />} label={meetingPrimaryAction(snapshot)} onClick={() => run(snapshot.meeting.status === "live" ? "/api/meeting/end" : "/api/meeting/start")} disabled={snapshot.meeting.status !== "live" && snapshot.podcast.audioReady === false} />
         </div>
       ) : null}
       <div className="twoColumn">
@@ -940,7 +941,18 @@ function ViewerPresence({ presence }: { presence: StudyBoxSnapshot["presence"] }
   );
 }
 
+function AudioReadiness({ podcast }: { podcast: StudyBoxSnapshot["podcast"] }) {
+  const ready = podcast.audioReady === true;
+  return (
+    <span className={`audioReadiness ${ready ? "ready" : "missing"}`} title={podcast.audioLastEvent ?? "DJI microphone status unknown"}>
+      <Mic size={15} />
+      <span>{ready ? "Mic ready" : "Mic offline"}</span>
+    </span>
+  );
+}
+
 function statusCopy(snapshot: StudyBoxSnapshot): string {
+  if (snapshot.podcast.audioReady === false) return "Connect the DJI microphone receiver before starting";
   if (snapshot.systemStatus === "attention") return "Waiting room or raised hand needs attention";
   if (snapshot.meeting.status === "live") return "Meeting is live";
   return "Ready for the next scheduled study";
@@ -964,6 +976,7 @@ function meetingPrimaryAction(snapshot: StudyBoxSnapshot): string {
   if (snapshot.meeting.status === "live") {
     return snapshot.zoom.mode === "runner" && snapshot.zoom.runnerAvailable ? "End Zoom Meeting" : "End Local Session";
   }
+  if (snapshot.podcast.audioReady === false) return "Connect DJI Mic";
   return snapshot.zoom.mode === "runner" && snapshot.zoom.runnerAvailable ? "Start Zoom Meeting" : "Start Local Session";
 }
 

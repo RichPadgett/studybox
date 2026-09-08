@@ -294,6 +294,23 @@ nav button:hover {
   justify-content: flex-end;
 }
 
+.audioReadiness {
+  align-items: center;
+  display: inline-flex;
+  font-size: 12px;
+  font-weight: 800;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.audioReadiness.ready {
+  color: #26734a;
+}
+
+.audioReadiness.missing {
+  color: #a0442f;
+}
+
 h1,
 h2,
 p {

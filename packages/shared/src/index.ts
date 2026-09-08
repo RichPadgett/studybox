@@ -73,6 +73,9 @@ export interface RecordingDownload {
 
 export interface PodcastState {
   status: "idle" | "recording" | "paused" | "waitingForAudio" | "stopping" | "error";
+  audioReady?: boolean;
+  audioLastCheckedAt?: string;
+  audioLastEvent?: string;
   activeRecording?: Recording;
   elapsedSeconds: number;
   recordings: Recording[];

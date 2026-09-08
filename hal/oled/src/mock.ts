@@ -34,14 +34,18 @@ export class MockOledDisplay implements OledDisplay {
           ? ["HAND RAISED", meeting.raisedHands[0].displayName, "ACTION: Allow"]
           : meeting.activeSpeaker
             ? [`${meeting.activeSpeaker.displayName} LIVE`, "Remote speaker", "ACTION: Mute"]
+            : podcast.audioReady === false
+              ? ["AUDIO NOT READY", "Connect DJI Mic", "Meeting locked"]
             : ["READY", "Next Meeting", "Saturday 11:00"],
         actionLabel: meeting.waitingRoom[0] ? "Admit Participant" : meeting.raisedHands[0] ? "Allow to Speak" : meeting.activeSpeaker ? "Mute Speaker" : undefined
       },
       {
         id: "meeting",
         title: meeting.status === "live" ? "Meeting Live" : "Meeting",
-        lines: [`${meeting.participants.length} Participants`, `Lobby: ${meeting.lobbyRequests.length}`, `Waiting: ${meeting.waitingRoom.length}`],
-        actionLabel: meeting.status === "live" ? "End Meeting" : "Start Meeting"
+        lines: meeting.status !== "live" && podcast.audioReady === false
+          ? ["MIC NOT READY", "Connect DJI Mic", "Then start meeting"]
+          : [`${meeting.participants.length} Participants`, `Lobby: ${meeting.lobbyRequests.length}`, `Waiting: ${meeting.waitingRoom.length}`],
+        actionLabel: meeting.status === "live" ? "End Meeting" : podcast.audioReady === false ? "Mic Not Ready" : "Start Meeting"
       },
       {
         id: "podcast",

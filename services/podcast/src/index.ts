@@ -7,6 +7,8 @@ import type { PodcastService, PodcastState, Recording, RecordingAssetKind, Recor
 export class MockPodcastService implements PodcastService {
   private state: PodcastState = {
     status: "idle",
+    audioReady: true,
+    audioLastEvent: "Mock microphone ready",
     elapsedSeconds: 0,
     recordings: [],
     lastEvent: "Podcast service ready"
@@ -155,6 +157,7 @@ export interface LocalPodcastServiceOptions {
   captureWrapperPath?: string;
   retentionDays?: number;
   device?: string;
+  captureSourcePattern?: string;
   format?: string;
   sampleRate?: number;
   channels?: number;
@@ -179,6 +182,7 @@ export class LocalPodcastService implements PodcastService {
   private startedAtMs?: number;
   private elapsedBeforePause = 0;
   private audioWaitTimer?: NodeJS.Timeout;
+  private audioHealthTimer?: NodeJS.Timeout;
   private captureDevice?: string;
 
   constructor(private readonly options: LocalPodcastServiceOptions) {}
@@ -197,6 +201,12 @@ export class LocalPodcastService implements PodcastService {
     } catch {
       await this.saveManifest();
     }
+    this.captureDevice = this.options.captureDeviceResolver?.() ?? this.options.device ?? "default";
+    await this.refreshAudioReadiness();
+    this.audioHealthTimer = setInterval(() => {
+      void this.refreshAudioReadiness();
+    }, 3000);
+    this.audioHealthTimer.unref();
   }
 
   getState(): PodcastState {
@@ -241,7 +251,8 @@ export class LocalPodcastService implements PodcastService {
     this.elapsedBeforePause = 0;
     this.activeFilePath = filePath;
     this.captureDevice = this.options.captureDeviceResolver?.() ?? this.options.device ?? "default";
-    if (!(await this.isCaptureDeviceAvailable())) {
+    await this.refreshAudioReadiness();
+    if (this.state.audioReady !== true) {
       this.state = {
         ...this.state,
         status: "waitingForAudio",
@@ -447,9 +458,22 @@ export class LocalPodcastService implements PodcastService {
       });
       probe.once("exit", (code) => {
         clearTimeout(timeout);
-        resolve(code === 0 && output.split("\n").some((line) => line.includes("alsa_input.")));
+        const sourcePattern = this.options.captureSourcePattern ?? "DJI";
+        resolve(code === 0 && output.split("\n").some((line) => line.includes("alsa_input.") && line.toLowerCase().includes(sourcePattern.toLowerCase())));
       });
     });
+  }
+
+  private async refreshAudioReadiness(): Promise<void> {
+    const ready = await this.isCaptureDeviceAvailable();
+    const audioLastEvent = ready ? "DJI microphone receiver ready" : "DJI microphone receiver not detected";
+    this.state = {
+      ...this.state,
+      audioReady: ready,
+      audioLastCheckedAt: new Date().toISOString(),
+      audioLastEvent,
+      ...(this.state.status === "idle" ? { lastEvent: audioLastEvent } : {})
+    };
   }
 
   private async startCaptureProcess(fileName: string): Promise<void> {
