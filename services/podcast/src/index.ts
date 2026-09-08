@@ -388,6 +388,10 @@ export class LocalPodcastService implements PodcastService {
   }
 
   private async isCaptureDeviceAvailable(): Promise<boolean> {
+    if ((this.options.device ?? "default") === "pulse") {
+      return this.isPulseCaptureDeviceAvailable();
+    }
+
     const recorderCommand = this.options.arecordPath ?? "arecord";
     const args = [
       "-D", this.options.device ?? "default",
@@ -399,10 +403,16 @@ export class LocalPodcastService implements PodcastService {
     ];
     return await new Promise<boolean>((resolve) => {
       const probe = this.options.captureWrapperPath
-        ? spawn(this.options.captureWrapperPath, ["--", recorderCommand, ...args], { stdio: "ignore" })
-        : spawn(recorderCommand, args, { stdio: "ignore" });
+        ? spawn(this.options.captureWrapperPath, ["--", recorderCommand, ...args], { detached: true, stdio: "ignore" })
+        : spawn(recorderCommand, args, { detached: true, stdio: "ignore" });
       const timeout = setTimeout(() => {
-        probe.kill("SIGTERM");
+        if (probe.pid) {
+          try {
+            process.kill(-probe.pid, "SIGKILL");
+          } catch {
+            probe.kill("SIGKILL");
+          }
+        }
         resolve(false);
       }, 1500);
       probe.once("error", () => {
@@ -412,6 +422,28 @@ export class LocalPodcastService implements PodcastService {
       probe.once("exit", (code) => {
         clearTimeout(timeout);
         resolve(code === 0);
+      });
+    });
+  }
+
+  private async isPulseCaptureDeviceAvailable(): Promise<boolean> {
+    return await new Promise<boolean>((resolve) => {
+      const probe = spawn("pactl", ["list", "short", "sources"], { stdio: ["ignore", "pipe", "ignore"] });
+      let output = "";
+      const timeout = setTimeout(() => {
+        probe.kill("SIGKILL");
+        resolve(false);
+      }, 1500);
+      probe.stdout?.on("data", (chunk: Buffer) => {
+        output += chunk.toString("utf8");
+      });
+      probe.once("error", () => {
+        clearTimeout(timeout);
+        resolve(false);
+      });
+      probe.once("exit", (code) => {
+        clearTimeout(timeout);
+        resolve(code === 0 && output.split("\n").some((line) => line.includes("alsa_input.")));
       });
     });
   }
