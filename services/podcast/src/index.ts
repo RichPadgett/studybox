@@ -158,6 +158,7 @@ export interface LocalPodcastServiceOptions {
   format?: string;
   sampleRate?: number;
   channels?: number;
+  captureDeviceResolver?: () => string;
 }
 
 interface RecordingManifestEntry extends Recording {
@@ -178,6 +179,7 @@ export class LocalPodcastService implements PodcastService {
   private startedAtMs?: number;
   private elapsedBeforePause = 0;
   private audioWaitTimer?: NodeJS.Timeout;
+  private captureDevice?: string;
 
   constructor(private readonly options: LocalPodcastServiceOptions) {}
 
@@ -238,6 +240,7 @@ export class LocalPodcastService implements PodcastService {
     this.activeRecording = recording;
     this.elapsedBeforePause = 0;
     this.activeFilePath = filePath;
+    this.captureDevice = this.options.captureDeviceResolver?.() ?? this.options.device ?? "default";
     if (!(await this.isCaptureDeviceAvailable())) {
       this.state = {
         ...this.state,
@@ -388,13 +391,14 @@ export class LocalPodcastService implements PodcastService {
   }
 
   private async isCaptureDeviceAvailable(): Promise<boolean> {
-    if ((this.options.device ?? "default") === "pulse") {
+    const captureDevice = this.captureDevice ?? this.options.device ?? "default";
+    if (captureDevice === "pulse") {
       return this.isPulseCaptureDeviceAvailable();
     }
 
     const recorderCommand = this.options.arecordPath ?? "arecord";
     const args = [
-      "-D", this.options.device ?? "default",
+      "-D", captureDevice,
       "--dump-hw-params",
       "-f", this.options.format ?? "S16_LE",
       "-r", String(this.options.sampleRate ?? 48000),
@@ -457,7 +461,7 @@ export class LocalPodcastService implements PodcastService {
       return;
     }
     const args = [
-      "-D", this.options.device ?? "default",
+      "-D", this.captureDevice ?? this.options.device ?? "default",
       "-f", this.options.format ?? "S16_LE",
       "-r", String(this.options.sampleRate ?? 48000),
       "-c", String(this.options.channels ?? 2),

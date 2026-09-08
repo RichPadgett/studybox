@@ -76,7 +76,6 @@ export class StudyBoxAppliance {
     private readonly logStore: LogStore
   ) {
     const zoomConfig = getZoomConfig();
-    this.podcast = createPodcastService();
     this.backup = new MockBackupSyncService({
       queuePath: process.env.STUDYBOX_BACKUP_QUEUE_PATH ?? projectPath("data", "backup-queue.json"),
       bundleDir: process.env.STUDYBOX_BACKUP_DIR ?? projectPath("data", "backup-bundles"),
@@ -118,6 +117,7 @@ export class StudyBoxAppliance {
           }
         )
       : new MockMeetingService();
+    this.podcast = createPodcastService(() => this.meeting.getState().status === "live");
   }
 
   async initialize(): Promise<void> {
@@ -249,7 +249,7 @@ export class StudyBoxAppliance {
       included ? "Remote speaker included in podcast mix" : "Remote speaker excluded from podcast mix",
       context,
       { participantId, included }
-    );
+      );
     await this.syncHardwareIndicators();
     return this.snapshot();
   }
@@ -778,15 +778,20 @@ function createLedController(mode: HardwareMode): LedController {
   return new MockLedController();
 }
 
-function createPodcastService(): PodcastService {
+function createPodcastService(isMeetingLive: () => boolean): PodcastService {
   if (process.env.STUDYBOX_PODCAST_MODE === "alsa") {
+    const configuredDevice = process.env.STUDYBOX_AUDIO_CAPTURE_DEVICE ?? "default";
+    const directDevice = process.env.STUDYBOX_AUDIO_CAPTURE_DIRECT_DEVICE
+      ?? (configuredDevice === "pulse" ? "plughw:CARD=MINI,DEV=0" : configuredDevice);
+    const sharedDevice = process.env.STUDYBOX_AUDIO_CAPTURE_SHARED_DEVICE ?? "pulse";
     return new LocalPodcastService({
       recordingsDir: process.env.STUDYBOX_RECORDINGS_DIR ?? "/var/lib/studybox/recordings",
       manifestPath: process.env.STUDYBOX_RECORDINGS_MANIFEST ?? "/var/lib/studybox/recordings/manifest.json",
       arecordPath: process.env.STUDYBOX_ARECORD_PATH,
       captureWrapperPath: process.env.STUDYBOX_AUDIO_CAPTURE_WRAPPER,
       retentionDays: process.env.STUDYBOX_RECORDING_RETENTION_DAYS ? Number(process.env.STUDYBOX_RECORDING_RETENTION_DAYS) : 35,
-      device: process.env.STUDYBOX_AUDIO_CAPTURE_DEVICE ?? "default",
+      device: directDevice,
+      captureDeviceResolver: () => isMeetingLive() ? sharedDevice : directDevice,
       format: process.env.STUDYBOX_AUDIO_CAPTURE_FORMAT ?? "S16_LE",
       sampleRate: process.env.STUDYBOX_AUDIO_SAMPLE_RATE ? Number(process.env.STUDYBOX_AUDIO_SAMPLE_RATE) : 48000,
       channels: process.env.STUDYBOX_AUDIO_CHANNELS ? Number(process.env.STUDYBOX_AUDIO_CHANNELS) : 2
