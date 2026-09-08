@@ -12,6 +12,7 @@ export interface MockBackupSyncServiceOptions {
     host?: string;
     user?: string;
     remoteDir?: string;
+    stageRemoteDir?: string;
     sshKeyPath?: string;
     port?: number;
   };
@@ -134,6 +135,7 @@ export class MockBackupSyncService implements BackupSyncService {
         host: requireConfig(this.options.rsync?.host, "STUDYBOX_BACKUP_HOST"),
         user: requireConfig(this.options.rsync?.user, "STUDYBOX_BACKUP_USER"),
         remoteDir: requireConfig(this.options.rsync?.remoteDir, "STUDYBOX_BACKUP_REMOTE_DIR"),
+        stageRemoteDir: this.options.rsync?.stageRemoteDir,
         sshKeyPath: this.options.rsync?.sshKeyPath,
         port: this.options.rsync?.port
       });
@@ -153,18 +155,22 @@ interface RsyncInput {
   host: string;
   user: string;
   remoteDir: string;
+  stageRemoteDir?: string;
   sshKeyPath?: string;
   port?: number;
 }
 
 async function runRsync(input: RsyncInput): Promise<void> {
-  const sshArgs = ["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new"];
-  if (input.sshKeyPath) {
-    sshArgs.push("-i", input.sshKeyPath);
+  const sshArgs = buildSshArgs(input);
+  const bundleName = input.sourceDir.split("/").at(-1);
+  if (!bundleName) {
+    throw new Error("Backup source directory must have a bundle name");
   }
-  if (input.port) {
-    sshArgs.push("-p", input.port.toString());
-  }
+  const remoteBaseDir = trimTrailingSlash(input.stageRemoteDir ?? input.remoteDir);
+  const remoteBundleDir = `${remoteBaseDir}/${bundleName}`;
+  const remoteTarget = `${input.user}@${input.host}:${remoteBundleDir}/`;
+
+  await runSshCommand(input, `mkdir -p ${shellQuote(remoteBaseDir)}`);
 
   const args = [
     "-az",
@@ -173,7 +179,7 @@ async function runRsync(input: RsyncInput): Promise<void> {
     "-e",
     sshArgs.join(" "),
     `${input.sourceDir}/`,
-    `${input.user}@${input.host}:${trimTrailingSlash(input.remoteDir)}/${input.sourceDir.split("/").at(-1)}/`
+    remoteTarget
   ];
 
   await new Promise<void>((resolve, reject) => {
@@ -189,6 +195,51 @@ async function runRsync(input: RsyncInput): Promise<void> {
         return;
       }
       reject(new Error(stderr.trim() || `rsync exited with code ${code ?? "unknown"}`));
+    });
+  });
+
+  if (input.stageRemoteDir) {
+    const finalBaseDir = trimTrailingSlash(input.remoteDir);
+    const finalBundleDir = `${finalBaseDir}/${bundleName}`;
+    await runSshCommand(
+      input,
+      [
+        `mkdir -p ${shellQuote(finalBaseDir)}`,
+        `rm -rf ${shellQuote(finalBundleDir)}`,
+        `mv ${shellQuote(remoteBundleDir)} ${shellQuote(finalBundleDir)}`
+      ].join(" && ")
+    );
+  }
+}
+
+function buildSshArgs(input: Pick<RsyncInput, "sshKeyPath" | "port">): string[] {
+  const sshArgs = ["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new"];
+  if (input.sshKeyPath) {
+    sshArgs.push("-i", input.sshKeyPath);
+  }
+  if (input.port) {
+    sshArgs.push("-p", input.port.toString());
+  }
+
+  return sshArgs;
+}
+
+async function runSshCommand(input: RsyncInput, remoteCommand: string): Promise<void> {
+  const args = buildSshArgs(input).slice(1);
+  args.push(`${input.user}@${input.host}`, remoteCommand);
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn("ssh", args, { stdio: ["ignore", "pipe", "pipe"] });
+    let stderr = "";
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      reject(new Error(stderr.trim() || `ssh exited with code ${code ?? "unknown"}`));
     });
   });
 }
@@ -217,6 +268,10 @@ function replaceBundle(bundles: BackupBundle[], replacement: BackupBundle): Back
 
 function trimTrailingSlash(value: string): string {
   return value.replace(/\/+$/, "");
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
 function emptyState(target: string, mode: BackupSyncState["mode"]): BackupSyncState {

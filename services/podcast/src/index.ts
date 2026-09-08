@@ -91,13 +91,13 @@ export class MockPodcastService implements PodcastService {
       sizeBytes: Math.max(1, durationSeconds) * 21_000,
       downloadFileName: formatRecordingFileName(this.state.activeRecording.startedAt),
       downloadMimeType: "audio/wav",
-      expiresAt: retentionDate(this.state.activeRecording.startedAt, 14),
+      expiresAt: retentionDate(this.state.activeRecording.startedAt, 35),
       assets: createRecordingAssets({
         startedAt: this.state.activeRecording.startedAt,
         fileName: formatRecordingFileName(this.state.activeRecording.startedAt),
         mimeType: "audio/wav",
         sizeBytes: Math.max(1, durationSeconds) * 21_000,
-        retentionDays: 14
+        retentionDays: 35
       })
     };
 
@@ -223,14 +223,14 @@ export class LocalPodcastService implements PodcastService {
       downloadFileName: fileName,
       downloadMimeType: "audio/wav",
       filePath,
-      expiresAt: retentionDate(startedAt, this.options.retentionDays ?? 14),
+      expiresAt: retentionDate(startedAt, this.options.retentionDays ?? 35),
       assets: createRecordingAssets({
         startedAt,
         fileName,
         mimeType: "audio/wav",
         filePath,
         sizeBytes: 0,
-        retentionDays: this.options.retentionDays ?? 14
+        retentionDays: this.options.retentionDays ?? 35
       })
     };
 
@@ -356,7 +356,7 @@ export class LocalPodcastService implements PodcastService {
         mimeType: activeRecording.downloadMimeType ?? "audio/wav",
         filePath: activeRecording.filePath,
         sizeBytes,
-        retentionDays: this.options.retentionDays ?? 14,
+        retentionDays: this.options.retentionDays ?? 35,
         zoomAsset: activeRecording.assets?.find((asset) => asset.kind === "zoom")
       })
     };

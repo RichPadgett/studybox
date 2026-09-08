@@ -84,6 +84,7 @@ export class StudyBoxAppliance {
         host: process.env.STUDYBOX_BACKUP_HOST,
         user: process.env.STUDYBOX_BACKUP_USER,
         remoteDir: process.env.STUDYBOX_BACKUP_REMOTE_DIR,
+        stageRemoteDir: process.env.STUDYBOX_BACKUP_STAGE_REMOTE_DIR,
         sshKeyPath: process.env.STUDYBOX_BACKUP_SSH_KEY,
         port: process.env.STUDYBOX_BACKUP_PORT ? Number(process.env.STUDYBOX_BACKUP_PORT) : undefined
       }
@@ -754,7 +755,7 @@ function createPodcastService(): PodcastService {
       manifestPath: process.env.STUDYBOX_RECORDINGS_MANIFEST ?? "/var/lib/studybox/recordings/manifest.json",
       arecordPath: process.env.STUDYBOX_ARECORD_PATH,
       captureWrapperPath: process.env.STUDYBOX_AUDIO_CAPTURE_WRAPPER,
-      retentionDays: process.env.STUDYBOX_RECORDING_RETENTION_DAYS ? Number(process.env.STUDYBOX_RECORDING_RETENTION_DAYS) : 14,
+      retentionDays: process.env.STUDYBOX_RECORDING_RETENTION_DAYS ? Number(process.env.STUDYBOX_RECORDING_RETENTION_DAYS) : 35,
       device: process.env.STUDYBOX_AUDIO_CAPTURE_DEVICE ?? "default",
       format: process.env.STUDYBOX_AUDIO_CAPTURE_FORMAT ?? "S16_LE",
       sampleRate: process.env.STUDYBOX_AUDIO_SAMPLE_RATE ? Number(process.env.STUDYBOX_AUDIO_SAMPLE_RATE) : 48000,
