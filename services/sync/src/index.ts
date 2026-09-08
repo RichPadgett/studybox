@@ -135,9 +135,15 @@ export class MockBackupSyncService implements BackupSyncService {
   private async writeBundleFiles(bundle: BackupBundle, download: RecordingDownload, logs: LogEntry[]): Promise<void> {
     const bundlePath = join(this.options.bundleDir, bundle.id);
     await mkdir(bundlePath, { recursive: true });
-    await writeFile(join(bundlePath, "manifest.json"), JSON.stringify(bundle, null, 2));
+    await this.writeBundleManifest(bundle);
     await writeFile(join(bundlePath, "audit-log.json"), JSON.stringify(logs, null, 2));
     await writeFile(join(bundlePath, download.fileName), Buffer.from(download.contentBase64, "base64"));
+  }
+
+  private async writeBundleManifest(bundle: BackupBundle): Promise<void> {
+    const bundlePath = join(this.options.bundleDir, bundle.id);
+    await mkdir(bundlePath, { recursive: true });
+    await writeFile(join(bundlePath, "manifest.json"), JSON.stringify(bundle, null, 2));
   }
 
   private async save(): Promise<void> {
@@ -174,7 +180,17 @@ export class MockBackupSyncService implements BackupSyncService {
         await this.save();
         this.notifyStateChange();
       });
-      return markUploaded(bundle);
+      const uploaded = markUploaded(bundle);
+      await this.writeBundleManifest(uploaded);
+      await runRsync({
+        sourceDir: join(this.options.bundleDir, bundle.id),
+        host: requireConfig(this.options.rsync?.host, "STUDYBOX_BACKUP_HOST"),
+        user: requireConfig(this.options.rsync?.user, "STUDYBOX_BACKUP_USER"),
+        remoteDir: requireConfig(this.options.rsync?.remoteDir, "STUDYBOX_BACKUP_REMOTE_DIR"),
+        sshKeyPath: this.options.rsync?.sshKeyPath,
+        port: this.options.rsync?.port
+      });
+      return uploaded;
     } catch (error) {
       return {
         ...bundle,
