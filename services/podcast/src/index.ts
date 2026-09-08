@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import type { PodcastService, PodcastState, Recording, RecordingAssetKind, RecordingDownload } from "@studybox/shared";
@@ -177,6 +177,7 @@ export class LocalPodcastService implements PodcastService {
   private recordings: RecordingManifestEntry[] = [];
   private startedAtMs?: number;
   private elapsedBeforePause = 0;
+  private audioWaitTimer?: NodeJS.Timeout;
 
   constructor(private readonly options: LocalPodcastServiceOptions) {}
 
@@ -234,60 +235,22 @@ export class LocalPodcastService implements PodcastService {
       })
     };
 
-    const args = [
-      "-D", this.options.device ?? "default",
-      "-f", this.options.format ?? "S16_LE",
-      "-r", String(this.options.sampleRate ?? 48000),
-      "-c", String(this.options.channels ?? 2),
-      filePath
-    ];
-    const recorderCommand = this.options.arecordPath ?? "arecord";
-    const recorderProcess = this.options.captureWrapperPath
-      ? spawn(this.options.captureWrapperPath, ["--", recorderCommand, ...args], { stdio: ["ignore", "pipe", "pipe"] })
-      : spawn(recorderCommand, args, { stdio: ["ignore", "pipe", "pipe"] });
-    this.process = recorderProcess;
-    this.activeFilePath = filePath;
     this.activeRecording = recording;
-    this.startedAtMs = Date.now();
     this.elapsedBeforePause = 0;
-    this.state = {
-      ...this.state,
-      status: "recording",
-      activeRecording: recording,
-      elapsedSeconds: 0,
-      lastEvent: `Recording started: ${fileName}`
-    };
+    this.activeFilePath = filePath;
+    if (!(await this.isCaptureDeviceAvailable())) {
+      this.state = {
+        ...this.state,
+        status: "waitingForAudio",
+        activeRecording: recording,
+        elapsedSeconds: 0,
+        lastEvent: "Waiting for DJI audio"
+      };
+      this.startAudioWaitLoop();
+      return this.getState();
+    }
 
-    const earlyExit = new Promise<boolean>((resolve) => {
-      recorderProcess.once("exit", () => resolve(true));
-    });
-
-    recorderProcess.once("exit", (code, signal) => {
-      if (this.state.status === "recording" || this.state.status === "paused") {
-        const elapsedSeconds = this.currentElapsedSeconds();
-        this.activeRecording = undefined;
-        this.activeFilePath = undefined;
-        this.startedAtMs = undefined;
-        this.elapsedBeforePause = 0;
-        this.state = {
-          ...this.state,
-          status: "error",
-          activeRecording: undefined,
-          elapsedSeconds,
-          lastEvent: `Recorder exited unexpectedly with ${signal ?? code ?? "unknown"}`
-        };
-      }
-      this.process = undefined;
-    });
-
-    recorderProcess.stderr?.on("data", (chunk: Buffer) => {
-      const message = chunk.toString("utf8").trim();
-      if (message) {
-        this.state = { ...this.state, lastEvent: message.slice(0, 160) };
-      }
-    });
-
-    await Promise.race([earlyExit, sleep(250).then(() => false)]);
+    await this.startCaptureProcess(fileName);
     return this.getState();
   }
 
@@ -331,6 +294,24 @@ export class LocalPodcastService implements PodcastService {
     const activeRecording = this.activeRecording;
     const activeFilePath = this.activeFilePath;
     const process = this.process;
+    this.stopAudioWaitLoop();
+    if (this.state.status === "waitingForAudio" && !process) {
+      if (activeFilePath) {
+        await unlink(activeFilePath).catch(() => undefined);
+      }
+      this.activeRecording = undefined;
+      this.activeFilePath = undefined;
+      this.startedAtMs = undefined;
+      this.elapsedBeforePause = 0;
+      this.state = {
+        ...this.state,
+        status: "idle",
+        activeRecording: undefined,
+        elapsedSeconds: 0,
+        lastEvent: "Recording cancelled: DJI audio unavailable"
+      };
+      return this.getState();
+    }
     if (process) {
       if (this.state.status === "paused") {
         process.kill("SIGCONT");
@@ -377,6 +358,122 @@ export class LocalPodcastService implements PodcastService {
       lastEvent: `Recording stopped: ${completed.downloadFileName ?? completed.id}`
     };
     return this.getState();
+  }
+
+  private startAudioWaitLoop(): void {
+    this.stopAudioWaitLoop();
+    this.audioWaitTimer = setInterval(() => {
+      void this.tryStartWaitingCapture();
+    }, 2000);
+    this.audioWaitTimer.unref();
+  }
+
+  private stopAudioWaitLoop(): void {
+    if (this.audioWaitTimer) {
+      clearInterval(this.audioWaitTimer);
+      this.audioWaitTimer = undefined;
+    }
+  }
+
+  private async tryStartWaitingCapture(): Promise<void> {
+    if (this.state.status !== "waitingForAudio" || !this.activeRecording) {
+      this.stopAudioWaitLoop();
+      return;
+    }
+    if (!(await this.isCaptureDeviceAvailable())) {
+      return;
+    }
+    this.stopAudioWaitLoop();
+    await this.startCaptureProcess(this.activeRecording.downloadFileName ?? formatRecordingFileName(this.activeRecording.startedAt));
+  }
+
+  private async isCaptureDeviceAvailable(): Promise<boolean> {
+    const recorderCommand = this.options.arecordPath ?? "arecord";
+    const args = [
+      "-D", this.options.device ?? "default",
+      "--dump-hw-params",
+      "-f", this.options.format ?? "S16_LE",
+      "-r", String(this.options.sampleRate ?? 48000),
+      "-c", String(this.options.channels ?? 2),
+      "/dev/null"
+    ];
+    return await new Promise<boolean>((resolve) => {
+      const probe = this.options.captureWrapperPath
+        ? spawn(this.options.captureWrapperPath, ["--", recorderCommand, ...args], { stdio: "ignore" })
+        : spawn(recorderCommand, args, { stdio: "ignore" });
+      const timeout = setTimeout(() => {
+        probe.kill("SIGTERM");
+        resolve(false);
+      }, 1500);
+      probe.once("error", () => {
+        clearTimeout(timeout);
+        resolve(false);
+      });
+      probe.once("exit", (code) => {
+        clearTimeout(timeout);
+        resolve(code === 0);
+      });
+    });
+  }
+
+  private async startCaptureProcess(fileName: string): Promise<void> {
+    if (!this.activeRecording || this.process) {
+      return;
+    }
+    const filePath = this.activeFilePath;
+    if (!filePath) {
+      return;
+    }
+    const args = [
+      "-D", this.options.device ?? "default",
+      "-f", this.options.format ?? "S16_LE",
+      "-r", String(this.options.sampleRate ?? 48000),
+      "-c", String(this.options.channels ?? 2),
+      filePath
+    ];
+    const recorderCommand = this.options.arecordPath ?? "arecord";
+    const recorderProcess = this.options.captureWrapperPath
+      ? spawn(this.options.captureWrapperPath, ["--", recorderCommand, ...args], { stdio: ["ignore", "pipe", "pipe"] })
+      : spawn(recorderCommand, args, { stdio: ["ignore", "pipe", "pipe"] });
+    this.process = recorderProcess;
+    this.startedAtMs = Date.now();
+    this.state = {
+      ...this.state,
+      status: "recording",
+      activeRecording: this.activeRecording,
+      elapsedSeconds: this.elapsedBeforePause,
+      lastEvent: `Recording started: ${fileName}`
+    };
+
+    const earlyExit = new Promise<boolean>((resolve) => {
+      recorderProcess.once("exit", () => resolve(true));
+    });
+
+    recorderProcess.once("exit", (code, signal) => {
+      if (this.state.status === "recording" || this.state.status === "paused") {
+        const elapsedSeconds = this.currentElapsedSeconds();
+        this.startedAtMs = undefined;
+        this.elapsedBeforePause = elapsedSeconds;
+        this.state = {
+          ...this.state,
+          status: "waitingForAudio",
+          activeRecording: this.activeRecording,
+          elapsedSeconds,
+          lastEvent: `Waiting for DJI audio after recorder exit (${signal ?? code ?? "unknown"})`
+        };
+        this.startAudioWaitLoop();
+      }
+      this.process = undefined;
+    });
+
+    recorderProcess.stderr?.on("data", (chunk: Buffer) => {
+      const message = chunk.toString("utf8").trim();
+      if (message) {
+        this.state = { ...this.state, lastEvent: message.slice(0, 160) };
+      }
+    });
+
+    await Promise.race([earlyExit, sleep(250).then(() => false)]);
   }
 
   async listRecordings(): Promise<Recording[]> {

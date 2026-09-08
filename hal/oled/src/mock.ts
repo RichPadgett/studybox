@@ -46,8 +46,10 @@ export class MockOledDisplay implements OledDisplay {
       {
         id: "podcast",
         title: "Podcast",
-        lines: [podcast.status.toUpperCase(), formatDuration(podcast.elapsedSeconds)],
-        actionLabel: podcast.status === "recording" ? "Pause Recording" : podcast.status === "paused" ? "Resume Recording" : podcast.status === "error" ? "Retry Recording" : "Start Recording"
+        lines: podcast.status === "waitingForAudio"
+          ? ["WAITING FOR AUDIO", "Connect DJI Mic"]
+          : [podcast.status.toUpperCase(), formatDuration(podcast.elapsedSeconds)],
+        actionLabel: podcast.status === "recording" ? "Pause Recording" : podcast.status === "paused" ? "Resume Recording" : podcast.status === "waitingForAudio" ? "Finish Recording" : podcast.status === "error" ? "Retry Recording" : "Start Recording"
       }
     ];
 

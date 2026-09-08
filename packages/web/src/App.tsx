@@ -228,7 +228,7 @@ export function App() {
 function PublicJoinPage({ snapshot, error }: { snapshot: StudyBoxSnapshot; error?: string }) {
   const joinUrl = getZoomJoinUrl(snapshot);
   const zoomHostConnected = isZoomHostConnected(snapshot);
-  const recordingLive = snapshot.podcast.status === "recording" || snapshot.podcast.status === "paused";
+  const recordingLive = snapshot.podcast.status === "recording" || snapshot.podcast.status === "paused" || snapshot.podcast.status === "waitingForAudio";
   const [displayName, setDisplayName] = useState("");
   const [participant, setParticipant] = useState<Participant | undefined>(() => readStoredPublicParticipant());
   const [joining, setJoining] = useState(false);
@@ -424,7 +424,7 @@ function Podcast({ snapshot, run }: { snapshot: StudyBoxSnapshot; run: (path: st
   return (
     <div className="stack">
       <div className="recordingSurface">
-        <span>{snapshot.podcast.status}</span>
+        <span>{snapshot.podcast.status === "waitingForAudio" ? "Waiting for audio" : snapshot.podcast.status}</span>
         <strong>{formatDuration(snapshot.podcast.elapsedSeconds)}</strong>
       </div>
       <div className="toolbar">
@@ -435,11 +435,12 @@ function Podcast({ snapshot, run }: { snapshot: StudyBoxSnapshot; run: (path: st
 }
 
 function PodcastControls({ snapshot, run }: { snapshot: StudyBoxSnapshot; run: (path: string, body?: unknown) => Promise<void> }) {
-  const recordingActive = snapshot.podcast.status === "recording" || snapshot.podcast.status === "paused";
+  const recordingActive = snapshot.podcast.status === "recording" || snapshot.podcast.status === "paused" || snapshot.podcast.status === "waitingForAudio";
+  const waitingForAudio = snapshot.podcast.status === "waitingForAudio";
   return (
     <>
       <Command icon={<Play size={17} />} label={snapshot.podcast.status === "error" ? "Retry Recording" : "Start Recording"} onClick={() => run("/api/podcast/start")} disabled={recordingActive} />
-      <Command icon={<Pause size={17} />} label={snapshot.podcast.status === "paused" ? "Resume Recording" : "Pause Recording"} onClick={() => run(snapshot.podcast.status === "paused" ? "/api/podcast/resume" : "/api/podcast/pause")} disabled={!recordingActive} />
+      <Command icon={<Pause size={17} />} label={waitingForAudio ? "Waiting for Audio" : snapshot.podcast.status === "paused" ? "Resume Recording" : "Pause Recording"} onClick={() => run(snapshot.podcast.status === "paused" ? "/api/podcast/resume" : "/api/podcast/pause")} disabled={!recordingActive || waitingForAudio} />
       <Command icon={<Square size={17} />} label="Finish Recording" onClick={() => run("/api/podcast/stop")} disabled={!recordingActive} />
     </>
   );

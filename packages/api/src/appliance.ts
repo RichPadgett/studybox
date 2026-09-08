@@ -412,6 +412,8 @@ export class StudyBoxAppliance {
         await this.pauseRecording({ source: "button" });
       } else if (podcast.status === "paused") {
         await this.resumeRecording({ source: "button" });
+      } else if (podcast.status === "waitingForAudio") {
+        await this.stopRecording({ source: "button" });
       } else {
         await this.startRecording({ source: "button" });
       }
@@ -581,7 +583,7 @@ export class StudyBoxAppliance {
     await this.leds.setSystem(status === "ready" ? "green" : status === "meeting-live" ? "blue" : status === "attention" ? "yellow" : "red");
 
     const recordingStatus = this.podcast.getState().status;
-    this.recordingLedState = recordingStatus === "recording" ? "solid" : recordingStatus === "paused" ? "blinking" : "off";
+    this.recordingLedState = recordingStatus === "recording" ? "solid" : recordingStatus === "paused" || recordingStatus === "waitingForAudio" ? "blinking" : "off";
     await this.leds.setRecording(this.recordingLedState);
 
     const meetingStatus = this.meeting.getState().status;
