@@ -429,7 +429,7 @@ export class LocalPodcastService implements PodcastService {
           }
         }
         resolve(false);
-      }, 1500);
+      }, 5000);
       probe.once("error", () => {
         clearTimeout(timeout);
         resolve(false);
@@ -448,7 +448,7 @@ export class LocalPodcastService implements PodcastService {
       const timeout = setTimeout(() => {
         probe.kill("SIGKILL");
         resolve(false);
-      }, 1500);
+      }, 5000);
       probe.stdout?.on("data", (chunk: Buffer) => {
         output += chunk.toString("utf8");
       });
