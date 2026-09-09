@@ -147,7 +147,7 @@ export class StudyBoxAppliance {
       level: "info",
       action: "system.initialize",
       result: "success",
-      message: "StudyBox appliance initialized with mock service adapters"
+      message: `StudyBox appliance initialized (${this.hardwareMode} hardware, ${getZoomRuntimeStatus().mode} meeting mode)`
     });
   }
 
@@ -720,8 +720,9 @@ export class StudyBoxAppliance {
     const status = this.getSystemStatus();
     await this.leds.setSystem(status === "ready" ? "green" : status === "meeting-live" ? "blue" : status === "attention" ? "yellow" : "red");
 
-    const recordingStatus = this.podcast.getState().status;
-    this.recordingLedState = recordingStatus === "recording" ? "solid" : recordingStatus === "paused" || recordingStatus === "waitingForAudio" || recordingStatus === "error" && Boolean(this.podcast.getState().activeRecording) ? "blinking" : "off";
+    const podcast = this.podcast.getState();
+    const recordingStatus = podcast.status;
+    this.recordingLedState = recordingStatus === "recording" ? "solid" : recordingStatus === "paused" || recordingStatus === "waitingForAudio" || recordingStatus === "error" && Boolean(podcast.activeRecording) ? "blinking" : "off";
     await this.leds.setRecording(this.recordingLedState);
 
     const meetingStatus = this.meeting.getState().status;
