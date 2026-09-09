@@ -4,7 +4,11 @@
 #include "meeting_service_components/meeting_audio_interface.h"
 #include "meeting_service_components/meeting_participants_ctrl_interface.h"
 #include "meeting_service_components/meeting_recording_interface.h"
+#include "meeting_service_components/meeting_sharing_interface.h"
 #include "meeting_service_components/meeting_waiting_room_interface.h"
+#include "rawdata/rawdata_renderer_interface.h"
+#include "rawdata/zoom_rawdata_api.h"
+#include "zoom_sdk_raw_data_def.h"
 #include "meeting_service_interface.h"
 #include "setting_service_interface.h"
 #include "zoom_sdk.h"
@@ -12,11 +16,18 @@
 #include <glib.h>
 
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <cstdlib>
+#include <cstring>
+#include <fcntl.h>
+#include <ctime>
+#include <sys/stat.h>
+#include <sys/wait.h>
 #include <sstream>
 #include <stdexcept>
 #include <thread>
+#include <unistd.h>
 #include <vector>
 
 namespace {
@@ -164,8 +175,140 @@ public:
   void onTranscodingStatusChanged(TranscodingStatus, const zchar_t*) override {}
 };
 
+class ShareFrameRecorder {
+public:
+  ~ShareFrameRecorder() {
+    stop();
+  }
+
+  void configure(const std::string& directory) {
+    directory_ = directory;
+    outputPath_ = directory + "/zoom-share-" + std::to_string(static_cast<long long>(std::time(nullptr))) + ".mp4";
+  }
+
+  void start() {
+    active_ = true;
+  }
+
+  std::string stop() {
+    active_ = false;
+    if (inputFd_ >= 0) {
+      close(inputFd_);
+      inputFd_ = -1;
+    }
+    if (encoderPid_ > 0) {
+      int status = 0;
+      waitpid(encoderPid_, &status, 0);
+      encoderPid_ = -1;
+    }
+    return outputPath_;
+  }
+
+  void writeFrame(YUVRawDataI420* data) {
+    if (!active_ || !data) {
+      return;
+    }
+    if (inputFd_ < 0 && !startEncoder(data->GetStreamWidth(), data->GetStreamHeight())) {
+      active_ = false;
+      return;
+    }
+
+    const char* buffer = data->GetBuffer();
+    const size_t length = data->GetBufferLen();
+    size_t offset = 0;
+    while (offset < length) {
+      const ssize_t written = write(inputFd_, buffer + offset, length - offset);
+      if (written > 0) {
+        offset += static_cast<size_t>(written);
+        continue;
+      }
+      if (written < 0 && errno == EINTR) {
+        continue;
+      }
+      close(inputFd_);
+      inputFd_ = -1;
+      active_ = false;
+      return;
+    }
+  }
+
+  const std::string& outputPath() const {
+    return outputPath_;
+  }
+
+private:
+  bool startEncoder(unsigned int width, unsigned int height) {
+    if (directory_.empty() || width == 0 || height == 0) {
+      return false;
+    }
+    int pipeFds[2];
+    if (pipe(pipeFds) != 0) {
+      return false;
+    }
+    encoderPid_ = fork();
+    if (encoderPid_ < 0) {
+      close(pipeFds[0]);
+      close(pipeFds[1]);
+      return false;
+    }
+    if (encoderPid_ == 0) {
+      dup2(pipeFds[0], STDIN_FILENO);
+      close(pipeFds[0]);
+      close(pipeFds[1]);
+      const std::string size = std::to_string(width) + "x" + std::to_string(height);
+      execlp("ffmpeg", "ffmpeg", "-loglevel", "error", "-y", "-f", "rawvideo", "-pix_fmt", "yuv420p", "-s", size.c_str(), "-r", "30", "-i", "-", "-an", "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", outputPath_.c_str(), static_cast<char*>(nullptr));
+      _exit(127);
+    }
+    close(pipeFds[0]);
+    inputFd_ = pipeFds[1];
+    return true;
+  }
+
+  std::string directory_;
+  std::string outputPath_;
+  int inputFd_ = -1;
+  pid_t encoderPid_ = -1;
+  bool active_ = false;
+};
+
+class ShareRendererDelegate final : public IZoomSDKRendererDelegate {
+public:
+  explicit ShareRendererDelegate(ShareFrameRecorder* recorder) : recorder_(recorder) {}
+
+  void onRendererBeDestroyed() override {}
+  void onRawDataFrameReceived(YUVRawDataI420* data) override {
+    recorder_->writeFrame(data);
+  }
+  void onRawDataStatusChanged(RawDataStatus) override {}
+
+private:
+  ShareFrameRecorder* recorder_;
+};
+
+class ZoomSdkAdapter;
+
+class ShareEvents final : public IMeetingShareCtrlEvent {
+public:
+  explicit ShareEvents(ZoomSdkAdapter* owner) : owner_(owner) {}
+
+  void onSharingStatus(ZoomSDKSharingSourceInfo shareInfo) override;
+  void onFailedToStartShare() override {}
+  void onLockShareStatus(bool) override {}
+  void onShareContentNotification(ZoomSDKSharingSourceInfo) override {}
+  void onMultiShareSwitchToSingleShareNeedConfirm(IShareSwitchMultiToSingleConfirmHandler*) override {}
+  void onShareSettingTypeChangedNotification(ShareSettingType) override {}
+  void onSharedVideoEnded() override {}
+  void onVideoFileSharePlayError(ZoomSDKVideoFileSharePlayError) override {}
+  void onOptimizingShareForVideoClipStatusChanged(ZoomSDKSharingSourceInfo) override {}
+
+private:
+  ZoomSdkAdapter* owner_;
+};
+
 class ZoomSdkAdapter final : public ZoomAdapter {
 public:
+  ZoomSdkAdapter() : shareEvents_(this), shareRendererDelegate_(&shareRecorder_) {}
+
   MeetingState startMeeting(const StartMeetingRequest& request, const MeetingState& current) override {
     if (request.meetingNumber.empty()) {
       throw std::runtime_error("meetingNumber is required");
@@ -296,27 +439,25 @@ public:
       throw std::runtime_error("Zoom meeting is not active");
     }
 
-    auto* settings = settingService_ ? settingService_->GetRecordingSettings() : nullptr;
-    if (!settings) {
-      throw std::runtime_error("Zoom recording settings are unavailable");
-    }
-    const SDKError pathError = settings->SetRecordingPath(recordingDirectory.c_str());
-    if (pathError != SDKERR_SUCCESS) {
-      throw std::runtime_error(sdkErrorMessage("Set Zoom recording path", pathError));
-    }
-    settings->EnablePlaceVideoNextToShareInRecord(false);
-
     auto* recording = meetingService_->GetMeetingRecordingController();
     if (!recording) {
       throw std::runtime_error("Zoom recording controller is unavailable");
     }
-    recording->SetEvent(&recordingEvents_);
-    time_t timestamp = 0;
-    const SDKError error = recording->StartRecording(timestamp);
+    const SDKError permission = recording->CanStartRawRecording();
+    if (permission != SDKERR_SUCCESS) {
+      throw std::runtime_error(sdkErrorMessage("Start Zoom raw recording", permission));
+    }
+    const SDKError error = recording->StartRawRecording();
     if (error != SDKERR_SUCCESS) {
       throw std::runtime_error(sdkErrorMessage("Start Zoom local recording", error));
     }
 
+    shareRecorder_.configure(recordingDirectory);
+    shareRecorder_.start();
+    zoomRecordingActive_ = true;
+    if (shareActive_) {
+      subscribeToShare(shareSourceId_);
+    }
     MeetingState state = current;
     state.lastEvent = "Zoom local recording started: " + recordingDirectory;
     zoomRecordingDirectory_ = recordingDirectory;
@@ -329,15 +470,30 @@ public:
     if (!recording) {
       throw std::runtime_error("Zoom recording controller is unavailable");
     }
-    time_t timestamp = 0;
-    const SDKError error = recording->StopRecording(timestamp);
+    const SDKError error = recording->StopRawRecording();
     if (error != SDKERR_SUCCESS && error != SDKERR_WRONG_USAGE) {
       throw std::runtime_error(sdkErrorMessage("Stop Zoom local recording", error));
     }
 
+    unsubscribeFromShare();
+    const std::string outputPath = shareRecorder_.stop();
+    zoomRecordingActive_ = false;
     MeetingState state = current;
-    state.lastEvent = "Zoom local recording stopped: " + zoomRecordingDirectory_;
+    state.lastEvent = "Zoom local recording stopped: " + outputPath;
     return state;
+  }
+
+  void handleShareStatus(const ZoomSDKSharingSourceInfo& shareInfo) {
+    if (shareInfo.status == Sharing_Other_Share_Begin || shareInfo.status == Sharing_View_Other_Sharing || shareInfo.status == Sharing_Resume) {
+      shareActive_ = true;
+      shareSourceId_ = shareInfo.shareSourceID;
+      if (zoomRecordingActive_) {
+        subscribeToShare(shareSourceId_);
+      }
+    } else if (shareInfo.status == Sharing_Other_Share_End || shareInfo.status == Sharing_Self_Send_End || shareInfo.status == Sharing_Pause) {
+      shareActive_ = false;
+      unsubscribeFromShare();
+    }
   }
 
 private:
@@ -349,6 +505,35 @@ private:
   MeetingEvents meetingEvents_;
   RecordingEvents recordingEvents_;
   std::string zoomRecordingDirectory_;
+  ShareEvents shareEvents_;
+  ShareFrameRecorder shareRecorder_;
+  ShareRendererDelegate shareRendererDelegate_;
+  IZoomSDKRenderer* shareRenderer_ = nullptr;
+  unsigned int shareSourceId_ = 0;
+  bool shareActive_ = false;
+  bool zoomRecordingActive_ = false;
+
+  void subscribeToShare(unsigned int sourceId) {
+    if (!sourceId) {
+      return;
+    }
+    if (!shareRenderer_) {
+      const SDKError error = createRenderer(&shareRenderer_, &shareRendererDelegate_);
+      if (error != SDKERR_SUCCESS) {
+        return;
+      }
+      shareRenderer_->setRawDataResolution(ZoomSDKResolution_720P);
+    }
+    shareRenderer_->subscribe(sourceId, RAW_DATA_TYPE_SHARE);
+  }
+
+  void unsubscribeFromShare() {
+    if (shareRenderer_) {
+      shareRenderer_->unSubscribe();
+      destroyRenderer(shareRenderer_);
+      shareRenderer_ = nullptr;
+    }
+  }
 
   std::vector<Participant> waitingRoomParticipants() {
     std::vector<Participant> participants;
@@ -478,9 +663,20 @@ private:
     if (eventError != SDKERR_SUCCESS) {
       throw std::runtime_error(sdkErrorMessage("Meeting SetEvent", eventError));
     }
+    auto* shareController = meetingService_->GetMeetingShareController();
+    if (shareController) {
+      const SDKError shareEventError = shareController->SetEvent(&shareEvents_);
+      if (shareEventError != SDKERR_SUCCESS) {
+        throw std::runtime_error(sdkErrorMessage("Meeting share SetEvent", shareEventError));
+      }
+    }
   }
 
 };
+
+void ShareEvents::onSharingStatus(ZoomSDKSharingSourceInfo shareInfo) {
+  owner_->handleShareStatus(shareInfo);
+}
 
 } // namespace
 
