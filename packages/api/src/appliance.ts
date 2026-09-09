@@ -745,7 +745,8 @@ export class StudyBoxAppliance {
     const meeting = this.meeting.getState();
     const podcast = this.podcast.getState();
     const latestRecording = podcast.recordings[0];
-    if (meeting.status !== "idle" || podcast.status !== "idle" || !latestRecording?.endedAt || latestRecording.id !== this.finalizedRecordingId) {
+    const startupRecovery = context.actor === "startup-recovery";
+    if (meeting.status !== "idle" || podcast.status !== "idle" || !latestRecording?.endedAt || (!startupRecovery && latestRecording.id !== this.finalizedRecordingId)) {
       return;
     }
 
