@@ -69,6 +69,7 @@ export class StudyBoxAppliance {
   private recordingLedState: RecLedState = "off";
   private zoomLedState: ZoomLedState = "off";
   private backupDoneRenderTimer?: NodeJS.Timeout;
+  private debugHeartbeatTimer?: NodeJS.Timeout;
   private readonly dashboardViewers = new Map<string, number>();
 
   constructor(
@@ -131,6 +132,12 @@ export class StudyBoxAppliance {
     await this.backup.load();
     await this.oled.render(this.oled.getCurrentPage());
     await this.syncLeds();
+    const debugIntervalMs = Number(process.env.STUDYBOX_DEBUG_HEARTBEAT_MS ?? 5000);
+    if (debugIntervalMs > 0) {
+      this.debugHeartbeatTimer = setInterval(() => this.logDebugHeartbeat(), debugIntervalMs);
+      this.debugHeartbeatTimer.unref();
+      this.logDebugHeartbeat();
+    }
     await this.log({
       source: "system",
       level: "info",
@@ -597,6 +604,35 @@ export class StudyBoxAppliance {
   private async syncHardwareIndicators(): Promise<void> {
     await this.syncLeds();
     await this.oled.render(this.oled.getCurrentPage());
+  }
+
+  private logDebugHeartbeat(): void {
+    const podcast = this.podcast.getState();
+    const hardware = this.getHardwareState();
+    const currentPage = this.oled.getCurrentPage();
+    const renderedPage = "getRenderedPage" in this.oled && typeof this.oled.getRenderedPage === "function"
+      ? this.oled.getRenderedPage()
+      : undefined;
+    console.log(JSON.stringify({
+      type: "studybox-debug-heartbeat",
+      audio: {
+        ready: podcast.audioReady,
+        event: podcast.audioLastEvent,
+        device: podcast.audioCaptureDevice,
+        failures: podcast.audioFailureCount,
+        recorderPid: podcast.audioRecorderPid,
+        hardwareConnected: hardware.audio.connected,
+        hardwareEvent: hardware.audio.lastEvent
+      },
+      meeting: this.meeting.getState().status,
+      podcast: podcast.status,
+      oled: {
+        currentPage: currentPage.id,
+        currentLines: currentPage.lines,
+        renderedPage: renderedPage?.id,
+        renderedLines: renderedPage?.lines
+      }
+    }));
   }
 
   private scheduleBackupDoneRender(): void {
