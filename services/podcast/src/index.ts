@@ -456,7 +456,7 @@ export class LocalPodcastService implements PodcastService {
         clearTimeout(timeout);
         resolve(false);
       });
-      probe.once("exit", (code) => {
+      probe.once("close", (code) => {
         clearTimeout(timeout);
         const sourcePattern = this.options.captureSourcePattern ?? "DJI";
         resolve(code === 0 && output.split("\n").some((line) => line.includes("alsa_input.") && line.toLowerCase().includes(sourcePattern.toLowerCase())));
