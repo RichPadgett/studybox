@@ -188,6 +188,7 @@ export class LocalPodcastService implements PodcastService {
   private audioHealthTimer?: NodeJS.Timeout;
   private captureDevice?: string;
   private audioFailureCount = 0;
+  private audioReadinessGeneration = 0;
 
   constructor(private readonly options: LocalPodcastServiceOptions) {}
 
@@ -470,8 +471,12 @@ export class LocalPodcastService implements PodcastService {
   }
 
   private async refreshAudioReadiness(): Promise<void> {
+    const generation = ++this.audioReadinessGeneration;
     const previousReady = this.state.audioReady;
     const detected = await this.isCaptureDeviceAvailable();
+    if (generation !== this.audioReadinessGeneration) {
+      return;
+    }
     this.audioFailureCount = detected ? 0 : this.audioFailureCount + 1;
     const ready = detected || (this.state.audioReady === true && this.audioFailureCount < 3);
     const audioLastEvent = ready
