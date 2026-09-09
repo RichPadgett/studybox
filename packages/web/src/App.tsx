@@ -359,6 +359,9 @@ function Meeting({ snapshot, run, compact = false }: { snapshot: StudyBoxSnapsho
       {!compact ? (
         <div className="toolbar">
           <Command icon={<Users size={17} />} label={meetingPrimaryAction(snapshot)} onClick={() => run(snapshot.meeting.status === "live" ? "/api/meeting/end" : "/api/meeting/start")} disabled={snapshot.meeting.status !== "live" && snapshot.podcast.audioReady !== true} />
+          {snapshot.meeting.status === "live" ? (
+            <Command icon={<MonitorDot size={17} />} label="Allow Screen Share" onClick={() => run("/api/meeting/screen-share/allow")} />
+          ) : null}
         </div>
       ) : null}
       <div className="twoColumn">

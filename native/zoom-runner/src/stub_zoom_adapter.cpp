@@ -56,6 +56,12 @@ public:
     return state;
   }
 
+  MeetingState allowScreenShare(const MeetingState& current) override {
+    MeetingState state = current;
+    state.lastEvent = "Cannot enable Zoom screen sharing until Zoom SDK adapter is linked";
+    return state;
+  }
+
   MeetingState syncState(const MeetingState& current) override {
     return current;
   }

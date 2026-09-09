@@ -369,6 +369,7 @@ export interface MeetingService {
   allowParticipantToSpeak(participantId: string): Promise<MeetingState>;
   muteParticipant(participantId: string): Promise<MeetingState>;
   makeParticipantHost(participantId: string): Promise<MeetingState>;
+  allowScreenShare(): Promise<MeetingState>;
   setParticipantPodcastInclusion(participantId: string, included: boolean): Promise<MeetingState>;
   setModerationMode(mode: MeetingModerationMode): Promise<MeetingState>;
   startZoomRecording(recordingDirectory: string): Promise<void>;
@@ -446,6 +447,7 @@ export type ZoomRunnerCommand =
   | { id: string; type: "allowParticipantToSpeak"; participantId: string }
   | { id: string; type: "muteParticipant"; participantId: string }
   | { id: string; type: "makeHost"; participantId: string }
+  | { id: string; type: "allowScreenShare" }
   | { id: string; type: "setParticipantPodcastInclusion"; participantId: string; included: boolean }
   | { id: string; type: "setModerationMode"; mode: MeetingModerationMode }
   | { id: string; type: "startZoomRecording"; recordingDirectory: string }

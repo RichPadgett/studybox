@@ -265,6 +265,13 @@ export class StudyBoxAppliance {
     return this.snapshot();
   }
 
+  async allowScreenShare(context: ActionContext = {}): Promise<StudyBoxSnapshot> {
+    await this.meeting.allowScreenShare();
+    await this.logAction("meeting.allowScreenShare", "Participant screen sharing enabled", context);
+    await this.syncHardwareIndicators();
+    return this.snapshot();
+  }
+
   async setRemoteSpeakerPodcastInclusion(participantId: string, included: boolean, context: ActionContext = {}): Promise<StudyBoxSnapshot> {
     await this.meeting.setParticipantPodcastInclusion(participantId, included);
     await this.logAction(

@@ -146,6 +146,11 @@ export class MockMeetingService implements MeetingService {
     return this.state;
   }
 
+  async allowScreenShare(): Promise<MeetingState> {
+    this.state = { ...this.state, lastEvent: "Participant screen sharing enabled" };
+    return this.state;
+  }
+
   async setParticipantPodcastInclusion(participantId: string, included: boolean): Promise<MeetingState> {
     const participant = this.state.participants.find((item) => item.id === participantId);
     if (!participant) {
@@ -191,6 +196,7 @@ export interface ZoomMeetingRunnerClient {
   allowParticipantToSpeak(participantId: string): Promise<void>;
   muteParticipant(participantId: string): Promise<void>;
   makeParticipantHost(participantId: string): Promise<void>;
+  allowScreenShare(): Promise<void>;
   setParticipantPodcastInclusion(participantId: string, included: boolean): Promise<void>;
   setModerationMode(mode: MeetingModerationMode): Promise<void>;
   startZoomRecording(recordingDirectory: string): Promise<string | undefined>;
@@ -299,6 +305,11 @@ export class ZoomMeetingService implements MeetingService {
     return this.refreshState();
   }
 
+  async allowScreenShare(): Promise<MeetingState> {
+    await this.runner.allowScreenShare();
+    return this.refreshState();
+  }
+
   async setParticipantPodcastInclusion(participantId: string, included: boolean): Promise<MeetingState> {
     await this.runner.setParticipantPodcastInclusion(participantId, included);
     return this.refreshState();
@@ -354,6 +365,10 @@ export class MissingZoomRunnerClient implements ZoomMeetingRunnerClient {
   }
 
   async makeParticipantHost(_participantId: string): Promise<void> {
+    throw new Error("Zoom runner is not available. Build and configure the ARM64 Meeting SDK runner first.");
+  }
+
+  async allowScreenShare(): Promise<void> {
     throw new Error("Zoom runner is not available. Build and configure the ARM64 Meeting SDK runner first.");
   }
 

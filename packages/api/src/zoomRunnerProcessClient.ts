@@ -55,6 +55,10 @@ export class ZoomRunnerProcessClient implements ZoomMeetingRunnerClient {
     await this.send({ id: createId(), type: "makeHost", participantId });
   }
 
+  async allowScreenShare(): Promise<void> {
+    await this.send({ id: createId(), type: "allowScreenShare" });
+  }
+
   async setParticipantPodcastInclusion(participantId: string, included: boolean): Promise<void> {
     await this.send({ id: createId(), type: "setParticipantPodcastInclusion", participantId, included });
   }

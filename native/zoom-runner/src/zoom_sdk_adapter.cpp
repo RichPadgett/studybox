@@ -427,6 +427,23 @@ public:
     return state;
   }
 
+  MeetingState allowScreenShare(const MeetingState& current) override {
+    ensureMeetingService();
+    auto* shareController = meetingService_->GetMeetingShareController();
+    if (!shareController) {
+      throw std::runtime_error("Zoom share controller is unavailable");
+    }
+
+    const SDKError error = shareController->SetMultiShareSettingOptions(Enable_All_Grab_Share);
+    if (error != SDKERR_SUCCESS) {
+      throw std::runtime_error(sdkErrorMessage("Enable participant screen sharing", error));
+    }
+
+    MeetingState state = current;
+    state.lastEvent = "Zoom participant screen sharing enabled";
+    return state;
+  }
+
   MeetingState syncState(const MeetingState& current) override {
     if (!meetingService_) {
       return current;
