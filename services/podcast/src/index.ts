@@ -450,7 +450,10 @@ export class LocalPodcastService implements PodcastService {
 
   private async isPulseCaptureDeviceAvailable(): Promise<boolean> {
     return await new Promise<boolean>((resolve) => {
-      const probe = spawn("pactl", ["list", "short", "sources"], { stdio: ["ignore", "pipe", "ignore"] });
+      const probe = spawn("pactl", ["list", "short", "sources"], {
+        stdio: ["ignore", "pipe", "ignore"],
+        env: this.pulseEnvironment()
+      });
       let output = "";
       const timeout = setTimeout(() => {
         probe.kill("SIGKILL");
@@ -527,9 +530,10 @@ export class LocalPodcastService implements PodcastService {
       filePath
     ];
     const recorderCommand = this.options.arecordPath ?? "arecord";
+    const captureEnvironment = this.captureDevice === "pulse" ? this.pulseEnvironment() : undefined;
     const recorderProcess = this.options.captureWrapperPath
-      ? spawn(this.options.captureWrapperPath, ["--", recorderCommand, ...args], { stdio: ["ignore", "pipe", "pipe"] })
-      : spawn(recorderCommand, args, { stdio: ["ignore", "pipe", "pipe"] });
+      ? spawn(this.options.captureWrapperPath, ["--", recorderCommand, ...args], { stdio: ["ignore", "pipe", "pipe"], env: captureEnvironment })
+      : spawn(recorderCommand, args, { stdio: ["ignore", "pipe", "pipe"], env: captureEnvironment });
     this.process = recorderProcess;
     this.startedAtMs = Date.now();
     this.state = {
@@ -575,6 +579,14 @@ export class LocalPodcastService implements PodcastService {
     });
 
     await Promise.race([earlyExit, sleep(250).then(() => false)]);
+  }
+
+  private pulseEnvironment(): NodeJS.ProcessEnv {
+    return {
+      ...process.env,
+      XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR ?? "/run/user/1000",
+      PULSE_SERVER: process.env.PULSE_SERVER ?? "unix:/run/user/1000/pulse/native"
+    };
   }
 
   async listRecordings(): Promise<Recording[]> {
