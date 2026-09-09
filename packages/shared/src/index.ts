@@ -15,6 +15,7 @@ export interface Participant {
   id: string;
   displayName: string;
   status: ParticipantStatus;
+  role?: "host" | "cohost";
   audioState?: ParticipantAudioState;
   includedInPodcast?: boolean;
   trustedSpeaker?: boolean;

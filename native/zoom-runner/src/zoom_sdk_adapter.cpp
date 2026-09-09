@@ -121,6 +121,9 @@ Participant participantFromUser(unsigned int userId, IUserInfo* user, const std:
     participant.displayName = "Zoom User " + participant.id;
   }
   participant.status = user && user->IsRaiseHand() ? "raised-hand" : fallbackStatus;
+  if (user && user->IsHost()) {
+    participant.role = "host";
+  }
   if (fallbackStatus == "joined") {
     participant.audioState = user && !user->IsAudioMuted() ? "allowed-to-speak" : "muted";
   }

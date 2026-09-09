@@ -14,6 +14,7 @@ struct Participant {
   std::string id;
   std::string displayName;
   std::string status;
+  std::string role;
   std::string audioState;
   bool includedInPodcast = false;
 };

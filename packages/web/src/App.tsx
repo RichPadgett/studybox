@@ -381,10 +381,14 @@ function Meeting({ snapshot, run, compact = false }: { snapshot: StudyBoxSnapsho
                   </span>
                 ) : (
                   <span className="inlineActions">
-                    <small>{participant.audioState ?? "joined"}{participant.includedInPodcast ? " · podcast" : ""}</small>
-                    <button className="inlineButton secondary" title="Transfer host control to this participant" onClick={() => run(`/api/meeting/participants/${participant.id}/host`)}>
-                      <Crown size={14} /> Make Host
-                    </button>
+                    <small>{participant.role === "host" ? "host" : participant.audioState ?? "joined"}{participant.includedInPodcast ? " · podcast" : ""}</small>
+                    {participant.role === "host" ? (
+                      <small>current host</small>
+                    ) : (
+                      <button className="inlineButton secondary" title="Transfer host control to this participant" onClick={() => run(`/api/meeting/participants/${participant.id}/host`)}>
+                        <Crown size={14} /> Make Host
+                      </button>
+                    )}
                   </span>
                 )}
               </li>

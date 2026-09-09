@@ -73,6 +73,10 @@ std::string participantJson(const Participant& participant) {
     << ",\"displayName\":\"" << jsonEscape(participant.displayName) << "\""
     << ",\"status\":\"" << jsonEscape(participant.status) << "\"";
 
+  if (!participant.role.empty()) {
+    output << ",\"role\":\"" << jsonEscape(participant.role) << "\"";
+  }
+
   if (!participant.audioState.empty()) {
     output << ",\"audioState\":\"" << jsonEscape(participant.audioState) << "\"";
   }
