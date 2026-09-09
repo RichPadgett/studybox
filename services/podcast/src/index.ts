@@ -471,7 +471,9 @@ export class LocalPodcastService implements PodcastService {
     const detected = await this.isCaptureDeviceAvailable();
     this.audioFailureCount = detected ? 0 : this.audioFailureCount + 1;
     const ready = detected || (this.state.audioReady === true && this.audioFailureCount < 3);
-    const audioLastEvent = ready ? "DJI microphone receiver ready" : "DJI microphone receiver not detected";
+    const audioLastEvent = ready
+      ? "DJI microphone receiver ready"
+      : `DJI microphone receiver not detected (capture device: ${this.captureDevice ?? this.options.device ?? "default"})`;
     this.state = {
       ...this.state,
       audioReady: ready,
