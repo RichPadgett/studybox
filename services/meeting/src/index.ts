@@ -169,6 +169,12 @@ export class MockMeetingService implements MeetingService {
     };
     return this.state;
   }
+
+  async startZoomRecording(_recordingDirectory: string): Promise<void> {}
+
+  async stopZoomRecording(): Promise<string | undefined> {
+    return undefined;
+  }
 }
 
 export interface ZoomMeetingRunnerClient {
@@ -180,6 +186,8 @@ export interface ZoomMeetingRunnerClient {
   muteParticipant(participantId: string): Promise<void>;
   setParticipantPodcastInclusion(participantId: string, included: boolean): Promise<void>;
   setModerationMode(mode: MeetingModerationMode): Promise<void>;
+  startZoomRecording(recordingDirectory: string): Promise<string | undefined>;
+  stopZoomRecording(): Promise<string | undefined>;
   syncState(): Promise<MeetingState>;
   getState(): Promise<MeetingState>;
 }
@@ -289,6 +297,14 @@ export class ZoomMeetingService implements MeetingService {
     return this.refreshState();
   }
 
+  async startZoomRecording(recordingDirectory: string): Promise<void> {
+    await this.runner.startZoomRecording(recordingDirectory);
+  }
+
+  async stopZoomRecording(): Promise<string | undefined> {
+    return this.runner.stopZoomRecording();
+  }
+
   private async refreshState(): Promise<MeetingState> {
     const currentLobbyRequests = this.state.lobbyRequests;
     const runnerState = await this.runner.getState();
@@ -330,6 +346,14 @@ export class MissingZoomRunnerClient implements ZoomMeetingRunnerClient {
   }
 
   async setModerationMode(_mode: MeetingModerationMode): Promise<void> {
+    throw new Error("Zoom runner is not available. Build and configure the ARM64 Meeting SDK runner first.");
+  }
+
+  async startZoomRecording(_recordingDirectory: string): Promise<string | undefined> {
+    throw new Error("Zoom runner is not available. Build and configure the ARM64 Meeting SDK runner first.");
+  }
+
+  async stopZoomRecording(): Promise<string | undefined> {
     throw new Error("Zoom runner is not available. Build and configure the ARM64 Meeting SDK runner first.");
   }
 

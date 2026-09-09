@@ -53,6 +53,18 @@ void execute(const RunnerCommand& command) {
     return;
   }
 
+  if (command.type == "startZoomRecording") {
+    state = zoomAdapter().startZoomRecording(field(command, "recordingDirectory"), state);
+    std::cout << responseJson(command.id, state.status != "error", state, state.status == "error" ? state.lastEvent : "") << std::endl;
+    return;
+  }
+
+  if (command.type == "stopZoomRecording") {
+    state = zoomAdapter().stopZoomRecording(state);
+    std::cout << responseJson(command.id, state.status != "error", state, state.status == "error" ? state.lastEvent : "") << std::endl;
+    return;
+  }
+
   if (command.type == "admitParticipant") {
     state = zoomAdapter().admitParticipant(field(command, "participantId"), state);
     std::cout << eventJson("meeting.state", state) << std::endl;

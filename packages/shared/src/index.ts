@@ -370,6 +370,8 @@ export interface MeetingService {
   muteParticipant(participantId: string): Promise<MeetingState>;
   setParticipantPodcastInclusion(participantId: string, included: boolean): Promise<MeetingState>;
   setModerationMode(mode: MeetingModerationMode): Promise<MeetingState>;
+  startZoomRecording(recordingDirectory: string): Promise<void>;
+  stopZoomRecording(): Promise<string | undefined>;
 }
 
 export interface PodcastService {
@@ -381,6 +383,7 @@ export interface PodcastService {
   listRecordings(): Promise<Recording[]>;
   getRecordingDownload(recordingId: string): Promise<RecordingDownload | undefined>;
   getRecordingAssetDownload(recordingId: string, assetKind: RecordingAssetKind): Promise<RecordingDownload | undefined>;
+  setZoomRecordingAsset(recordingId: string, filePath: string): Promise<PodcastState>;
 }
 
 export interface SchedulerService {
@@ -443,6 +446,8 @@ export type ZoomRunnerCommand =
   | { id: string; type: "muteParticipant"; participantId: string }
   | { id: string; type: "setParticipantPodcastInclusion"; participantId: string; included: boolean }
   | { id: string; type: "setModerationMode"; mode: MeetingModerationMode }
+  | { id: string; type: "startZoomRecording"; recordingDirectory: string }
+  | { id: string; type: "stopZoomRecording" }
   | { id: string; type: "getState" };
 
 export type ZoomRunnerResponse =

@@ -141,6 +141,10 @@ export class MockPodcastService implements PodcastService {
     };
   }
 
+  async setZoomRecordingAsset(_recordingId: string, _filePath: string): Promise<PodcastState> {
+    return this.getState();
+  }
+
   private currentElapsedSeconds(): number {
     if (!this.startedAtMs) {
       return this.elapsedBeforePause;
@@ -649,6 +653,35 @@ export class LocalPodcastService implements PodcastService {
       mimeType: asset.mimeType ?? recording.downloadMimeType ?? "audio/wav",
       contentBase64: (await readFile(asset.filePath)).toString("base64")
     };
+  }
+
+  async setZoomRecordingAsset(recordingId: string, filePath: string): Promise<PodcastState> {
+    const recording = this.recordings.find((candidate) => candidate.id === recordingId);
+    if (!recording) {
+      return this.getState();
+    }
+    const info = await stat(filePath);
+    const zoomAsset = {
+      kind: "zoom" as const,
+      label: "Zoom recording",
+      status: "available" as const,
+      fileName: filePath.split("/").at(-1) ?? `${recording.id}.mp4`,
+      mimeType: "video/mp4",
+      filePath,
+      sizeBytes: info.size,
+      availableUntil: recording.expiresAt
+    };
+    recording.assets = createRecordingAssets({
+      startedAt: recording.startedAt,
+      fileName: recording.downloadFileName ?? formatRecordingFileName(recording.startedAt),
+      mimeType: recording.downloadMimeType ?? "audio/wav",
+      filePath: recording.filePath,
+      sizeBytes: recording.sizeBytes,
+      retentionDays: this.options.retentionDays ?? 35,
+      zoomAsset
+    });
+    await this.saveManifest();
+    return this.getState();
   }
 
   private currentElapsedSeconds(): number {

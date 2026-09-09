@@ -3,6 +3,7 @@
 #include "auth_service_interface.h"
 #include "meeting_service_components/meeting_audio_interface.h"
 #include "meeting_service_components/meeting_participants_ctrl_interface.h"
+#include "meeting_service_components/meeting_recording_interface.h"
 #include "meeting_service_components/meeting_waiting_room_interface.h"
 #include "meeting_service_interface.h"
 #include "setting_service_interface.h"
@@ -148,6 +149,21 @@ public:
   void onUserNetworkStatusChanged(MeetingComponentType, ConnectionQuality, unsigned int, bool) override {}
 };
 
+class RecordingEvents final : public IMeetingRecordingCtrlEvent {
+public:
+  void onRecordingStatus(RecordingStatus) override {}
+  void onCloudRecordingStatus(RecordingStatus) override {}
+  void onRecordPrivilegeChanged(bool) override {}
+  void onLocalRecordingPrivilegeRequestStatus(RequestLocalRecordingStatus) override {}
+  void onRequestCloudRecordingResponse(RequestStartCloudRecordingStatus) override {}
+  void onLocalRecordingPrivilegeRequested(IRequestLocalRecordingPrivilegeHandler*) override {}
+  void onStartCloudRecordingRequested(IRequestStartCloudRecordingHandler*) override {}
+  void onCloudRecordingStorageFull(time_t) override {}
+  void onEnableAndStartSmartRecordingRequested(IRequestEnableAndStartSmartRecordingHandler*) override {}
+  void onSmartRecordingEnableActionCallback(ISmartRecordingEnableActionHandler*) override {}
+  void onTranscodingStatusChanged(TranscodingStatus, const zchar_t*) override {}
+};
+
 class ZoomSdkAdapter final : public ZoomAdapter {
 public:
   MeetingState startMeeting(const StartMeetingRequest& request, const MeetingState& current) override {
@@ -271,6 +287,59 @@ public:
     return state;
   }
 
+  MeetingState startZoomRecording(const std::string& recordingDirectory, const MeetingState& current) override {
+    if (recordingDirectory.empty()) {
+      throw std::runtime_error("recordingDirectory is required");
+    }
+    ensureMeetingService();
+    if (meetingService_->GetMeetingStatus() != MEETING_STATUS_INMEETING) {
+      throw std::runtime_error("Zoom meeting is not active");
+    }
+
+    auto* settings = settingService_ ? settingService_->GetRecordingSettings() : nullptr;
+    if (!settings) {
+      throw std::runtime_error("Zoom recording settings are unavailable");
+    }
+    const SDKError pathError = settings->SetRecordingPath(recordingDirectory.c_str());
+    if (pathError != SDKERR_SUCCESS) {
+      throw std::runtime_error(sdkErrorMessage("Set Zoom recording path", pathError));
+    }
+    settings->EnablePlaceVideoNextToShareInRecord(false);
+
+    auto* recording = meetingService_->GetMeetingRecordingController();
+    if (!recording) {
+      throw std::runtime_error("Zoom recording controller is unavailable");
+    }
+    recording->SetEvent(&recordingEvents_);
+    time_t timestamp = 0;
+    const SDKError error = recording->StartRecording(timestamp);
+    if (error != SDKERR_SUCCESS) {
+      throw std::runtime_error(sdkErrorMessage("Start Zoom local recording", error));
+    }
+
+    MeetingState state = current;
+    state.lastEvent = "Zoom local recording started: " + recordingDirectory;
+    zoomRecordingDirectory_ = recordingDirectory;
+    return state;
+  }
+
+  MeetingState stopZoomRecording(const MeetingState& current) override {
+    ensureMeetingService();
+    auto* recording = meetingService_->GetMeetingRecordingController();
+    if (!recording) {
+      throw std::runtime_error("Zoom recording controller is unavailable");
+    }
+    time_t timestamp = 0;
+    const SDKError error = recording->StopRecording(timestamp);
+    if (error != SDKERR_SUCCESS && error != SDKERR_WRONG_USAGE) {
+      throw std::runtime_error(sdkErrorMessage("Stop Zoom local recording", error));
+    }
+
+    MeetingState state = current;
+    state.lastEvent = "Zoom local recording stopped: " + zoomRecordingDirectory_;
+    return state;
+  }
+
 private:
   bool initialized_ = false;
   IAuthService* authService_ = nullptr;
@@ -278,6 +347,8 @@ private:
   ISettingService* settingService_ = nullptr;
   AuthEvents authEvents_;
   MeetingEvents meetingEvents_;
+  RecordingEvents recordingEvents_;
+  std::string zoomRecordingDirectory_;
 
   std::vector<Participant> waitingRoomParticipants() {
     std::vector<Participant> participants;

@@ -137,7 +137,7 @@ RunnerCommand parseCommand(const std::string& line) {
     throw std::runtime_error("Command must include id and type");
   }
 
-  for (const std::string& key : {"meetingNumber", "password", "displayName", "sdkJwt", "zak", "participantId", "mode"}) {
+  for (const std::string& key : {"meetingNumber", "password", "displayName", "sdkJwt", "zak", "participantId", "mode", "recordingDirectory"}) {
     const auto value = extractStringField(line, key);
     if (!value.empty()) {
       command.fields[key] = value;

@@ -1,5 +1,8 @@
 import { readFileSync, statfsSync } from "node:fs";
+import { readdir, stat } from "node:fs/promises";
 import { availableParallelism, loadavg } from "node:os";
+import { basename, dirname, join } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import { MockAudioService } from "@studybox/audio";
 import { MockButtonController, RaspberryPiButtonController } from "@studybox/buttons";
 import { MockLedController, RaspberryPiLedController } from "@studybox/led";
@@ -285,7 +288,10 @@ export class StudyBoxAppliance {
   }
 
   async startRecording(context: ActionContext = {}): Promise<StudyBoxSnapshot> {
-    await this.podcast.startRecording();
+    const podcast = await this.podcast.startRecording();
+    if (this.meeting.getState().status === "live" && podcast.activeRecording?.filePath) {
+      await this.meeting.startZoomRecording(dirname(podcast.activeRecording.filePath));
+    }
     await this.logAction("podcast.recording.start", "Recording started", context);
     await this.syncHardwareIndicators();
     return this.snapshot();
@@ -307,14 +313,45 @@ export class StudyBoxAppliance {
 
   async stopRecording(context: ActionContext = {}): Promise<StudyBoxSnapshot> {
     const activeRecordingId = this.podcast.getState().activeRecording?.id;
+    const activeRecordingStartedAt = this.podcast.getState().activeRecording?.startedAt;
+    const zoomRecordingDirectory = this.meeting.getState().status === "live"
+      ? await this.meeting.stopZoomRecording()
+      : undefined;
     await this.podcast.stopRecording();
     if (activeRecordingId) {
       this.finalizedRecordingId = activeRecordingId;
+    }
+    if (activeRecordingId && activeRecordingStartedAt && zoomRecordingDirectory) {
+      const zoomPath = await this.findZoomRecording(zoomRecordingDirectory, activeRecordingStartedAt);
+      if (zoomPath) {
+        await this.podcast.setZoomRecordingAsset(activeRecordingId, zoomPath);
+        await this.logAction("zoom.recording.saved", `Zoom recording saved: ${basename(zoomPath)}`, context, { recordingId: activeRecordingId, filePath: zoomPath });
+      } else {
+        await this.logAction("zoom.recording.missing", "Zoom recording did not produce a local video file", context, { recordingId: activeRecordingId });
+      }
     }
     await this.logAction("podcast.recording.finish", "Recording finished", context);
     await this.syncHardwareIndicators();
     await this.queueBackupIfSessionFinalized(context);
     return this.snapshot();
+  }
+
+  private async findZoomRecording(directory: string, startedAt: string): Promise<string | undefined> {
+    const startedAtMs = Date.parse(startedAt);
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const candidates = await readdir(directory, { withFileTypes: true }).then((entries) => entries.filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith(".mp4"))).catch(() => []);
+      const files = await Promise.all(candidates.map(async (entry) => {
+        const filePath = join(directory, entry.name);
+        const info = await stat(filePath).catch(() => undefined);
+        return info && info.size > 0 && info.mtimeMs >= startedAtMs ? { filePath, mtimeMs: info.mtimeMs } : undefined;
+      }));
+      const newest = files.filter((file): file is { filePath: string; mtimeMs: number } => Boolean(file)).sort((left, right) => right.mtimeMs - left.mtimeMs)[0];
+      if (newest) {
+        return newest.filePath;
+      }
+      await sleep(1000);
+    }
+    return undefined;
   }
 
   async getRecordingDownload(recordingId: string, context: ActionContext = {}): Promise<RecordingDownload | undefined> {

@@ -59,6 +59,16 @@ export class ZoomRunnerProcessClient implements ZoomMeetingRunnerClient {
     await this.send({ id: createId(), type: "setModerationMode", mode });
   }
 
+  async startZoomRecording(recordingDirectory: string): Promise<string | undefined> {
+    const state = await this.send({ id: createId(), type: "startZoomRecording", recordingDirectory });
+    return state.lastEvent?.startsWith("Zoom local recording started") ? recordingDirectory : undefined;
+  }
+
+  async stopZoomRecording(): Promise<string | undefined> {
+    const state = await this.send({ id: createId(), type: "stopZoomRecording" });
+    return state.lastEvent?.startsWith("Zoom local recording stopped") ? state.lastEvent.slice("Zoom local recording stopped: ".length) : undefined;
+  }
+
   async syncState(): Promise<MeetingState> {
     return this.getState();
   }

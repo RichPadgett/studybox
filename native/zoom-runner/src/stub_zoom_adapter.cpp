@@ -53,6 +53,16 @@ public:
   MeetingState syncState(const MeetingState& current) override {
     return current;
   }
+
+  MeetingState startZoomRecording(const std::string&, const MeetingState& current) override {
+    MeetingState state = current;
+    state.lastEvent = "Zoom local recording unavailable in stub runner";
+    return state;
+  }
+
+  MeetingState stopZoomRecording(const MeetingState& current) override {
+    return current;
+  }
 };
 
 } // namespace
