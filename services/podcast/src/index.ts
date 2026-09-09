@@ -185,6 +185,7 @@ export class LocalPodcastService implements PodcastService {
   private audioWaitTimer?: NodeJS.Timeout;
   private audioHealthTimer?: NodeJS.Timeout;
   private captureDevice?: string;
+  private audioFailureCount = 0;
 
   constructor(private readonly options: LocalPodcastServiceOptions) {}
 
@@ -467,7 +468,9 @@ export class LocalPodcastService implements PodcastService {
 
   private async refreshAudioReadiness(): Promise<void> {
     const previousReady = this.state.audioReady;
-    const ready = await this.isCaptureDeviceAvailable();
+    const detected = await this.isCaptureDeviceAvailable();
+    this.audioFailureCount = detected ? 0 : this.audioFailureCount + 1;
+    const ready = detected || (this.state.audioReady === true && this.audioFailureCount < 3);
     const audioLastEvent = ready ? "DJI microphone receiver ready" : "DJI microphone receiver not detected";
     this.state = {
       ...this.state,
