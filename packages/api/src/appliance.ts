@@ -621,6 +621,7 @@ export class StudyBoxAppliance {
         device: podcast.audioCaptureDevice,
         failures: podcast.audioFailureCount,
         recorderPid: podcast.audioRecorderPid,
+        probe: podcast.audioProbeLastResult,
         hardwareConnected: hardware.audio.connected,
         hardwareEvent: hardware.audio.lastEvent
       },

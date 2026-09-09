@@ -190,6 +190,7 @@ export class LocalPodcastService implements PodcastService {
   private audioFailureCount = 0;
   private audioReadinessGeneration = 0;
   private audioReadinessRefresh?: Promise<void>;
+  private audioProbeLastResult?: string;
 
   constructor(private readonly options: LocalPodcastServiceOptions) {}
 
@@ -224,6 +225,7 @@ export class LocalPodcastService implements PodcastService {
       audioFailureCount: this.audioFailureCount,
       audioCaptureDevice: this.captureDevice,
       audioRecorderPid: this.process?.pid
+      ,audioProbeLastResult: this.audioProbeLastResult
     };
   }
 
@@ -454,10 +456,11 @@ export class LocalPodcastService implements PodcastService {
   private async isPulseCaptureDeviceAvailable(): Promise<boolean> {
     return await new Promise<boolean>((resolve) => {
       const probe = spawn("pactl", ["list", "short", "sources"], {
-        stdio: ["ignore", "pipe", "ignore"],
+        stdio: ["ignore", "pipe", "pipe"],
         env: this.pulseEnvironment()
       });
       let output = "";
+      let errorOutput = "";
       const timeout = setTimeout(() => {
         probe.kill("SIGKILL");
         resolve(false);
@@ -465,14 +468,20 @@ export class LocalPodcastService implements PodcastService {
       probe.stdout?.on("data", (chunk: Buffer) => {
         output += chunk.toString("utf8");
       });
+      probe.stderr?.on("data", (chunk: Buffer) => {
+        errorOutput += chunk.toString("utf8");
+      });
       probe.once("error", () => {
         clearTimeout(timeout);
+        this.audioProbeLastResult = "pactl spawn error";
         resolve(false);
       });
       probe.once("close", (code) => {
         clearTimeout(timeout);
         const sourcePattern = this.options.captureSourcePattern ?? "DJI";
-        resolve(code === 0 && output.split("\n").some((line) => line.includes("alsa_input.") && line.toLowerCase().includes(sourcePattern.toLowerCase())));
+        const matched = output.split("\n").some((line) => line.includes("alsa_input.") && line.toLowerCase().includes(sourcePattern.toLowerCase()));
+        this.audioProbeLastResult = `pactl exit=${code} matched=${matched} output=${output.replace(/\s+/g, " ").trim().slice(0, 220)}${errorOutput.trim() ? ` stderr=${errorOutput.trim().slice(0, 120)}` : ""}`;
+        resolve(code === 0 && matched);
       });
     });
   }
