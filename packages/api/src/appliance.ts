@@ -503,6 +503,12 @@ export class StudyBoxAppliance {
     const ringColor = this.getRingColor();
     const meeting = this.meeting.getState();
     const podcast = this.podcast.getState();
+    const audio = this.audio.getState({
+      meetingStatus: meeting.status,
+      podcastStatus: podcast.status,
+      activeSpeaker: meeting.activeSpeaker
+    });
+    const audioReady = podcast.audioReady === true;
     return {
       oled: {
         mode: this.hardwareMode,
@@ -544,11 +550,14 @@ export class StudyBoxAppliance {
         state: this.zoomLedState,
         lastEvent: `Zoom LED ${this.zoomLedState}`
       },
-      audio: this.audio.getState({
-        meetingStatus: meeting.status,
-        podcastStatus: podcast.status,
-        activeSpeaker: meeting.activeSpeaker
-      })
+      audio: {
+        ...audio,
+        health: audioReady ? audio.health : "missing",
+        connected: audioReady,
+        lastEvent: podcast.audioLastEvent ?? audio.lastEvent,
+        inputDevices: audio.inputDevices.map((device) => device.id === "dji-receiver" ? { ...device, connected: audioReady } : device),
+        devices: audio.devices.map((device) => device.id === "dji-receiver" ? { ...device, connected: audioReady } : device)
+      }
     };
   }
 
