@@ -133,6 +133,7 @@ export class StudyBoxAppliance {
       await this.podcast.load();
     }
     await this.backup.load();
+    await this.queueBackupIfSessionFinalized({ source: "system", actor: "startup-recovery" });
     await this.oled.render(this.oled.getCurrentPage());
     await this.syncLeds();
     const debugIntervalMs = Number(process.env.STUDYBOX_DEBUG_HEARTBEAT_MS ?? 5000);
@@ -171,7 +172,16 @@ export class StudyBoxAppliance {
   }
 
   async syncMeetingState(): Promise<MeetingState> {
-    return this.meeting.syncState();
+    const previous = this.meeting.getState();
+    const current = await this.meeting.syncState();
+    const urgentBefore = previous.waitingRoom.length > 0 || previous.raisedHands.length > 0;
+    const urgentNow = current.waitingRoom.length > 0 || current.raisedHands.length > 0;
+    if (urgentNow || urgentBefore !== urgentNow) {
+      await this.oled.showPage("home");
+    } else {
+      await this.oled.render(this.oled.getCurrentPage());
+    }
+    return current;
   }
 
   async updateSettings(settings: StudyBoxSettings, context: ActionContext = {}): Promise<StudyBoxSettings> {
@@ -219,6 +229,10 @@ export class StudyBoxAppliance {
   }
 
   async endMeeting(context: ActionContext = {}): Promise<StudyBoxSnapshot> {
+    if (this.podcast.getState().status !== "idle") {
+      await this.logAction("meeting.end.finalizeRecording", "Finalizing recording before ending meeting", context);
+      await this.stopRecording(context);
+    }
     await this.meeting.endMeeting();
     await this.logAction("meeting.end", "Meeting ended", context);
     await this.queueBackupIfSessionFinalized(context);

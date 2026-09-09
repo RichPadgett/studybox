@@ -396,6 +396,7 @@ export interface SchedulerService {
 export interface OledDisplay {
   getPages(): OledPage[];
   getCurrentPage(): OledPage;
+  showPage(pageId: OledPageId): Promise<OledPage>;
   nextPage(): Promise<OledPage>;
   render(page: OledPage): Promise<void>;
 }

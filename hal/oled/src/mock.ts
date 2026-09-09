@@ -1,4 +1,4 @@
-import type { BackupSyncState, MeetingState, OledDisplay, OledPage, PodcastState, SystemMetrics } from "@studybox/shared";
+import type { BackupSyncState, MeetingState, OledDisplay, OledPage, OledPageId, PodcastState, SystemMetrics } from "@studybox/shared";
 
 export class MockOledDisplay implements OledDisplay {
   private pageIndex = 0;
@@ -34,6 +34,12 @@ export class MockOledDisplay implements OledDisplay {
           ? ["HAND RAISED", meeting.raisedHands[0].displayName, "ACTION: Allow"]
           : meeting.activeSpeaker
             ? [`${meeting.activeSpeaker.displayName} LIVE`, "Remote speaker", "ACTION: Mute"]
+            : meeting.status === "live" && (podcast.status === "recording" || podcast.status === "paused" || podcast.status === "waitingForAudio")
+              ? ["LIVE + RECORDING", `${meeting.participants.length} Participants`, "Use Finish Rec"]
+            : meeting.status === "live"
+              ? ["MEETING LIVE", `${meeting.participants.length} Participants`, "Awaiting recording"]
+            : podcast.status === "recording" || podcast.status === "paused" || podcast.status === "waitingForAudio"
+              ? ["RECORDING", formatDuration(podcast.elapsedSeconds), "Use Finish Rec"]
             : podcast.audioReady !== true
               ? ["AUDIO NOT READY", "Connect DJI Mic", "Meeting locked"]
             : ["READY", "Next Meeting", "Saturday 11:00"],
@@ -88,6 +94,16 @@ export class MockOledDisplay implements OledDisplay {
 
   getCurrentPage(): OledPage {
     return this.getPages()[this.pageIndex] ?? this.getPages()[0];
+  }
+
+  async showPage(pageId: OledPageId): Promise<OledPage> {
+    const pageIndex = this.getPages().findIndex((page) => page.id === pageId);
+    if (pageIndex >= 0) {
+      this.pageIndex = pageIndex;
+    }
+    const page = this.getCurrentPage();
+    await this.render(page);
+    return page;
   }
 
   async nextPage(): Promise<OledPage> {

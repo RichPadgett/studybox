@@ -1,6 +1,6 @@
 import { closeSync, openSync, writeFileSync } from "node:fs";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import type { BackupSyncState, MeetingState, OledDisplay, OledPage, PodcastState, SystemMetrics } from "@studybox/shared";
+import type { BackupSyncState, MeetingState, OledDisplay, OledPage, OledPageId, PodcastState, SystemMetrics } from "@studybox/shared";
 import { MockOledDisplay } from "./mock.js";
 
 export class RaspberryPiOledDisplay implements OledDisplay {
@@ -46,6 +46,12 @@ export class RaspberryPiOledDisplay implements OledDisplay {
 
   getCurrentPage(): OledPage {
     return this.pages.getCurrentPage();
+  }
+
+  async showPage(pageId: OledPageId): Promise<OledPage> {
+    const page = await this.pages.showPage(pageId);
+    await this.render(page);
+    return page;
   }
 
   async nextPage(): Promise<OledPage> {
