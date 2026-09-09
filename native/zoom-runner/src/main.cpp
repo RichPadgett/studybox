@@ -86,6 +86,12 @@ void execute(const RunnerCommand& command) {
     return;
   }
 
+  if (command.type == "makeHost") {
+    state = zoomAdapter().makeParticipantHost(field(command, "participantId"), state);
+    std::cout << responseJson(command.id, state.status != "error", state, state.status == "error" ? state.lastEvent : "") << std::endl;
+    return;
+  }
+
   if (command.type == "dismissRaisedHand" || command.type == "setParticipantPodcastInclusion" || command.type == "setModerationMode") {
     state.lastEvent = "Command accepted by native runner; Zoom SDK adapter is not linked yet";
     std::cout << responseJson(command.id, true, state) << std::endl;

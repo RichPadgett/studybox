@@ -20,6 +20,7 @@ public:
   virtual MeetingState admitParticipant(const std::string& participantId, const MeetingState& current) = 0;
   virtual MeetingState allowParticipantToSpeak(const std::string& participantId, const MeetingState& current) = 0;
   virtual MeetingState muteParticipant(const std::string& participantId, const MeetingState& current) = 0;
+  virtual MeetingState makeParticipantHost(const std::string& participantId, const MeetingState& current) = 0;
   virtual MeetingState syncState(const MeetingState& current) = 0;
   virtual MeetingState startZoomRecording(const std::string& recordingDirectory, const MeetingState& current) = 0;
   virtual MeetingState stopZoomRecording(const MeetingState& current) = 0;

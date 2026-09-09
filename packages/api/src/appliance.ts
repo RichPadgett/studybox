@@ -257,6 +257,14 @@ export class StudyBoxAppliance {
     return this.snapshot();
   }
 
+  async makeParticipantHost(participantId: string, context: ActionContext = {}): Promise<StudyBoxSnapshot> {
+    const participant = this.meeting.getState().participants.find((item) => item.id === participantId);
+    await this.meeting.makeParticipantHost(participantId);
+    await this.logAction("meeting.participant.makeHost", `${participant?.displayName ?? "Participant"} made host`, context, { participantId });
+    await this.syncHardwareIndicators();
+    return this.snapshot();
+  }
+
   async setRemoteSpeakerPodcastInclusion(participantId: string, included: boolean, context: ActionContext = {}): Promise<StudyBoxSnapshot> {
     await this.meeting.setParticipantPodcastInclusion(participantId, included);
     await this.logAction(

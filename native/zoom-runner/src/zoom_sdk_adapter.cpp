@@ -412,6 +412,21 @@ public:
     return state;
   }
 
+  MeetingState makeParticipantHost(const std::string& participantId, const MeetingState& current) override {
+    ensureMeetingService();
+    auto* participants = meetingService_->GetMeetingParticipantsController();
+    if (!participants) {
+      throw std::runtime_error("Zoom participant controller is unavailable");
+    }
+    const SDKError error = participants->MakeHost(parseUserId(participantId));
+    if (error != SDKERR_SUCCESS) {
+      throw std::runtime_error(sdkErrorMessage("Make Zoom participant host", error));
+    }
+    MeetingState state = current;
+    state.lastEvent = "Zoom participant made host: " + participantId;
+    return state;
+  }
+
   MeetingState syncState(const MeetingState& current) override {
     if (!meetingService_) {
       return current;

@@ -5,6 +5,7 @@ import {
   CalendarClock,
   CloudUpload,
   ClipboardList,
+  Crown,
   Disc3,
   Download,
   Eye,
@@ -376,7 +377,12 @@ function Meeting({ snapshot, run, compact = false }: { snapshot: StudyBoxSnapsho
                     </button>
                   </span>
                 ) : (
-                  <small>{participant.audioState ?? "joined"}{participant.includedInPodcast ? " · podcast" : ""}</small>
+                  <span className="inlineActions">
+                    <small>{participant.audioState ?? "joined"}{participant.includedInPodcast ? " · podcast" : ""}</small>
+                    <button className="inlineButton secondary" title="Transfer host control to this participant" onClick={() => run(`/api/meeting/participants/${participant.id}/host`)}>
+                      <Crown size={14} /> Make Host
+                    </button>
+                  </span>
                 )}
               </li>
             ))}

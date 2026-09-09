@@ -140,6 +140,12 @@ export class MockMeetingService implements MeetingService {
     return this.state;
   }
 
+  async makeParticipantHost(participantId: string): Promise<MeetingState> {
+    const participant = this.state.participants.find((item) => item.id === participantId);
+    this.state = { ...this.state, lastEvent: participant ? `${participant.displayName} is now host` : "Participant is now host" };
+    return this.state;
+  }
+
   async setParticipantPodcastInclusion(participantId: string, included: boolean): Promise<MeetingState> {
     const participant = this.state.participants.find((item) => item.id === participantId);
     if (!participant) {
@@ -184,6 +190,7 @@ export interface ZoomMeetingRunnerClient {
   dismissRaisedHand(participantId: string): Promise<void>;
   allowParticipantToSpeak(participantId: string): Promise<void>;
   muteParticipant(participantId: string): Promise<void>;
+  makeParticipantHost(participantId: string): Promise<void>;
   setParticipantPodcastInclusion(participantId: string, included: boolean): Promise<void>;
   setModerationMode(mode: MeetingModerationMode): Promise<void>;
   startZoomRecording(recordingDirectory: string): Promise<string | undefined>;
@@ -287,6 +294,11 @@ export class ZoomMeetingService implements MeetingService {
     return this.refreshState();
   }
 
+  async makeParticipantHost(participantId: string): Promise<MeetingState> {
+    await this.runner.makeParticipantHost(participantId);
+    return this.refreshState();
+  }
+
   async setParticipantPodcastInclusion(participantId: string, included: boolean): Promise<MeetingState> {
     await this.runner.setParticipantPodcastInclusion(participantId, included);
     return this.refreshState();
@@ -338,6 +350,10 @@ export class MissingZoomRunnerClient implements ZoomMeetingRunnerClient {
   }
 
   async muteParticipant(_participantId: string): Promise<void> {
+    throw new Error("Zoom runner is not available. Build and configure the ARM64 Meeting SDK runner first.");
+  }
+
+  async makeParticipantHost(_participantId: string): Promise<void> {
     throw new Error("Zoom runner is not available. Build and configure the ARM64 Meeting SDK runner first.");
   }
 

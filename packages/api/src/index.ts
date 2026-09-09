@@ -280,6 +280,14 @@ app.post("/api/meeting/participants/:participantId/mute", requireAdmin, async (r
   }
 });
 
+app.post("/api/meeting/participants/:participantId/host", requireAdmin, async (request, response, next) => {
+  try {
+    response.json(await appliance.makeParticipantHost(request.params.participantId, webAdminContext));
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.post("/api/meeting/participants/:participantId/podcast-inclusion", requireAdmin, async (request, response, next) => {
   try {
     response.json(await appliance.setRemoteSpeakerPodcastInclusion(request.params.participantId, Boolean(request.body?.included), webAdminContext));

@@ -50,6 +50,12 @@ public:
     return state;
   }
 
+  MeetingState makeParticipantHost(const std::string& participantId, const MeetingState& current) override {
+    MeetingState state = current;
+    state.lastEvent = "Cannot make Zoom participant " + participantId + " host until Zoom SDK adapter is linked";
+    return state;
+  }
+
   MeetingState syncState(const MeetingState& current) override {
     return current;
   }
