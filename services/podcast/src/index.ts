@@ -262,20 +262,17 @@ export class LocalPodcastService implements PodcastService {
     this.elapsedBeforePause = 0;
     this.activeFilePath = filePath;
     this.captureDevice = this.options.captureDeviceResolver?.() ?? this.options.device ?? "default";
-    await this.refreshAudioReadiness();
-    if (this.state.audioReady !== true) {
-      this.state = {
-        ...this.state,
-        status: "waitingForAudio",
-        activeRecording: recording,
-        elapsedSeconds: 0,
-        lastEvent: "Waiting for DJI audio"
-      };
-      this.startAudioWaitLoop();
-      return this.getState();
-    }
-
+    this.state = {
+      ...this.state,
+      status: "waitingForAudio",
+      activeRecording: recording,
+      elapsedSeconds: 0,
+      lastEvent: "Connecting DJI audio"
+    };
     await this.startCaptureProcess(fileName);
+    if (this.state.status === "waitingForAudio" && this.activeRecording) {
+      this.startAudioWaitLoop();
+    }
     return this.getState();
   }
 
@@ -405,12 +402,11 @@ export class LocalPodcastService implements PodcastService {
       this.stopAudioWaitLoop();
       return;
     }
-    await this.refreshAudioReadiness();
-    if (this.state.audioReady !== true) {
-      return;
-    }
     this.stopAudioWaitLoop();
     await this.startCaptureProcess(this.activeRecording.downloadFileName ?? formatRecordingFileName(this.activeRecording.startedAt));
+    if (this.state.status === "waitingForAudio" && this.activeRecording) {
+      this.startAudioWaitLoop();
+    }
   }
 
   private async isCaptureDeviceAvailable(): Promise<boolean> {
@@ -605,6 +601,19 @@ export class LocalPodcastService implements PodcastService {
     const exitedEarly = await Promise.race([earlyExit, sleep(250).then(() => false)]);
     if (exitedEarly) {
       await exitHandled;
+      return;
+    }
+
+    const wasAudioReady = this.state.audioReady === true;
+    this.audioFailureCount = 0;
+    this.state = {
+      ...this.state,
+      audioReady: true,
+      audioLastCheckedAt: new Date().toISOString(),
+      audioLastEvent: "DJI microphone receiver ready"
+    };
+    if (!wasAudioReady) {
+      this.options.onAudioReadinessChange?.();
     }
   }
 

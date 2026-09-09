@@ -442,7 +442,7 @@ function PodcastControls({ snapshot, run }: { snapshot: StudyBoxSnapshot; run: (
   const partialRecording = snapshot.podcast.status === "error" && Boolean(snapshot.podcast.activeRecording);
   return (
     <>
-      <Command icon={<Play size={17} />} label={audioNotReady ? "Mic Not Ready" : snapshot.podcast.status === "error" ? "Retry Recording" : "Start Recording"} onClick={() => run("/api/podcast/start")} disabled={recordingActive || audioNotReady} />
+      <Command icon={<Play size={17} />} label={audioNotReady ? "Connect Audio" : snapshot.podcast.status === "error" ? "Retry Recording" : "Start Recording"} onClick={() => run("/api/podcast/start")} disabled={recordingActive} />
       <Command icon={<Pause size={17} />} label={waitingForAudio ? "Waiting for Audio" : snapshot.podcast.status === "paused" ? "Resume Recording" : "Pause Recording"} onClick={() => run(snapshot.podcast.status === "paused" ? "/api/podcast/resume" : "/api/podcast/pause")} disabled={!recordingActive || waitingForAudio} />
       <Command icon={<Square size={17} />} label={partialRecording ? "Save Partial Recording" : "Finish Recording"} onClick={() => run("/api/podcast/stop")} disabled={!recordingActive} />
     </>

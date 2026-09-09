@@ -51,13 +51,13 @@ export class MockOledDisplay implements OledDisplay {
         id: "podcast",
         title: "Podcast",
         lines: podcast.audioReady !== true && podcast.status === "idle"
-          ? ["MIC NOT READY", "Connect DJI Mic", "Recording locked"]
+          ? ["AUDIO NOT READY", "Press to connect", "Recording will retry"]
           : podcast.status === "waitingForAudio"
           ? ["WAITING FOR AUDIO", "Connect DJI Mic"]
           : podcast.status === "error" && podcast.activeRecording
           ? ["AUDIO ERROR", "Partial audio saved"]
           : [podcast.status.toUpperCase(), formatDuration(podcast.elapsedSeconds)],
-        actionLabel: podcast.audioReady !== true && podcast.status === "idle" ? "Mic Not Ready" : podcast.status === "recording" ? "Pause Recording" : podcast.status === "paused" ? "Resume Recording" : podcast.status === "waitingForAudio" ? "Finish Recording" : podcast.status === "error" && podcast.activeRecording ? "Save Partial Recording" : podcast.status === "error" ? "Retry Recording" : "Start Recording"
+        actionLabel: podcast.audioReady !== true && podcast.status === "idle" ? "Connect Audio" : podcast.status === "recording" ? "Pause Recording" : podcast.status === "paused" ? "Resume Recording" : podcast.status === "waitingForAudio" ? "Finish Recording" : podcast.status === "error" && podcast.activeRecording ? "Save Partial Recording" : podcast.status === "error" ? "Retry Recording" : "Start Recording"
       }
     ];
 
