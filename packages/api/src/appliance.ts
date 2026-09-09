@@ -117,7 +117,9 @@ export class StudyBoxAppliance {
           }
         )
       : new MockMeetingService();
-    this.podcast = createPodcastService();
+    this.podcast = createPodcastService(() => {
+      void this.syncHardwareIndicators();
+    });
   }
 
   async initialize(): Promise<void> {
@@ -795,7 +797,7 @@ function createLedController(mode: HardwareMode): LedController {
   return new MockLedController();
 }
 
-function createPodcastService(): PodcastService {
+function createPodcastService(onAudioReadinessChange?: () => void): PodcastService {
   if (process.env.STUDYBOX_PODCAST_MODE === "alsa") {
     const captureDevice = process.env.STUDYBOX_AUDIO_CAPTURE_SHARED_DEVICE
       ?? process.env.STUDYBOX_AUDIO_CAPTURE_DEVICE
@@ -809,6 +811,7 @@ function createPodcastService(): PodcastService {
       device: captureDevice,
       captureDeviceResolver: () => captureDevice,
       captureSourcePattern: process.env.STUDYBOX_AUDIO_CAPTURE_SOURCE_PATTERN ?? "DJI",
+      onAudioReadinessChange,
       format: process.env.STUDYBOX_AUDIO_CAPTURE_FORMAT ?? "S16_LE",
       sampleRate: process.env.STUDYBOX_AUDIO_SAMPLE_RATE ? Number(process.env.STUDYBOX_AUDIO_SAMPLE_RATE) : 48000,
       channels: process.env.STUDYBOX_AUDIO_CHANNELS ? Number(process.env.STUDYBOX_AUDIO_CHANNELS) : 2

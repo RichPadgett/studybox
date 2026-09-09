@@ -162,6 +162,7 @@ export interface LocalPodcastServiceOptions {
   sampleRate?: number;
   channels?: number;
   captureDeviceResolver?: () => string;
+  onAudioReadinessChange?: () => void;
 }
 
 interface RecordingManifestEntry extends Recording {
@@ -465,6 +466,7 @@ export class LocalPodcastService implements PodcastService {
   }
 
   private async refreshAudioReadiness(): Promise<void> {
+    const previousReady = this.state.audioReady;
     const ready = await this.isCaptureDeviceAvailable();
     const audioLastEvent = ready ? "DJI microphone receiver ready" : "DJI microphone receiver not detected";
     this.state = {
@@ -474,6 +476,9 @@ export class LocalPodcastService implements PodcastService {
       audioLastEvent,
       ...(this.state.status === "idle" ? { lastEvent: audioLastEvent } : {})
     };
+    if (previousReady !== ready) {
+      this.options.onAudioReadinessChange?.();
+    }
   }
 
   private async startCaptureProcess(fileName: string): Promise<void> {
