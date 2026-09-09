@@ -189,6 +189,7 @@ export class LocalPodcastService implements PodcastService {
   private captureDevice?: string;
   private audioFailureCount = 0;
   private audioReadinessGeneration = 0;
+  private audioReadinessRefresh?: Promise<void>;
 
   constructor(private readonly options: LocalPodcastServiceOptions) {}
 
@@ -470,7 +471,23 @@ export class LocalPodcastService implements PodcastService {
     });
   }
 
-  private async refreshAudioReadiness(): Promise<void> {
+  private refreshAudioReadiness(): Promise<void> {
+    if (this.audioReadinessRefresh) {
+      return this.audioReadinessRefresh;
+    }
+
+    const refresh = this.updateAudioReadiness();
+    let trackedRefresh: Promise<void>;
+    trackedRefresh = refresh.finally(() => {
+      if (this.audioReadinessRefresh === trackedRefresh) {
+        this.audioReadinessRefresh = undefined;
+      }
+    });
+    this.audioReadinessRefresh = trackedRefresh;
+    return trackedRefresh;
+  }
+
+  private async updateAudioReadiness(): Promise<void> {
     const generation = ++this.audioReadinessGeneration;
     const previousReady = this.state.audioReady;
     const detected = await this.isCaptureDeviceAvailable();
