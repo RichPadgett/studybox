@@ -76,6 +76,9 @@ export interface PodcastState {
   audioReady?: boolean;
   audioLastCheckedAt?: string;
   audioLastEvent?: string;
+  audioFailureCount?: number;
+  audioCaptureDevice?: string;
+  audioRecorderPid?: number;
   activeRecording?: Recording;
   elapsedSeconds: number;
   recordings: Recording[];

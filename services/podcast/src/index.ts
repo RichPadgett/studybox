@@ -220,7 +220,10 @@ export class LocalPodcastService implements PodcastService {
       ...this.state,
       activeRecording: this.activeRecording,
       recordings: this.recordings,
-      elapsedSeconds: this.currentElapsedSeconds()
+      elapsedSeconds: this.currentElapsedSeconds(),
+      audioFailureCount: this.audioFailureCount,
+      audioCaptureDevice: this.captureDevice,
+      audioRecorderPid: this.process?.pid
     };
   }
 
@@ -491,6 +494,9 @@ export class LocalPodcastService implements PodcastService {
   }
 
   private async updateAudioReadiness(): Promise<void> {
+    if (this.state.status === "recording" || this.state.status === "paused" || this.state.status === "stopping") {
+      return;
+    }
     const generation = ++this.audioReadinessGeneration;
     const previousReady = this.state.audioReady;
     const detected = await this.isCaptureDeviceAvailable();
@@ -535,6 +541,7 @@ export class LocalPodcastService implements PodcastService {
       ? spawn(this.options.captureWrapperPath, ["--", recorderCommand, ...args], { stdio: ["ignore", "pipe", "pipe"], env: captureEnvironment })
       : spawn(recorderCommand, args, { stdio: ["ignore", "pipe", "pipe"], env: captureEnvironment });
     this.process = recorderProcess;
+    this.audioFailureCount = 0;
     this.startedAtMs = Date.now();
     this.state = {
       ...this.state,
@@ -544,31 +551,39 @@ export class LocalPodcastService implements PodcastService {
       lastEvent: `Recording started: ${fileName}`
     };
 
+    let resolveExitHandled!: () => void;
+    const exitHandled = new Promise<void>((resolve) => {
+      resolveExitHandled = resolve;
+    });
     const earlyExit = new Promise<boolean>((resolve) => {
       recorderProcess.once("exit", () => resolve(true));
     });
 
     recorderProcess.once("exit", async (code, signal) => {
-      if (this.state.status === "recording" || this.state.status === "paused") {
-        const elapsedSeconds = this.currentElapsedSeconds();
-        const partialSizeBytes = this.activeFilePath ? await fileSize(this.activeFilePath) : 0;
-        this.startedAtMs = undefined;
-        this.elapsedBeforePause = elapsedSeconds;
-        const preservedPartial = partialSizeBytes > 44;
-        this.state = {
-          ...this.state,
-          status: preservedPartial ? "error" : "waitingForAudio",
-          activeRecording: this.activeRecording,
-          elapsedSeconds,
-          lastEvent: preservedPartial
-            ? `Recording stopped unexpectedly; partial audio preserved (${partialSizeBytes} bytes)`
-            : `Waiting for DJI audio after recorder exit (${signal ?? code ?? "unknown"})`
-        };
-        if (!preservedPartial) {
-          this.startAudioWaitLoop();
+      try {
+        if (this.state.status === "recording" || this.state.status === "paused") {
+          const elapsedSeconds = this.currentElapsedSeconds();
+          const partialSizeBytes = this.activeFilePath ? await fileSize(this.activeFilePath) : 0;
+          this.startedAtMs = undefined;
+          this.elapsedBeforePause = elapsedSeconds;
+          const preservedPartial = partialSizeBytes > 44;
+          this.state = {
+            ...this.state,
+            status: preservedPartial ? "error" : "waitingForAudio",
+            activeRecording: this.activeRecording,
+            elapsedSeconds,
+            lastEvent: preservedPartial
+              ? `Recording stopped unexpectedly; partial audio preserved (${partialSizeBytes} bytes)`
+              : `Waiting for DJI audio after recorder exit (${signal ?? code ?? "unknown"})`
+          };
+          if (!preservedPartial) {
+            this.startAudioWaitLoop();
+          }
         }
+        this.process = undefined;
+      } finally {
+        resolveExitHandled();
       }
-      this.process = undefined;
     });
 
     recorderProcess.stderr?.on("data", (chunk: Buffer) => {
@@ -578,7 +593,10 @@ export class LocalPodcastService implements PodcastService {
       }
     });
 
-    await Promise.race([earlyExit, sleep(250).then(() => false)]);
+    const exitedEarly = await Promise.race([earlyExit, sleep(250).then(() => false)]);
+    if (exitedEarly) {
+      await exitHandled;
+    }
   }
 
   private pulseEnvironment(): NodeJS.ProcessEnv {
