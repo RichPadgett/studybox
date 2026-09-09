@@ -257,7 +257,10 @@ async function runRsync(input: RsyncInput, onProgress?: (progress: RsyncProgress
       const nextProgress = Math.min(100, Math.max(0, Number(match[1])));
       if (nextProgress !== latestProgress) {
         latestProgress = nextProgress;
-        void onProgress?.({ stage: "uploading", label: "Uploading meeting", percent: nextProgress });
+        const progressUpdate = onProgress?.({ stage: "uploading", label: "Uploading meeting", percent: nextProgress });
+        void progressUpdate?.catch((error: unknown) => {
+          console.error("Backup upload progress update failed", error);
+        });
       }
       stdout = stdout.slice(-200);
     };

@@ -118,6 +118,14 @@ export class ZoomRunnerProcessClient implements ZoomMeetingRunnerClient {
       };
     });
 
+    this.child.once("error", (error) => {
+      this.state = {
+        ...this.state,
+        status: "error",
+        lastEvent: `Zoom runner error: ${error.message}`
+      };
+    });
+
     this.child.on("exit", (code) => {
       for (const pending of this.pending.values()) {
         clearTimeout(pending.timeout);
