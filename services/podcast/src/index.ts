@@ -172,6 +172,8 @@ interface RecordingManifestEntry extends Recording {
 export class LocalPodcastService implements PodcastService {
   private state: PodcastState = {
     status: "idle",
+    audioReady: false,
+    audioLastEvent: "Checking for DJI microphone receiver",
     elapsedSeconds: 0,
     recordings: [],
     lastEvent: "Local podcast recorder ready"
@@ -396,7 +398,8 @@ export class LocalPodcastService implements PodcastService {
       this.stopAudioWaitLoop();
       return;
     }
-    if (!(await this.isCaptureDeviceAvailable())) {
+    await this.refreshAudioReadiness();
+    if (this.state.audioReady !== true) {
       return;
     }
     this.stopAudioWaitLoop();

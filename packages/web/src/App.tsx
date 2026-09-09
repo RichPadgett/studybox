@@ -329,7 +329,7 @@ function Dashboard({ snapshot, run }: { snapshot: StudyBoxSnapshot; run: (path: 
         <Metric label="Next Meeting" value={`${snapshot.settings.schedule.dayOfWeek}`} detail={snapshot.settings.schedule.time} />
       </div>
       <div className="toolbar">
-        <Command icon={<Users size={17} />} label={meetingPrimaryAction(snapshot)} onClick={() => run(snapshot.meeting.status === "live" ? "/api/meeting/end" : "/api/meeting/start")} disabled={snapshot.meeting.status !== "live" && snapshot.podcast.audioReady === false} />
+        <Command icon={<Users size={17} />} label={meetingPrimaryAction(snapshot)} onClick={() => run(snapshot.meeting.status === "live" ? "/api/meeting/end" : "/api/meeting/start")} disabled={snapshot.meeting.status !== "live" && snapshot.podcast.audioReady !== true} />
         <PodcastControls snapshot={snapshot} run={run} />
       </div>
       <Meeting snapshot={snapshot} run={run} compact />
@@ -357,7 +357,7 @@ function Meeting({ snapshot, run, compact = false }: { snapshot: StudyBoxSnapsho
       ) : null}
       {!compact ? (
         <div className="toolbar">
-          <Command icon={<Users size={17} />} label={meetingPrimaryAction(snapshot)} onClick={() => run(snapshot.meeting.status === "live" ? "/api/meeting/end" : "/api/meeting/start")} disabled={snapshot.meeting.status !== "live" && snapshot.podcast.audioReady === false} />
+          <Command icon={<Users size={17} />} label={meetingPrimaryAction(snapshot)} onClick={() => run(snapshot.meeting.status === "live" ? "/api/meeting/end" : "/api/meeting/start")} disabled={snapshot.meeting.status !== "live" && snapshot.podcast.audioReady !== true} />
         </div>
       ) : null}
       <div className="twoColumn">
@@ -437,11 +437,12 @@ function Podcast({ snapshot, run }: { snapshot: StudyBoxSnapshot; run: (path: st
 
 function PodcastControls({ snapshot, run }: { snapshot: StudyBoxSnapshot; run: (path: string, body?: unknown) => Promise<void> }) {
   const recordingActive = snapshot.podcast.status === "recording" || snapshot.podcast.status === "paused" || snapshot.podcast.status === "waitingForAudio" || snapshot.podcast.status === "error" && Boolean(snapshot.podcast.activeRecording);
+  const audioNotReady = snapshot.podcast.audioReady !== true;
   const waitingForAudio = snapshot.podcast.status === "waitingForAudio";
   const partialRecording = snapshot.podcast.status === "error" && Boolean(snapshot.podcast.activeRecording);
   return (
     <>
-      <Command icon={<Play size={17} />} label={snapshot.podcast.status === "error" ? "Retry Recording" : "Start Recording"} onClick={() => run("/api/podcast/start")} disabled={recordingActive} />
+      <Command icon={<Play size={17} />} label={audioNotReady ? "Mic Not Ready" : snapshot.podcast.status === "error" ? "Retry Recording" : "Start Recording"} onClick={() => run("/api/podcast/start")} disabled={recordingActive || audioNotReady} />
       <Command icon={<Pause size={17} />} label={waitingForAudio ? "Waiting for Audio" : snapshot.podcast.status === "paused" ? "Resume Recording" : "Pause Recording"} onClick={() => run(snapshot.podcast.status === "paused" ? "/api/podcast/resume" : "/api/podcast/pause")} disabled={!recordingActive || waitingForAudio} />
       <Command icon={<Square size={17} />} label={partialRecording ? "Save Partial Recording" : "Finish Recording"} onClick={() => run("/api/podcast/stop")} disabled={!recordingActive} />
     </>
@@ -952,7 +953,7 @@ function AudioReadiness({ podcast }: { podcast: StudyBoxSnapshot["podcast"] }) {
 }
 
 function statusCopy(snapshot: StudyBoxSnapshot): string {
-  if (snapshot.podcast.audioReady === false) return "Connect the DJI microphone receiver before starting";
+  if (snapshot.podcast.audioReady !== true) return "Connect the DJI microphone receiver before starting";
   if (snapshot.systemStatus === "attention") return "Waiting room or raised hand needs attention";
   if (snapshot.meeting.status === "live") return "Meeting is live";
   return "Ready for the next scheduled study";
@@ -976,7 +977,7 @@ function meetingPrimaryAction(snapshot: StudyBoxSnapshot): string {
   if (snapshot.meeting.status === "live") {
     return snapshot.zoom.mode === "runner" && snapshot.zoom.runnerAvailable ? "End Zoom Meeting" : "End Local Session";
   }
-  if (snapshot.podcast.audioReady === false) return "Connect DJI Mic";
+  if (snapshot.podcast.audioReady !== true) return "Connect DJI Mic";
   return snapshot.zoom.mode === "runner" && snapshot.zoom.runnerAvailable ? "Start Zoom Meeting" : "Start Local Session";
 }
 

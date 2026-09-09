@@ -479,7 +479,7 @@ export class StudyBoxAppliance {
     if (meeting.status === "error" || podcast.status === "error") {
       return "error";
     }
-    if (podcast.audioReady === false) {
+    if (podcast.audioReady !== true) {
       return "attention";
     }
     if (meeting.waitingRoom.length > 0 || meeting.raisedHands.length > 0) {
