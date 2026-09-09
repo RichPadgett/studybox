@@ -53,6 +53,13 @@ export class RaspberryPiButtonController implements ButtonController {
     );
     this.monitor = monitor;
 
+    monitor.once("error", (error) => {
+      console.error(`StudyBox button monitor failed: ${error.message}`);
+      if (this.monitor === monitor) {
+        this.monitor = undefined;
+      }
+    });
+
     monitor.stdout?.on("data", (chunk: Buffer) => {
       for (const line of chunk.toString("utf8").split(/\r?\n/)) {
         this.handleEvent(line.trim());
@@ -77,9 +84,13 @@ export class RaspberryPiButtonController implements ButtonController {
     }
 
     if (gpio === this.pageGpio) {
-      void this.invokePage();
+      void this.invokePage().catch((error: unknown) => {
+        console.error("StudyBox page button action failed", error);
+      });
     } else if (gpio === this.actionGpio) {
-      void this.invokeAction();
+      void this.invokeAction().catch((error: unknown) => {
+        console.error("StudyBox action button action failed", error);
+      });
     }
   }
 

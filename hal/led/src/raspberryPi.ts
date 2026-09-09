@@ -122,6 +122,10 @@ class GpioLedOutput {
     this.holder = spawn("gpioset", ["--mode=signal", this.gpioChip, `${this.gpio}=${value}`], {
       stdio: "ignore"
     });
+    this.holder.once("error", (error) => {
+      console.error(`StudyBox LED GPIO ${this.gpio} failed: ${error.message}`);
+      this.holder = undefined;
+    });
   }
 
   private release(): void {

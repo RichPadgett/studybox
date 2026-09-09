@@ -215,7 +215,9 @@ export class LocalPodcastService implements PodcastService {
     this.captureDevice = this.options.captureDeviceResolver?.() ?? this.options.device ?? "default";
     await this.refreshAudioReadiness();
     this.audioHealthTimer = setInterval(() => {
-      void this.refreshAudioReadiness();
+      void this.refreshAudioReadiness().catch((error: unknown) => {
+        console.error("Podcast audio readiness refresh failed", error);
+      });
     }, 3000);
     this.audioHealthTimer.unref();
   }
@@ -389,7 +391,15 @@ export class LocalPodcastService implements PodcastService {
   private startAudioWaitLoop(): void {
     this.stopAudioWaitLoop();
     this.audioWaitTimer = setInterval(() => {
-      void this.tryStartWaitingCapture();
+      void this.tryStartWaitingCapture().catch((error: unknown) => {
+        console.error("Podcast waiting-for-audio retry failed", error);
+        this.state = {
+          ...this.state,
+          status: "error",
+          lastEvent: `Audio retry failed: ${error instanceof Error ? error.message : String(error)}`.slice(0, 240)
+        };
+        this.stopAudioWaitLoop();
+      });
     }, 2000);
     this.audioWaitTimer.unref();
   }
@@ -590,6 +600,14 @@ export class LocalPodcastService implements PodcastService {
           }
         }
         this.process = undefined;
+      } catch (error) {
+        this.process = undefined;
+        this.state = {
+          ...this.state,
+          status: "error",
+          lastEvent: `Recorder cleanup failed: ${error instanceof Error ? error.message : String(error)}`.slice(0, 240)
+        };
+        console.error("Podcast recorder exit handling failed", error);
       } finally {
         resolveExitHandled();
       }

@@ -122,7 +122,9 @@ export class StudyBoxAppliance {
         )
       : new MockMeetingService();
     this.podcast = createPodcastService(() => {
-      void this.syncHardwareIndicators();
+      void this.syncHardwareIndicators().catch((error: unknown) => {
+        console.error("StudyBox hardware indicator sync failed after audio readiness change", error);
+      });
     });
   }
 
@@ -138,7 +140,13 @@ export class StudyBoxAppliance {
     await this.syncLeds();
     const debugIntervalMs = Number(process.env.STUDYBOX_DEBUG_HEARTBEAT_MS ?? 5000);
     if (debugIntervalMs > 0) {
-      this.debugHeartbeatTimer = setInterval(() => this.logDebugHeartbeat(), debugIntervalMs);
+      this.debugHeartbeatTimer = setInterval(() => {
+        try {
+          this.logDebugHeartbeat();
+        } catch (error) {
+          console.error("StudyBox debug heartbeat failed", error);
+        }
+      }, debugIntervalMs);
       this.debugHeartbeatTimer.unref();
       this.logDebugHeartbeat();
     }

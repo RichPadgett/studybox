@@ -206,6 +206,9 @@ export class RaspberryPiOledDisplay implements OledDisplay {
     const child = spawn("gpioset", ["--mode=signal", this.gpioChip, `${gpio}=${value ? 1 : 0}`], {
       stdio: "ignore"
     });
+    child.once("error", (error) => {
+      console.error(`StudyBox OLED GPIO ${gpio} failed: ${error.message}`);
+    });
     sleep(30);
     return child;
   }
