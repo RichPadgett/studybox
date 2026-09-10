@@ -719,7 +719,7 @@ function SettingsView({ snapshot, saving, save, adminUnlocked, lockAdmin }: { sn
         <div className="toolbar" style={{ marginTop: 12 }}>
           <button className="command outline" onClick={() => void startDeviceAuth()} disabled={!adminUnlocked || !snapshot.zoom.configured}><Settings size={16} /> Start Device OAuth</button>
           <button className="command outline" onClick={() => void pollAuth()} disabled={!adminUnlocked || !deviceAuth}><Save size={16} /> Poll Authorization</button>
-          <button className="command outline" onClick={() => void refreshAuth()} disabled={!adminUnlocked || !snapshot.zoom.oauth.authorized}><Activity size={16} /> Refresh Token</button>
+          <button className="command outline" onClick={() => void refreshAuth()} disabled={!adminUnlocked || !snapshot.zoom.oauth.expiresAt}><Activity size={16} /> Refresh Token</button>
         </div>
       </Panel>
       <div className="toolbar">

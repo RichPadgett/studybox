@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { ZoomOAuthStatus, ZoomUserProfile } from "@studybox/shared";
 import { projectPath } from "./paths.js";
@@ -42,6 +42,7 @@ export class ZoomOAuthStore {
   async save(token: ZoomOAuthTokenSet): Promise<ZoomOAuthTokenSet> {
     await mkdir(dirname(tokenPath), { recursive: true });
     await writeFile(tokenPath, JSON.stringify(token, null, 2));
+    await chmod(tokenPath, 0o600);
     return token;
   }
 }
