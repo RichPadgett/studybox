@@ -87,7 +87,7 @@ export interface PodcastState {
   lastEvent?: string;
 }
 
-export type OledPageId = "home" | "meeting" | "podcast" | "recordingStop" | "system";
+export type OledPageId = "home" | "meeting" | "podcast" | "screenShare" | "recordingStop" | "system";
 
 export interface OledPage {
   id: OledPageId;

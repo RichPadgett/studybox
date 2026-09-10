@@ -510,6 +510,13 @@ export class StudyBoxAppliance {
       return;
     }
 
+    if (pageId === "screenShare") {
+      if (this.meeting.getState().status === "live") {
+        await this.allowScreenShare({ source: "button" });
+      }
+      return;
+    }
+
     if (pageId === "recordingStop") {
       if (this.podcast.getState().status !== "idle") {
         await this.stopRecording({ source: "button" });

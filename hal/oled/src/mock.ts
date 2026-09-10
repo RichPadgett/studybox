@@ -67,6 +67,15 @@ export class MockOledDisplay implements OledDisplay {
       }
     ];
 
+    if (meeting.status === "live") {
+      pages.push({
+        id: "screenShare",
+        title: "Share Screen",
+        lines: ["ADMIN CONTROL", "Enable participant sharing", "Then share from Zoom"],
+        actionLabel: "Allow Share"
+      });
+    }
+
     if (podcast.status === "recording" || podcast.status === "paused" || podcast.status === "error" && podcast.activeRecording) {
       pages.push({
         id: "recordingStop",
