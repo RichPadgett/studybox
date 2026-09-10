@@ -150,24 +150,11 @@ a:hover { color: #8f6a08; }
   margin-bottom: 10px;
 }
 
-.sidebarHwGlyph {
-  width: 16px;
-  height: 16px;
-  border-radius: 4px;
-  background: rgba(214,166,0,0.16);
-  border: 1px solid rgba(214,166,0,0.4);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+.sidebarPiLogo {
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
   flex: none;
-}
-
-.sidebarHwDot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: #D6A600;
-  display: inline-block;
 }
 
 .sidebarHwBadge > span {

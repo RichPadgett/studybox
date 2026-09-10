@@ -179,7 +179,7 @@ export function App() {
 
         <div className="sidebarFooter">
           <div className="sidebarHwBadge">
-            <span className="sidebarHwGlyph"><span className="sidebarHwDot" /></span>
+            <img className="sidebarPiLogo" src="/raspberry-pi-logo-transparent-hd-png-download-3841307694.png" alt="Raspberry Pi" />
             <span>Raspberry Pi 5 · DJI Mic</span>
           </div>
           <div className="sidebarHwLine">StudyBox control surface</div>
