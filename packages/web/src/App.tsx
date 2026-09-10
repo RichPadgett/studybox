@@ -463,6 +463,24 @@ function PodcastControls({ snapshot, run }: { snapshot: StudyBoxSnapshot; run: (
 }
 
 function Audio({ snapshot, run, adminUnlocked }: { snapshot: StudyBoxSnapshot; run: (path: string, body?: unknown) => Promise<void>; adminUnlocked: boolean }) {
+  const routingAvailable = snapshot.hardware.audio.mode === "mock" || snapshot.hardware.audio.health === "ready";
+  if (!routingAvailable) {
+    return (
+      <div className="stack">
+        <Panel title="Audio Routing">
+          <p className="inlineNotice">Audio routing controls are not implemented on the Pi yet. StudyBox recording uses the connected DJI receiver directly.</p>
+          <p className="mutedText">The volume, monitor, device-selection, and level-meter controls are hidden until they are connected to the real audio system.</p>
+        </Panel>
+        <Panel title="DJI Recording Input">
+          <div className="formGrid">
+            <label>Status<input value={snapshot.podcast.audioReady ? "Connected" : "Not connected"} readOnly /></label>
+            <label>Capture device<input value={snapshot.podcast.audioCaptureDevice ?? "Unknown"} readOnly /></label>
+          </div>
+        </Panel>
+      </div>
+    );
+  }
+
   return (
     <div className="stack">
       <Panel title="Device Routing">
@@ -822,18 +840,24 @@ function Diagnostics({ snapshot }: { snapshot: StudyBoxSnapshot }) {
         <Metric label="REC LED" value={snapshot.hardware.recordingLed.state} detail={snapshot.hardware.recordingLed.lastEvent ?? "Ready"} />
       </div>
       <Panel title="Audio Hardware">
-        <List empty="No audio devices">
-          {snapshot.hardware.audio.devices.map((device) => (
-            <li key={device.id}>
-              <span className="listMain">
-                <span>{device.label}</span>
-                <small>{device.role} · {device.connected ? "connected" : "disconnected"}</small>
-                {device.levelPercent !== undefined ? <small>Level {device.levelPercent}%</small> : null}
-                {device.error ? <small className="errorText">{device.error}</small> : null}
-              </span>
-            </li>
-          ))}
-        </List>
+        {snapshot.hardware.audio.mode === "mock" ? (
+          <p className="inlineNotice">Audio hardware is simulated in development mode.</p>
+        ) : snapshot.hardware.audio.health !== "ready" ? (
+          <p className="inlineNotice">Audio routing hardware controls are not implemented yet. The DJI recording input is monitored separately.</p>
+        ) : (
+          <List empty="No audio devices">
+            {snapshot.hardware.audio.devices.map((device) => (
+              <li key={device.id}>
+                <span className="listMain">
+                  <span>{device.label}</span>
+                  <small>{device.role} · {device.connected ? "connected" : "disconnected"}</small>
+                  {device.levelPercent !== undefined ? <small>Level {device.levelPercent}%</small> : null}
+                  {device.error ? <small className="errorText">{device.error}</small> : null}
+                </span>
+              </li>
+            ))}
+          </List>
+        )}
       </Panel>
     </div>
   );

@@ -3,7 +3,7 @@ import { readdir, stat } from "node:fs/promises";
 import { availableParallelism, loadavg } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { MockAudioService } from "@studybox/audio";
+import { MockAudioService, UnavailableAudioService } from "@studybox/audio";
 import { MockButtonController, RaspberryPiButtonController } from "@studybox/buttons";
 import { MockLedController, RaspberryPiLedController } from "@studybox/led";
 import { MissingZoomRunnerClient, MockMeetingService, ZoomMeetingService } from "@studybox/meeting";
@@ -35,8 +35,8 @@ export class StudyBoxAppliance {
   readonly podcast: PodcastService;
   readonly scheduler = new MockSchedulerService();
   readonly backup: BackupSyncService;
-  readonly audio = new MockAudioService();
   private readonly hardwareMode: HardwareMode = process.env.STUDYBOX_HARDWARE_MODE === "raspberryPi" ? "raspberryPi" : "mock";
+  readonly audio = this.hardwareMode === "raspberryPi" ? new UnavailableAudioService() : new MockAudioService();
   private readonly buttonMode: HardwareMode = this.hardwareMode === "raspberryPi" && process.env.STUDYBOX_BUTTON_MODE === "raspberryPi" ? "raspberryPi" : "mock";
   private readonly ledMode: HardwareMode = this.hardwareMode === "raspberryPi" && process.env.STUDYBOX_LED_MODE === "raspberryPi" ? "raspberryPi" : "mock";
   readonly leds: LedController = createLedController(this.ledMode);

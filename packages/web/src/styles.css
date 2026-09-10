@@ -715,6 +715,11 @@ select {
   margin-bottom: 12px;
 }
 
+.mutedText {
+  color: #62736a;
+  margin: 0;
+}
+
 .appliancePane {
   display: grid;
   gap: 16px;
