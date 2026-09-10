@@ -461,14 +461,13 @@ function Podcast({ snapshot, run }: { snapshot: StudyBoxSnapshot; run: (path: st
 }
 
 function PodcastButtons({ snapshot, run, recordingActive }: { snapshot: StudyBoxSnapshot; run: (path: string, body?: unknown) => Promise<void>; recordingActive: boolean }) {
-  const audioNotReady   = snapshot.podcast.audioReady !== true;
   const waitingForAudio = snapshot.podcast.status === "waitingForAudio";
   const paused          = snapshot.podcast.status === "paused";
   const partial         = snapshot.podcast.status === "error" && Boolean(snapshot.podcast.activeRecording);
   return (
     <>
       <button className="command outline" onClick={() => run("/api/podcast/start")} disabled={recordingActive}>
-        ▶ {audioNotReady ? "Connect Audio" : snapshot.podcast.status === "error" ? "Retry Recording" : "Start Recording"}
+        ▶ {snapshot.podcast.status === "error" ? "Retry Recording" : "Start Recording"}
       </button>
       <button className={`command${recordingActive && !waitingForAudio ? "" : " disabled"}`} onClick={() => run(paused ? "/api/podcast/resume" : "/api/podcast/pause")} disabled={!recordingActive || waitingForAudio}>
         ⏸ {waitingForAudio ? "Waiting for Audio" : paused ? "Resume Recording" : "Pause Recording"}
@@ -1008,7 +1007,6 @@ function isZoomHostConnected(snapshot: StudyBoxSnapshot) {
 
 function meetingPrimaryAction(snapshot: StudyBoxSnapshot): string {
   if (snapshot.meeting.status === "live") return snapshot.zoom.mode === "runner" && snapshot.zoom.runnerAvailable ? "End Zoom Meeting" : "End Local Session";
-  if (snapshot.podcast.audioReady !== true) return "Connect DJI Mic";
   return snapshot.zoom.mode === "runner" && snapshot.zoom.runnerAvailable ? "Start Zoom Meeting" : "Start Local Session";
 }
 

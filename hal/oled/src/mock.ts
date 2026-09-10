@@ -51,19 +51,19 @@ export class MockOledDisplay implements OledDisplay {
         lines: meeting.status !== "live" && podcast.audioReady !== true
           ? ["MIC NOT READY", "Connect DJI Mic", "Then start meeting"]
           : [`${meeting.participants.length} Participants`, `Lobby: ${meeting.lobbyRequests.length}`, `Waiting: ${meeting.waitingRoom.length}`],
-        actionLabel: meeting.status === "live" ? "End Meeting" : podcast.audioReady !== true ? "Mic Not Ready" : "Start Meeting"
+        actionLabel: meeting.status === "live" ? "End Meeting" : "Start Meeting"
       },
       {
         id: "podcast",
         title: "Podcast",
         lines: podcast.audioReady !== true && podcast.status === "idle"
-          ? ["AUDIO NOT READY", "Press to connect", "Recording will retry"]
+          ? ["AUDIO NOT READY", "Press to start", "Recording will wait"]
           : podcast.status === "waitingForAudio"
           ? ["WAITING FOR AUDIO", "Connect DJI Mic"]
           : podcast.status === "error" && podcast.activeRecording
           ? ["AUDIO ERROR", "Partial audio saved"]
           : [podcast.status.toUpperCase(), formatDuration(podcast.elapsedSeconds)],
-        actionLabel: podcast.audioReady !== true && podcast.status === "idle" ? "Connect Audio" : podcast.status === "recording" ? "Pause Recording" : podcast.status === "paused" ? "Resume Recording" : podcast.status === "waitingForAudio" ? "Finish Recording" : podcast.status === "error" && podcast.activeRecording ? "Save Partial Recording" : podcast.status === "error" ? "Retry Recording" : "Start Recording"
+        actionLabel: podcast.audioReady !== true && podcast.status === "idle" ? "Start Recording" : podcast.status === "recording" ? "Pause Recording" : podcast.status === "paused" ? "Resume Recording" : podcast.status === "waitingForAudio" ? "Finish Recording" : podcast.status === "error" && podcast.activeRecording ? "Save Partial Recording" : podcast.status === "error" ? "Retry Recording" : "Start Recording"
       }
     ];
 
