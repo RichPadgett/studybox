@@ -472,9 +472,9 @@ function Audio({ snapshot, run, adminUnlocked }: { snapshot: StudyBoxSnapshot; r
           <p className="mutedText">The volume, monitor, device-selection, and level-meter controls are hidden until they are connected to the real audio system.</p>
         </Panel>
         <Panel title="DJI Recording Input">
-          <div className="formGrid">
-            <label>Status<input value={snapshot.podcast.audioReady ? "Connected" : "Not connected"} readOnly /></label>
-            <label>Capture device<input value={snapshot.podcast.audioCaptureDevice ?? "Unknown"} readOnly /></label>
+          <div className="metricGrid compactMetrics">
+            <Metric label="Status" value={snapshot.podcast.audioReady ? "Connected" : "Not connected"} detail={snapshot.podcast.audioLastEvent ?? "No status reported"} />
+            <Metric label="Capture Device" value={snapshot.podcast.audioCaptureDevice ?? "Unknown"} detail={snapshot.podcast.audioLastCheckedAt ? `Checked ${new Date(snapshot.podcast.audioLastCheckedAt).toLocaleTimeString()}` : "Not checked yet"} />
           </div>
         </Panel>
       </div>
