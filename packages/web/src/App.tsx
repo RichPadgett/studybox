@@ -159,12 +159,7 @@ export function App() {
         <div className="sidebarNav">
           {primaryNavItems.map((item) => {
             const Icon = item.icon;
-            return (
-              <button key={item.id} className={`sidebarNavItem${activeNav === item.id ? " active" : ""}`} onClick={() => navigate(item.id)}>
-                <Icon size={16} />
-                <span>{item.label}</span>
-              </button>
-            );
+            return <button key={item.id} className={`sidebarNavItem${activeNav === item.id ? " active" : ""}`} onClick={() => navigate(item.id)}><Icon size={16} /><span>{item.label}</span></button>;
           })}
 
           <button className="sidebarSystemToggle" onClick={() => setSystemOpen((v) => !v)}>
@@ -176,12 +171,7 @@ export function App() {
             <div className="sidebarSystemItems">
               {systemNavItems.map((item) => {
                 const Icon = item.icon;
-                return (
-                  <button key={item.id} className={`sidebarNavItem${activeNav === item.id ? " active" : ""}`} onClick={() => navigate(item.id)}>
-                    <Icon size={16} />
-                    <span>{item.label}</span>
-                  </button>
-                );
+                return <button key={item.id} className={`sidebarNavItem${activeNav === item.id ? " active" : ""}`} onClick={() => navigate(item.id)}><Icon size={16} /><span>{item.label}</span></button>;
               })}
             </div>
           )}
