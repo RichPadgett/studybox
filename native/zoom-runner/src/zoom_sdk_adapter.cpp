@@ -341,6 +341,8 @@ public:
       throw std::runtime_error(sdkErrorMessage("Start meeting", error));
     }
 
+    applyAutomaticMeetingPolicies();
+
     MeetingState state = current;
     state.status = "starting";
     state.meetingId = request.meetingNumber;
@@ -452,6 +454,19 @@ public:
       return current;
     }
 
+    auto* waitingRoom = meetingService_->GetMeetingWaitingRoomController();
+    if (waitingRoom) {
+      // The account or meeting template may still enable a waiting room. Keep
+      // the appliance self-service by admitting any users found there.
+      IList<unsigned int>* waitingList = waitingRoom->GetWaitingRoomLst();
+      if (waitingList && waitingList->GetCount() > 0) {
+        const SDKError admitError = waitingRoom->AdmitAllToMeeting();
+        if (admitError != SDKERR_SUCCESS) {
+          throw std::runtime_error(sdkErrorMessage("Automatically admit participants", admitError));
+        }
+      }
+    }
+
     MeetingState state = current;
     state.waitingRoom = waitingRoomParticipants();
     state.participants = meetingParticipants();
@@ -463,6 +478,37 @@ public:
     }
     state.lastEvent = "Zoom SDK state synced";
     return state;
+  }
+
+  void applyAutomaticMeetingPolicies() {
+    auto* waitingRoom = meetingService_->GetMeetingWaitingRoomController();
+    if (waitingRoom && waitingRoom->IsSupportWaitingRoom()) {
+      const SDKError waitingRoomError = waitingRoom->EnableWaitingRoomOnEntry(false);
+      if (waitingRoomError != SDKERR_SUCCESS) {
+        throw std::runtime_error(sdkErrorMessage("Disable Zoom waiting room", waitingRoomError));
+      }
+    }
+
+    auto* audio = meetingService_->GetMeetingAudioController();
+    if (audio) {
+      const SDKError muteOnEntryError = audio->EnableMuteOnEntry(true, false);
+      if (muteOnEntryError != SDKERR_SUCCESS) {
+        throw std::runtime_error(sdkErrorMessage("Enable mute on entry", muteOnEntryError));
+      }
+
+      const SDKError muteAllError = audio->MuteAudio(0, false);
+      if (muteAllError != SDKERR_SUCCESS) {
+        throw std::runtime_error(sdkErrorMessage("Mute all participants", muteAllError));
+      }
+    }
+
+    auto* shareController = meetingService_->GetMeetingShareController();
+    if (shareController) {
+      const SDKError shareError = shareController->SetMultiShareSettingOptions(Enable_All_Grab_Share);
+      if (shareError != SDKERR_SUCCESS) {
+        throw std::runtime_error(sdkErrorMessage("Enable participant screen sharing", shareError));
+      }
+    }
   }
 
   MeetingState startZoomRecording(const std::string& recordingDirectory, const MeetingState& current) override {

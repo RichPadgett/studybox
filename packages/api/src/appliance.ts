@@ -8,9 +8,10 @@ import { MockButtonController, RaspberryPiButtonController } from "@studybox/but
 import { MockLedController, RaspberryPiLedController } from "@studybox/led";
 import { MissingZoomRunnerClient, MockMeetingService, ZoomMeetingService } from "@studybox/meeting";
 import { MockOledDisplay, RaspberryPiOledDisplay } from "@studybox/oled";
-import { LocalPodcastService, MockPodcastService } from "@studybox/podcast";
+import { LocalPodcastService, MockPodcastService, S3ZoomArchive } from "@studybox/podcast";
 import { MockSchedulerService } from "@studybox/scheduler";
 import { MockBackupSyncService } from "@studybox/sync";
+import { TranscriptLibraryService } from "@studybox/transcripts";
 import type { BackupSyncService, BackupSyncState, ButtonController, HardwareMode, HardwareState, LedColor, LedController, LogEntry, LogLevel, LogResult, LogSource, MeetingService, MeetingState, OledDisplay, OledPageId, Participant, PodcastService, RecLedState, Recording, RecordingAssetKind, RecordingDownload, StudyBoxSettings, StudyBoxSnapshot, SystemMetrics, SystemStatus, ZoomLedState } from "@studybox/shared";
 import { LogStore } from "./logStore.js";
 import { projectPath } from "./paths.js";
@@ -35,6 +36,7 @@ export class StudyBoxAppliance {
   readonly podcast: PodcastService;
   readonly scheduler = new MockSchedulerService();
   readonly backup: BackupSyncService;
+  readonly library: TranscriptLibraryService;
   private readonly hardwareMode: HardwareMode = process.env.STUDYBOX_HARDWARE_MODE === "raspberryPi" ? "raspberryPi" : "mock";
   readonly audio = this.hardwareMode === "raspberryPi" ? new UnavailableAudioService() : new MockAudioService();
   private readonly buttonMode: HardwareMode = this.hardwareMode === "raspberryPi" && process.env.STUDYBOX_BUTTON_MODE === "raspberryPi" ? "raspberryPi" : "mock";
@@ -86,7 +88,7 @@ export class StudyBoxAppliance {
       target: process.env.STUDYBOX_BACKUP_REPO ?? "hetzner:studybox-backup",
       mode: process.env.STUDYBOX_BACKUP_MODE === "rsync" ? "rsync" : "mock",
       onStateChange: () => {
-        void this.oled.render(this.oled.getCurrentPage()).catch((error: unknown) => {
+        void this.renderCurrentOledPage().catch((error: unknown) => {
           console.error("OLED backup status render failed", error);
         });
         this.scheduleBackupDoneRender();
@@ -99,6 +101,14 @@ export class StudyBoxAppliance {
         sshKeyPath: process.env.STUDYBOX_BACKUP_SSH_KEY,
         port: process.env.STUDYBOX_BACKUP_PORT ? Number(process.env.STUDYBOX_BACKUP_PORT) : undefined
       }
+    });
+    this.library = new TranscriptLibraryService({
+      rootDir: process.env.STUDYBOX_LIBRARY_DIR ?? "/var/lib/studybox/library",
+      chunkSeconds: process.env.STUDYBOX_TRANSCRIPT_CHUNK_SECONDS ? Number(process.env.STUDYBOX_TRANSCRIPT_CHUNK_SECONDS) : 600,
+      ffmpegPath: process.env.STUDYBOX_FFMPEG_PATH,
+      apiKey: process.env.OPENAI_API_KEY,
+      transcriptionModel: process.env.OPENAI_TRANSCRIPTION_MODEL,
+      analysisModel: process.env.OPENAI_ANALYSIS_MODEL
     });
     this.meeting = zoomConfig.meetingMode === "runner"
       ? new ZoomMeetingService(
@@ -131,14 +141,18 @@ export class StudyBoxAppliance {
   async initialize(): Promise<void> {
     await this.settingsStore.load();
     await this.logStore.load();
+    await this.library.load();
     if ("load" in this.podcast && typeof this.podcast.load === "function") {
       await this.podcast.load();
     }
+    await this.library.processPending(this.podcast.getState().recordings, (recording) => recording.filePath);
     await this.backup.load();
     await this.queueBackupIfSessionFinalized({ source: "system", actor: "startup-recovery" });
-    await this.oled.render(this.oled.getCurrentPage());
+    await this.oled.showPage("home");
     await this.syncLeds();
-    const debugIntervalMs = Number(process.env.STUDYBOX_DEBUG_HEARTBEAT_MS ?? 5000);
+    const debugIntervalMs = process.env.STUDYBOX_DEBUG_HEARTBEAT_MS
+      ? Number(process.env.STUDYBOX_DEBUG_HEARTBEAT_MS)
+      : 0;
     if (debugIntervalMs > 0) {
       this.debugHeartbeatTimer = setInterval(() => {
         try {
@@ -167,6 +181,7 @@ export class StudyBoxAppliance {
       zoom: getZoomRuntimeStatus(),
       podcast: this.podcast.getState(),
       backup: this.backup.getState(),
+      library: this.library.getState(),
       hardware: this.getHardwareState(),
       oled: {
         currentPageId: this.oled.getCurrentPage().id,
@@ -187,7 +202,7 @@ export class StudyBoxAppliance {
     if (urgentNow || urgentBefore !== urgentNow) {
       await this.oled.showPage("home");
     } else {
-      await this.oled.render(this.oled.getCurrentPage());
+      await this.renderCurrentOledPage();
     }
     return current;
   }
@@ -204,6 +219,10 @@ export class StudyBoxAppliance {
       message: "Settings saved"
     });
     return saved;
+  }
+
+  getSettings(): StudyBoxSettings {
+    return this.settingsStore.get();
   }
 
   async pressPage(): Promise<StudyBoxSnapshot> {
@@ -227,9 +246,6 @@ export class StudyBoxAppliance {
   }
 
   async startMeeting(context: ActionContext = {}): Promise<StudyBoxSnapshot> {
-    if (this.podcast.getState().audioReady !== true) {
-      throw new Error("Connect the DJI microphone receiver before starting the meeting.");
-    }
     await this.meeting.startMeeting();
     await this.logAction("meeting.start", "Meeting started", context);
     await this.syncHardwareIndicators();
@@ -370,6 +386,10 @@ export class StudyBoxAppliance {
     await this.logAction("podcast.recording.finish", "Recording finished", context);
     await this.syncHardwareIndicators();
     await this.queueBackupIfSessionFinalized(context);
+    const completedRecording = this.podcast.getState().recordings.find((recording) => recording.id === activeRecordingId);
+    if (completedRecording?.filePath) {
+      await this.library.enqueue(completedRecording, completedRecording.filePath);
+    }
     return this.snapshot();
   }
 
@@ -407,6 +427,12 @@ export class StudyBoxAppliance {
     return download;
   }
 
+  async getRecordingAssetUrl(recordingId: string, assetKind: RecordingAssetKind, context: ActionContext = {}): Promise<string | undefined> {
+    const url = await this.podcast.getRecordingAssetUrl(recordingId, assetKind);
+    if (url) await this.logAction("podcast.recording.download", `${assetKind} archive URL prepared`, context, { recordingId, assetKind });
+    return url;
+  }
+
   async getRecordingFile(recordingId: string, context: ActionContext = {}, assetKind: RecordingAssetKind = "audio"): Promise<{ recording: Recording; filePath: string; fileName: string; mimeType: string } | undefined> {
     const recording = (await this.podcast.listRecordings()).find((candidate) => candidate.id === recordingId);
     const asset = recording?.assets?.find((candidate) => candidate.kind === assetKind);
@@ -427,9 +453,9 @@ export class StudyBoxAppliance {
   }
 
   async syncBackups(context: ActionContext = {}): Promise<StudyBoxSnapshot> {
-    await this.oled.render(this.oled.getCurrentPage());
+    await this.renderCurrentOledPage();
     await this.backup.syncPending();
-    await this.oled.render(this.oled.getCurrentPage());
+    await this.renderCurrentOledPage();
     await this.log({
       source: "backup",
       actor: context.actor,
@@ -453,7 +479,7 @@ export class StudyBoxAppliance {
     }
 
     const after = await this.backup.syncPending();
-    await this.oled.render(this.oled.getCurrentPage());
+    await this.renderCurrentOledPage();
     const failed = after.failedCount;
     await this.log({
       source: "backup",
@@ -684,7 +710,17 @@ export class StudyBoxAppliance {
 
   private async syncHardwareIndicators(): Promise<void> {
     await this.syncLeds();
-    await this.oled.render(this.oled.getCurrentPage());
+    await this.renderCurrentOledPage();
+  }
+
+  private async renderCurrentOledPage(): Promise<void> {
+    const renderedPage = "getRenderedPage" in this.oled && typeof this.oled.getRenderedPage === "function"
+      ? this.oled.getRenderedPage()
+      : undefined;
+    if (!renderedPage || renderedPage.id === "system") {
+      return;
+    }
+    await this.oled.showPage(renderedPage.id);
   }
 
   private logDebugHeartbeat(): void {
@@ -724,7 +760,7 @@ export class StudyBoxAppliance {
 
     this.backupDoneRenderTimer = setTimeout(() => {
       this.backupDoneRenderTimer = undefined;
-      void this.oled.render(this.oled.getCurrentPage()).catch((error: unknown) => {
+      void this.renderCurrentOledPage().catch((error: unknown) => {
         console.error("OLED backup completion render failed", error);
       });
     }, 10 * 1000);
@@ -927,7 +963,8 @@ function createPodcastService(onAudioReadinessChange?: () => void): PodcastServi
       manifestPath: process.env.STUDYBOX_RECORDINGS_MANIFEST ?? "/var/lib/studybox/recordings/manifest.json",
       arecordPath: process.env.STUDYBOX_ARECORD_PATH,
       captureWrapperPath: process.env.STUDYBOX_AUDIO_CAPTURE_WRAPPER,
-      retentionDays: process.env.STUDYBOX_RECORDING_RETENTION_DAYS ? Number(process.env.STUDYBOX_RECORDING_RETENTION_DAYS) : 35,
+      retentionDays: process.env.STUDYBOX_RECORDING_RETENTION_DAYS ? Number(process.env.STUDYBOX_RECORDING_RETENTION_DAYS) : 0,
+      s3Archive: new S3ZoomArchive(),
       device: captureDevice,
       captureDeviceResolver: () => captureDevice,
       captureSourcePattern: process.env.STUDYBOX_AUDIO_CAPTURE_SOURCE_PATTERN ?? "DJI",

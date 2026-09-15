@@ -4,7 +4,7 @@ export class MockSchedulerService implements SchedulerService {
   private schedule: MeetingSchedule = {
     dayOfWeek: "Saturday",
     time: "11:00",
-    timezone: "America/New_York",
+    timezone: "America/Chicago",
     autoStartMeeting: true,
     autoStartRecording: true
   };

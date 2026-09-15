@@ -111,19 +111,29 @@ export class RaspberryPiOledDisplay implements OledDisplay {
 
   private createFrame(page: OledPage): number[][] {
     const frame = Array.from({ length: 8 }, () => new Array(128).fill(0));
-    this.drawTextToFrame(frame, 0, 0, page.title);
+    const centeredTitle = page.id === "meeting" || page.id === "podcast" || page.id === "system";
+    const titleWidth = page.title.toUpperCase().slice(0, 18).length * 6;
+    this.drawTextToFrame(frame, centeredTitle ? Math.max(0, Math.floor((128 - titleWidth) / 2)) : 0, 0, page.title);
     page.lines.slice(0, 5).forEach((line, index) => {
-      this.drawTextToFrame(frame, 0, index + 2, line);
+      const centered = (page.id === "home" || page.id === "system") && index === 0;
+      const width = line.toUpperCase().slice(0, 18).length * 6;
+      const homeRows = [1, 3, 4, 5, 6];
+      const systemRows = [1, 3, 4, 5, 6];
+      const row = page.id === "home" ? homeRows[index] : page.id === "system" ? systemRows[index] : index + 2;
+      this.drawTextToFrame(frame, centered ? Math.max(0, Math.floor((128 - width) / 2) - 1) : 0, row, line);
     });
     if (page.actionLabel) {
       this.drawTextToFrame(frame, 0, 7, `PUSH ${page.actionLabel}`);
+    }
+    if (page.id === "system") {
+      this.drawLogo(frame, 108, 0);
     }
     return frame;
   }
 
   private drawTextToFrame(frame: number[][], x: number, page: number, text: string): void {
     let cursor = x;
-    for (const char of text.toUpperCase().slice(0, 21)) {
+    for (const char of text.toUpperCase().slice(0, 18)) {
       const glyph = font[char] ?? font[" "];
       for (const column of [...glyph, 0x00]) {
         if (cursor >= 128) {
@@ -133,6 +143,18 @@ export class RaspberryPiOledDisplay implements OledDisplay {
         cursor += 1;
       }
     }
+  }
+
+  private drawLogo(frame: number[][], x: number, y: number): void {
+    PI_LOGO_BITMAP.forEach((row, rowIndex) => {
+      [...row].forEach((pixel, columnIndex) => {
+        if (pixel !== "#") return;
+        const pixelY = y + rowIndex;
+        const page = Math.floor(pixelY / 8);
+        if (page >= frame.length || x + columnIndex >= 128) return;
+        frame[page][x + columnIndex] |= 1 << (pixelY % 8);
+      });
+    });
   }
 
   private renderFrame(frame: number[][]): void {
@@ -245,6 +267,29 @@ function sleep(ms: number): void {
 function frameSignature(frame: number[][]): string {
   return frame.map((row) => Buffer.from(row).toString("base64")).join(".");
 }
+
+const PI_LOGO_BITMAP = [
+  "..######.....#####..",
+  ".########..########.",
+  ".#########.###.####.",
+  "..#####.#..#.#####..",
+  "...#####....#####...",
+  ".........##.........",
+  "...###.######.###...",
+  "..###...#####..###..",
+  "..#..###....###..#..",
+  "....#####..#####....",
+  "##.#######.######.##",
+  "##.######..######.##",
+  "##..####....####..##",
+  ".#......#####....#..",
+  "..###..######..####.",
+  "..####.######.#####.",
+  "..####..####..####..",
+  "....##........###...",
+  ".......######.......",
+  "........####........"
+] as const;
 
 const pythonSsd1309Renderer = String.raw`
 import fcntl

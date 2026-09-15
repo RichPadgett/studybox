@@ -1,10 +1,13 @@
 import cors from "cors";
 import express from "express";
+import { execFile } from "node:child_process";
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
+import { promisify } from "node:util";
 import { createAdminSession, getAdminSession, requireAdmin } from "./adminAuth.js";
 import { StudyBoxAppliance } from "./appliance.js";
 import { LogStore } from "./logStore.js";
+import { LibraryShareStore } from "./libraryShares.js";
 import { SettingsStore } from "./settingsStore.js";
 import { getZoomConfig, getZoomRuntimeStatus } from "./zoomConfig.js";
 import { ZoomOAuthClient } from "./zoomOAuthClient.js";
@@ -14,9 +17,11 @@ import { ZoomZakService } from "./zoomZakService.js";
 import { createValidationResponse, toWebhookRecord, verifyZoomWebhookSignature, webhookRecordToLog, type ZoomWebhookBody } from "./zoomWebhook.js";
 
 const port = Number(process.env.PORT ?? 4000);
+const execFileAsync = promisify(execFile);
 const app = express();
 const appliance = new StudyBoxAppliance(new SettingsStore(), new LogStore());
 const zoomOAuthStore = new ZoomOAuthStore();
+const libraryShares = new LibraryShareStore(process.env.STUDYBOX_LIBRARY_SHARES_PATH ?? "/var/lib/studybox/library/shares.json");
 const webAdminContext = { source: "web" as const, actor: "admin" };
 let backupRetryInProgress = false;
 
@@ -409,6 +414,12 @@ app.get("/api/podcast/recordings/:recordingId/assets/:assetKind/download", requi
       return;
     }
 
+    const archiveUrl = await appliance.getRecordingAssetUrl(request.params.recordingId, assetKind, webAdminContext);
+    if (archiveUrl) {
+      response.redirect(302, archiveUrl);
+      return;
+    }
+
     const download = await appliance.getRecordingAssetDownload(request.params.recordingId, assetKind, webAdminContext);
     if (!download) {
       response.status(404).json({ error: "Recording asset not found" });
@@ -434,9 +445,215 @@ app.post("/api/backup/sync", requireAdmin, async (_request, response, next) => {
   }
 });
 
+app.get("/api/library", requireAdmin, (_request, response) => {
+  response.json(appliance.library.getState());
+});
+
+app.get("/api/library/search", requireAdmin, async (request, response, next) => {
+  try {
+    const query = String(request.query.q ?? "").trim();
+    if (!query) {
+      response.json([]);
+      return;
+    }
+    response.json(await appliance.library.search(query, Math.min(Number(request.query.limit ?? 30) || 30, 100)));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/library/public", (_request, response) => {
+  response.json({ documents: appliance.library.getState().documents });
+});
+
+app.get("/api/library/public/search", async (request, response, next) => {
+  try {
+    const query = String(request.query.q ?? "").trim();
+    response.json(query ? await appliance.library.search(query, 50) : []);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/library/public/:recordingId/assets/:assetKind/download", async (request, response, next) => {
+  try {
+    const assetKind = request.params.assetKind === "zoom" ? "zoom" : request.params.assetKind === "audio" ? "audio" : undefined;
+    if (!assetKind || !appliance.library.getDocument(request.params.recordingId)) {
+      response.status(404).json({ error: "Public recording asset not found" });
+      return;
+    }
+    const recordingFile = await appliance.getRecordingFile(request.params.recordingId, { source: "web" }, assetKind);
+    if (recordingFile) {
+      const fileStats = await stat(recordingFile.filePath);
+      response.setHeader("Content-Type", recordingFile.mimeType).setHeader("Content-Length", fileStats.size.toString()).setHeader("Content-Disposition", `attachment; filename="${recordingFile.fileName}"`);
+      createReadStream(recordingFile.filePath).pipe(response);
+      return;
+    }
+    const archiveUrl = await appliance.getRecordingAssetUrl(request.params.recordingId, assetKind, { source: "web" });
+    if (archiveUrl) {
+      response.redirect(302, archiveUrl);
+      return;
+    }
+    response.status(404).json({ error: "Public recording asset not found" });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/library/public/:recordingId", async (request, response, next) => {
+  try {
+    const document = appliance.library.getDocument(request.params.recordingId);
+    if (!document) {
+      response.status(404).json({ error: "Transcript not found" });
+      return;
+    }
+    response.json({ document, fullText: await appliance.library.readFullText(request.params.recordingId) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/library/public/:recordingId/audio/:chunkIndex", async (request, response, next) => {
+  try {
+    const chunkIndex = Number(request.params.chunkIndex);
+    if (!Number.isInteger(chunkIndex) || chunkIndex < 0) {
+      response.status(400).json({ error: "Invalid audio chunk" });
+      return;
+    }
+    const filePath = appliance.library.getAudioChunkPath(request.params.recordingId, chunkIndex);
+    if (!filePath) {
+      response.status(404).json({ error: "Audio chunk not found" });
+      return;
+    }
+    const fileStats = await stat(filePath);
+    response.setHeader("Content-Type", "audio/mp4");
+    response.setHeader("Content-Length", fileStats.size);
+    response.setHeader("Content-Disposition", `inline; filename="section-${chunkIndex + 1}.m4a"`);
+    createReadStream(filePath).pipe(response);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/library/:recordingId", requireAdmin, async (request, response, next) => {
+  try {
+    const document = appliance.library.getDocument(request.params.recordingId);
+    if (!document) {
+      response.status(404).json({ error: "Transcript not found" });
+      return;
+    }
+    response.json({ document, fullText: await appliance.library.readFullText(request.params.recordingId) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/library/:recordingId/audio/:chunkIndex", requireAdmin, async (request, response, next) => {
+  try {
+    const chunkIndex = Number(request.params.chunkIndex);
+    if (!Number.isInteger(chunkIndex) || chunkIndex < 0) {
+      response.status(400).json({ error: "Invalid audio chunk" });
+      return;
+    }
+    const filePath = appliance.library.getAudioChunkPath(request.params.recordingId, chunkIndex);
+    if (!filePath) {
+      response.status(404).json({ error: "Audio chunk not found" });
+      return;
+    }
+    const fileStats = await stat(filePath);
+    response.setHeader("Content-Type", "audio/mp4");
+    response.setHeader("Content-Length", fileStats.size);
+    createReadStream(filePath).pipe(response);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/library/:recordingId/share", requireAdmin, async (request, response, next) => {
+  try {
+    if (!appliance.library.getDocument(request.params.recordingId)) {
+      response.status(404).json({ error: "Transcript not found" });
+      return;
+    }
+    const share = await libraryShares.create(request.params.recordingId);
+    response.json({ token: share.token, url: `/share/${share.token}` });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/library/share/:token", async (request, response, next) => {
+  try {
+    const share = libraryShares.get(request.params.token);
+    const document = share ? appliance.library.getDocument(share.recordingId) : undefined;
+    if (!share || !document) {
+      response.status(404).json({ error: "Shared transcript not found" });
+      return;
+    }
+    response.json({ document, fullText: await appliance.library.readFullText(share.recordingId) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/library/share/:token/audio/:chunkIndex", async (request, response, next) => {
+  try {
+    const share = libraryShares.get(request.params.token);
+    if (!share || !appliance.library.getDocument(share.recordingId)) {
+      response.status(404).json({ error: "Shared transcript not found" });
+      return;
+    }
+    const chunkIndex = Number(request.params.chunkIndex);
+    if (!Number.isInteger(chunkIndex) || chunkIndex < 0) {
+      response.status(400).json({ error: "Invalid audio chunk" });
+      return;
+    }
+    const filePath = appliance.library.getAudioChunkPath(share.recordingId, chunkIndex);
+    if (!filePath) {
+      response.status(404).json({ error: "Audio chunk not found" });
+      return;
+    }
+    const fileStats = await stat(filePath);
+    response.setHeader("Content-Type", "audio/mp4");
+    response.setHeader("Content-Length", fileStats.size);
+    response.setHeader("Content-Disposition", `attachment; filename="section-${chunkIndex + 1}.m4a"`);
+    createReadStream(filePath).pipe(response);
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.put("/api/settings", requireAdmin, async (request, response, next) => {
   try {
     response.json(await appliance.updateSettings(request.body, webAdminContext));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/network/wifi", requireAdmin, async (_request, response, next) => {
+  try {
+    const { stdout } = await execFileAsync("sudo", ["-n", "/opt/studybox/scripts/studybox-wifi-scan.py"], { timeout: 12_000 });
+    response.json(JSON.parse(stdout));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/network/wifi", requireAdmin, async (request, response, next) => {
+  try {
+    const ssid = String(request.body?.ssid ?? "").trim();
+    const password = String(request.body?.password ?? "");
+    if (!ssid || (password.length > 0 && password.length < 8)) {
+      response.status(400).json({ error: "A network name and a valid password are required" });
+      return;
+    }
+    await execFileAsync("sudo", ["-n", "/opt/studybox/scripts/studybox-wifi-connect.py", ssid, password], { timeout: 20_000 });
+    const saved = await appliance.updateSettings({
+      ...appliance.getSettings(),
+      wifi: { ssid, configured: true }
+    }, webAdminContext);
+    response.json({ settings: saved, message: `Saved ${ssid} for automatic connection` });
   } catch (error) {
     next(error);
   }
@@ -447,6 +664,7 @@ app.use((error: unknown, _request: express.Request, response: express.Response, 
   response.status(500).json({ error: message });
 });
 
+await libraryShares.load();
 await appliance.initialize();
 startBackupRetryLoop();
 

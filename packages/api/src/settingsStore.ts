@@ -9,7 +9,7 @@ export const defaultSettings: StudyBoxSettings = {
   schedule: {
     dayOfWeek: "Saturday",
     time: "11:00",
-    timezone: "America/New_York",
+    timezone: "America/Chicago",
     autoStartMeeting: true,
     autoStartRecording: true
   },

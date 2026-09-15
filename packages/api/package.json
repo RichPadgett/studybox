@@ -19,6 +19,7 @@
     "@studybox/scheduler": "0.1.0",
     "@studybox/shared": "0.1.0",
     "@studybox/sync": "0.1.0",
+    "@studybox/transcripts": "0.1.0",
     "cors": "^2.8.5",
     "express": "^4.18.3"
   },

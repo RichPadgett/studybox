@@ -1,0 +1,14 @@
+[Unit]
+Description=StudyBox temporary Wi-Fi setup access point
+After=NetworkManager.service studybox-web.service
+Wants=NetworkManager.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/studybox/studybox.env
+ExecStart=/opt/studybox/scripts/studybox-wifi-fallback.sh
+ExecStop=/opt/studybox/scripts/studybox-wifi-fallback.sh stop
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

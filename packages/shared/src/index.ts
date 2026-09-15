@@ -63,6 +63,12 @@ export interface RecordingAsset {
   filePath?: string;
   sizeBytes?: number;
   availableUntil?: string;
+  archiveProvider?: "s3";
+  archiveBucket?: string;
+  archiveKey?: string;
+  archiveEndpoint?: string;
+  archiveSha256?: string;
+  archiveEtag?: string;
 }
 
 export interface RecordingDownload {
@@ -215,6 +221,13 @@ export interface WifiSettings {
   configured: boolean;
 }
 
+export interface WifiNetwork {
+  ssid: string;
+  signalPercent: number;
+  security: string;
+  inUse: boolean;
+}
+
 export interface StudyBoxSettings {
   schedule: MeetingSchedule;
   moderation: MeetingModerationSettings;
@@ -247,6 +260,7 @@ export interface StudyBoxSnapshot {
   zoom: ZoomRuntimeStatus;
   podcast: PodcastState;
   backup: BackupSyncState;
+  library: TranscriptLibraryState;
   hardware: HardwareState;
   oled: {
     currentPageId: OledPageId;
@@ -256,6 +270,109 @@ export interface StudyBoxSnapshot {
   presence: DashboardPresence;
   settings: StudyBoxSettings;
   logs: LogEntry[];
+}
+
+export type TranscriptJobStatus = "queued" | "chunking" | "transcribing" | "analyzing" | "completed" | "failed";
+
+export interface TranscriptMarker {
+  timestampSeconds: number;
+  label: string;
+  scripture?: string;
+  kind?: "major" | "minor";
+}
+
+export type TranscriptEntityType = "person" | "place" | "event" | "topic" | "scripture" | "organization" | "term";
+
+export interface TranscriptEntity {
+  id: string;
+  canonicalName: string;
+  type: TranscriptEntityType;
+  aliases: string[];
+}
+
+export interface TranscriptEntityOccurrence {
+  entityId: string;
+  recordingId: string;
+  chunkId: string;
+  timestampSeconds: number;
+  quote: string;
+  confidence: number;
+  source: "transcript" | "ai" | "human";
+}
+
+export interface TranscriptEntityRelationship {
+  fromEntityId: string;
+  toEntityId: string;
+  relationship: "mentions" | "explains" | "contrastsWith" | "connectedTo" | "quotes" | "interprets" | "contextFor";
+  recordingId: string;
+  chunkId: string;
+  evidence: string;
+  confidence: number;
+  source: "ai" | "human";
+}
+
+export interface TranscriptChunk {
+  id: string;
+  fileUuid: string;
+  index: number;
+  startSeconds: number;
+  endSeconds?: number;
+  audioFileName: string;
+  text?: string;
+  status: "pending" | "transcribed" | "failed";
+  error?: string;
+}
+
+export interface TranscriptDocument {
+  recordingId: string;
+  recordingUuid: string;
+  sourceFileUuid: string;
+  sourceFileSha256: string;
+  sourceFileName?: string;
+  title?: string;
+  description?: string;
+  markers: TranscriptMarker[];
+  fullTextPath: string;
+  chunks: TranscriptChunk[];
+  entities?: TranscriptEntity[];
+  occurrences?: TranscriptEntityOccurrence[];
+  relationships?: TranscriptEntityRelationship[];
+  status: TranscriptJobStatus;
+  recordedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+  error?: string;
+}
+
+export interface TranscriptJob {
+  id: string;
+  recordingId: string;
+  recordingTitle: string;
+  status: TranscriptJobStatus;
+  progressPercent: number;
+  currentChunk?: number;
+  chunkCount?: number;
+  createdAt: string;
+  updatedAt: string;
+  error?: string;
+}
+
+export interface TranscriptLibraryState {
+  enabled: boolean;
+  rootDir: string;
+  jobs: TranscriptJob[];
+  documents: TranscriptDocument[];
+  lastEvent?: string;
+}
+
+export interface TranscriptSearchResult {
+  recordingId: string;
+  recordingTitle: string;
+  startedAt?: string;
+  timestampSeconds: number;
+  timestampLabel: string;
+  snippet: string;
+  scripture?: string;
 }
 
 export interface DashboardPresence {
@@ -386,6 +503,7 @@ export interface PodcastService {
   listRecordings(): Promise<Recording[]>;
   getRecordingDownload(recordingId: string): Promise<RecordingDownload | undefined>;
   getRecordingAssetDownload(recordingId: string, assetKind: RecordingAssetKind): Promise<RecordingDownload | undefined>;
+  getRecordingAssetUrl(recordingId: string, assetKind: RecordingAssetKind): Promise<string | undefined>;
   setZoomRecordingAsset(recordingId: string, filePath: string): Promise<PodcastState>;
 }
 

@@ -1,4 +1,4 @@
-import type { AdminSession, Participant, RecordingAssetKind, StudyBoxSettings, StudyBoxSnapshot, ZoomDeviceAuthorization, ZoomOAuthStatus } from "@studybox/shared";
+import type { AdminSession, Participant, RecordingAssetKind, StudyBoxSettings, StudyBoxSnapshot, TranscriptDocument, TranscriptSearchResult, WifiNetwork, ZoomDeviceAuthorization, ZoomOAuthStatus } from "@studybox/shared";
 
 let adminToken: string | undefined;
 
@@ -35,6 +35,60 @@ export async function validateAdminSession(): Promise<AdminSession> {
 
 export async function getSnapshot(): Promise<StudyBoxSnapshot> {
   return request<StudyBoxSnapshot>("/api/snapshot");
+}
+
+export async function searchTranscriptLibrary(query: string): Promise<TranscriptSearchResult[]> {
+  return request<TranscriptSearchResult[]>(`/api/library/search?q=${encodeURIComponent(query)}`);
+}
+
+export async function getTranscript(recordingId: string): Promise<{ document: TranscriptDocument; fullText?: string }> {
+  return request<{ document: TranscriptDocument; fullText?: string }>(`/api/library/${encodeURIComponent(recordingId)}`);
+}
+
+export async function createLibraryShare(recordingId: string): Promise<{ token: string; url: string }> {
+  return request<{ token: string; url: string }>(`/api/library/${encodeURIComponent(recordingId)}/share`, { method: "POST" });
+}
+
+export async function getPublicLibraryShare(token: string): Promise<{ document: TranscriptDocument; fullText?: string }> {
+  return request<{ document: TranscriptDocument; fullText?: string }>(`/api/library/share/${encodeURIComponent(token)}`);
+}
+
+export async function searchPublicLibrary(query: string): Promise<TranscriptSearchResult[]> {
+  return request<TranscriptSearchResult[]>(`/api/library/public/search?q=${encodeURIComponent(query)}`);
+}
+
+export async function getPublicLibraryDocument(recordingId: string): Promise<{ document: TranscriptDocument; fullText?: string }> {
+  return request<{ document: TranscriptDocument; fullText?: string }>(`/api/library/public/${encodeURIComponent(recordingId)}`);
+}
+
+export async function getPublicLibraryAudio(recordingId: string, chunkIndex: number): Promise<string> {
+  const response = await fetch(`/api/library/public/${encodeURIComponent(recordingId)}/audio/${chunkIndex}`);
+  if (!response.ok) throw await createApiError(response);
+  return URL.createObjectURL(await response.blob());
+}
+
+export async function getPublicLibraryShareAudio(token: string, chunkIndex: number): Promise<string> {
+  const response = await fetch(`/api/library/share/${encodeURIComponent(token)}/audio/${chunkIndex}`);
+  if (!response.ok) throw await createApiError(response);
+  return URL.createObjectURL(await response.blob());
+}
+
+export async function getTranscriptAudio(recordingId: string, chunkIndex: number): Promise<string> {
+  const response = await fetch(`/api/library/${encodeURIComponent(recordingId)}/audio/${chunkIndex}`, { headers: authorizedHeaders() });
+  if (!response.ok) throw await createApiError(response);
+  return URL.createObjectURL(await response.blob());
+}
+
+export async function scanWifiNetworks(): Promise<WifiNetwork[]> {
+  return request<WifiNetwork[]>("/api/network/wifi");
+}
+
+export async function connectWifi(ssid: string, password: string): Promise<void> {
+  await request<{ settings: StudyBoxSettings; message: string }>("/api/network/wifi", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ssid, password })
+  });
 }
 
 export async function postAction(path: string, body?: unknown): Promise<StudyBoxSnapshot> {

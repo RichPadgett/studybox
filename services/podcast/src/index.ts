@@ -3,6 +3,8 @@ import { mkdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import type { PodcastService, PodcastState, Recording, RecordingAssetKind, RecordingDownload } from "@studybox/shared";
+import { S3ZoomArchive } from "./s3Archive.js";
+export { S3ZoomArchive } from "./s3Archive.js";
 
 export class MockPodcastService implements PodcastService {
   private state: PodcastState = {
@@ -141,6 +143,10 @@ export class MockPodcastService implements PodcastService {
     };
   }
 
+  async getRecordingAssetUrl(_recordingId: string, _assetKind: RecordingAssetKind): Promise<string | undefined> {
+    return undefined;
+  }
+
   async setZoomRecordingAsset(_recordingId: string, _filePath: string): Promise<PodcastState> {
     return this.getState();
   }
@@ -167,6 +173,7 @@ export interface LocalPodcastServiceOptions {
   channels?: number;
   captureDeviceResolver?: () => string;
   onAudioReadinessChange?: () => void;
+  s3Archive?: S3ZoomArchive;
 }
 
 interface RecordingManifestEntry extends Recording {
@@ -203,7 +210,11 @@ export class LocalPodcastService implements PodcastService {
     await mkdir(dirname(this.options.manifestPath), { recursive: true });
     try {
       const parsed = JSON.parse(await readFile(this.options.manifestPath, "utf8")) as { recordings?: RecordingManifestEntry[] };
-      this.recordings = Array.isArray(parsed.recordings) ? parsed.recordings : [];
+      this.recordings = Array.isArray(parsed.recordings) ? parsed.recordings.map((recording) => ({
+        ...recording,
+        expiresAt: undefined,
+        assets: recording.assets?.map((asset) => ({ ...asset, availableUntil: undefined }))
+      })) : [];
       this.state = {
         ...this.state,
         recordings: this.recordings,
@@ -626,6 +637,14 @@ export class LocalPodcastService implements PodcastService {
       return;
     }
 
+    // A PulseAudio client can stay alive while receiving no PCM during device
+    // startup. Do not advertise a recording until the WAV contains audio.
+    await sleep(1000);
+    if (await fileSize(filePath) <= 44) {
+      await stopProcess(recorderProcess);
+      return;
+    }
+
     const wasAudioReady = this.state.audioReady === true;
     this.audioFailureCount = 0;
     this.state = {
@@ -679,6 +698,10 @@ export class LocalPodcastService implements PodcastService {
       return this.getState();
     }
     const info = await stat(filePath);
+    const archive = this.options.s3Archive ? await this.options.s3Archive.upload(recording, filePath).catch((error: unknown) => {
+      console.error(`S3 Zoom archive upload failed: ${error instanceof Error ? error.message : String(error)}`);
+      return undefined;
+    }) : undefined;
     const zoomAsset = {
       kind: "zoom" as const,
       label: "Zoom recording",
@@ -687,7 +710,8 @@ export class LocalPodcastService implements PodcastService {
       mimeType: "video/mp4",
       filePath,
       sizeBytes: info.size,
-      availableUntil: recording.expiresAt
+      availableUntil: undefined,
+      ...archive
     };
     recording.assets = createRecordingAssets({
       startedAt: recording.startedAt,
@@ -700,6 +724,13 @@ export class LocalPodcastService implements PodcastService {
     });
     await this.saveManifest();
     return this.getState();
+  }
+
+  async getRecordingAssetUrl(recordingId: string, assetKind: RecordingAssetKind): Promise<string | undefined> {
+    const recording = this.recordings.find((candidate) => candidate.id === recordingId);
+    const asset = recording?.assets?.find((candidate) => candidate.kind === assetKind);
+    if (!asset?.archiveBucket || !asset.archiveKey || !this.options.s3Archive) return undefined;
+    return this.options.s3Archive.signedUrl(asset.archiveBucket, asset.archiveKey);
   }
 
   private currentElapsedSeconds(): number {
@@ -740,8 +771,8 @@ function formatRecordingFileName(startedAt: string): string {
   return `bible-study-${year}-${month}-${day}-${hour}-${minute}.wav`;
 }
 
-function retentionDate(startedAt: string, retentionDays: number): string {
-  return new Date(new Date(startedAt).getTime() + retentionDays * 24 * 60 * 60 * 1000).toISOString();
+function retentionDate(startedAt: string, retentionDays: number): string | undefined {
+  return retentionDays > 0 ? new Date(new Date(startedAt).getTime() + retentionDays * 24 * 60 * 60 * 1000).toISOString() : undefined;
 }
 
 function createRecordingAssets(input: {
