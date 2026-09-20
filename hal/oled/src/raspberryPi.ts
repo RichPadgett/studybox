@@ -63,9 +63,15 @@ export class RaspberryPiOledDisplay implements OledDisplay {
   async render(page: OledPage): Promise<void> {
     const frame = this.createFrame(page);
     const signature = frameSignature(frame);
-    if (signature !== this.lastRenderedFrameSignature) {
-      this.renderFrame(frame);
-      this.lastRenderedFrameSignature = signature;
+    if (signature !== this.lastRenderedFrameSignature && !this.closed) {
+      try {
+        this.renderFrame(frame);
+        this.initialized = true;
+        this.lastRenderedFrameSignature = signature;
+      } catch (error) {
+        console.error(`StudyBox OLED disabled after render failure: ${error instanceof Error ? error.message : String(error)}`);
+        this.close();
+      }
     }
     this.lastRenderedPage = page;
   }
@@ -111,7 +117,13 @@ export class RaspberryPiOledDisplay implements OledDisplay {
 
   private createFrame(page: OledPage): number[][] {
     const frame = Array.from({ length: 8 }, () => new Array(128).fill(0));
-    const centeredTitle = page.id === "meeting" || page.id === "podcast" || page.id === "system";
+    if (page.id === "screensaver") {
+      const positions = [2, 34, 66];
+      const positionIndex = Number(page.lines[0] ?? 0);
+      this.drawLogo(frame, positions[positionIndex % positions.length] ?? positions[1], 2, 3);
+      return frame;
+    }
+    const centeredTitle = page.id === "meeting" || page.id === "system";
     const titleWidth = page.title.toUpperCase().slice(0, 18).length * 6;
     this.drawTextToFrame(frame, centeredTitle ? Math.max(0, Math.floor((128 - titleWidth) / 2)) : 0, 0, page.title);
     page.lines.slice(0, 5).forEach((line, index) => {
@@ -122,11 +134,8 @@ export class RaspberryPiOledDisplay implements OledDisplay {
       const row = page.id === "home" ? homeRows[index] : page.id === "system" ? systemRows[index] : index + 2;
       this.drawTextToFrame(frame, centered ? Math.max(0, Math.floor((128 - width) / 2) - 1) : 0, row, line);
     });
-    if (page.actionLabel) {
-      this.drawTextToFrame(frame, 0, 7, `PUSH ${page.actionLabel}`);
-    }
     if (page.id === "system") {
-      this.drawLogo(frame, 108, 0);
+      this.drawLogo(frame, 54, 40);
     }
     return frame;
   }
@@ -145,37 +154,51 @@ export class RaspberryPiOledDisplay implements OledDisplay {
     }
   }
 
-  private drawLogo(frame: number[][], x: number, y: number): void {
+  private drawLogo(frame: number[][], x: number, y: number, scale = 1): void {
     PI_LOGO_BITMAP.forEach((row, rowIndex) => {
       [...row].forEach((pixel, columnIndex) => {
         if (pixel !== "#") return;
-        const pixelY = y + rowIndex;
-        const page = Math.floor(pixelY / 8);
-        if (page >= frame.length || x + columnIndex >= 128) return;
-        frame[page][x + columnIndex] |= 1 << (pixelY % 8);
+        for (let offsetY = 0; offsetY < scale; offsetY += 1) {
+          for (let offsetX = 0; offsetX < scale; offsetX += 1) {
+            const pixelX = x + columnIndex * scale + offsetX;
+            const pixelY = y + rowIndex * scale + offsetY;
+            const page = Math.floor(pixelY / 8);
+            if (page >= frame.length || pixelX >= 128) continue;
+            frame[page][pixelX] |= 1 << (pixelY % 8);
+          }
+        }
       });
     });
   }
 
   private renderFrame(frame: number[][]): void {
-    const result = spawnSync("python3", ["-c", pythonSsd1309Renderer], {
-      input: JSON.stringify({
-        spiDevice: this.spiDevice,
-        gpioChip: this.gpioChip,
-        dcGpio: this.dcGpio,
-        rstGpio: this.rstGpio,
-        frame
-      }),
-      encoding: "utf8",
-      maxBuffer: 1024 * 1024
-    });
+    this.release(this.rstHolder);
+    this.rstHolder = undefined;
 
-    if (result.error) {
-      throw result.error;
-    }
+    try {
+      const result = spawnSync("python3", ["-c", pythonSsd1309Renderer], {
+        input: JSON.stringify({
+          spiDevice: this.spiDevice,
+          gpioChip: this.gpioChip,
+          dcGpio: this.dcGpio,
+          rstGpio: this.rstGpio,
+          initialize: !this.initialized,
+          frame
+        }),
+        encoding: "utf8",
+        maxBuffer: 1024 * 1024
+      });
 
-    if (result.status !== 0) {
-      throw new Error(result.stderr.trim() || `OLED renderer exited with status ${result.status ?? "unknown"}`);
+      if (result.error) {
+        throw result.error;
+      }
+
+      if (result.status !== 0) {
+        throw new Error(result.stderr.trim() || `OLED renderer exited with status ${result.status ?? "unknown"}`);
+      }
+    } finally {
+      // Keep reset actively high between frames, especially across long ribbon cables.
+      this.setRst(1);
     }
   }
 
@@ -310,6 +333,7 @@ gpio_chip = payload["gpioChip"]
 dc_gpio = str(payload["dcGpio"])
 rst_gpio = str(payload["rstGpio"])
 frame = payload["frame"]
+initialize = bool(payload.get("initialize", True))
 holders = []
 
 def hold(gpio, value):
@@ -368,18 +392,19 @@ try:
         os.write(fd, bytes(values))
         time.sleep(0.005)
 
-    set_rst(1)
-    time.sleep(0.05)
-    set_rst(0)
-    time.sleep(0.15)
-    set_rst(1)
-    time.sleep(0.15)
+    if initialize:
+        set_rst(1)
+        time.sleep(0.05)
+        set_rst(0)
+        time.sleep(0.15)
+        set_rst(1)
+        time.sleep(0.15)
 
-    command(
-        0xAE, 0xD5, 0x80, 0xA8, 0x3F, 0xD3, 0x00, 0x40,
-        0x8D, 0x14, 0x20, 0x02, 0xA1, 0xC8, 0xDA, 0x12,
-        0x81, 0xCF, 0xD9, 0xF1, 0xDB, 0x40, 0xA4, 0xA6, 0xAF
-    )
+        command(
+            0xAE, 0xD5, 0x80, 0xA8, 0x3F, 0xD3, 0x00, 0x40,
+            0x8D, 0x14, 0x20, 0x02, 0xA1, 0xC8, 0xDA, 0x12,
+            0x81, 0xCF, 0xD9, 0xF1, 0xDB, 0x40, 0xA4, 0xA6, 0xAF
+        )
 
     for page_index, row in enumerate(frame[:8]):
         command(0xB0 + page_index, 0x00, 0x10)

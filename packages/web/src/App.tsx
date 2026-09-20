@@ -12,7 +12,6 @@ import {
   ExternalLink,
   Eye,
   Gauge,
-  Hand,
   KeyRound,
   Library,
   Mic,
@@ -29,7 +28,7 @@ import {
   Users
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { ApiError, connectWifi, createLibraryShare, downloadRecordingAsset, getPublicLibraryAudio, getPublicLibraryDocument, getPublicLibraryShare, getPublicLibraryShareAudio, getSnapshot, getTranscript, getTranscriptAudio, loginAdmin, pollZoomDeviceToken, postAction, refreshZoomToken, requestMeetingJoin, saveSettings, scanWifiNetworks, searchPublicLibrary, searchTranscriptLibrary, setAdminToken, setDashboardViewerId, startZoomDeviceAuthorization, validateAdminSession } from "./api.js";
+import { ApiError, connectWifi, createLibraryShare, downloadRecordingAsset, getPublicLibraryAudio, getPublicLibraryDocument, getPublicLibraryShare, getPublicLibraryShareAudio, getSnapshot, getTranscript, getTranscriptAudio, loginAdmin, pollZoomDeviceToken, postAction, refreshZoomToken, requestMeetingJoin, saveLibraryTitle, saveSettings, scanWifiNetworks, searchPublicLibrary, searchTranscriptLibrary, setAdminToken, setDashboardViewerId, startZoomDeviceAuthorization, validateAdminSession } from "./api.js";
 
 const primaryNavItems = [
   { id: "dashboard", label: "Dashboard", icon: Gauge },
@@ -135,7 +134,7 @@ export function App() {
   useEffect(() => {
     if (shareToken) return;
     void refresh();
-    const timer = window.setInterval(() => void refresh(), 3000);
+    const timer = window.setInterval(() => void refresh(), 1000);
     return () => window.clearInterval(timer);
   }, [shareToken]);
 
@@ -251,7 +250,10 @@ export function App() {
 function PublicJoinPage({ snapshot, error }: { snapshot: StudyBoxSnapshot; error?: string }) {
   const joinUrl = getZoomJoinUrl(snapshot);
   const zoomHostConnected = isZoomHostConnected(snapshot);
-  const recordingLive = snapshot.podcast.status === "recording" || snapshot.podcast.status === "paused" || snapshot.podcast.status === "waitingForAudio";
+  const recordingLive = snapshot.podcast.status === "recording" || snapshot.podcast.status === "paused";
+  const recordingStatus = snapshot.podcast.status === "waitingForAudio"
+    ? "Waiting for audio"
+    : recordingLive ? "Recording active" : "Podcast idle";
   const [displayName, setDisplayName] = useState("");
   const [participant, setParticipant] = useState<Participant | undefined>(() => readStoredPublicParticipant());
   const [joining, setJoining]         = useState(false);
@@ -287,7 +289,7 @@ function PublicJoinPage({ snapshot, error }: { snapshot: StudyBoxSnapshot; error
         <div className="publicHero">
           <img className="heroArtwork" src="/assets/church-of-the-word.png" alt="Church of the Word" />
           <div className="heroEyebrow">Church of the Word</div>
-          <h1>Weekly Bible Study</h1>
+          <h1>Weekly &amp; Appointed Assembly's</h1>
 
           <div className={`heroRoomReady${roomReady ? "" : " offline"}`}>
             <span className={`heroRoomDot${roomReady ? "" : " offline"}`} />
@@ -333,7 +335,7 @@ function PublicJoinPage({ snapshot, error }: { snapshot: StudyBoxSnapshot; error
           <span className="sep" />
           <span>{snapshot.meeting.participants.length} online</span>
           <span className="sep" />
-          <span>{recordingLive ? "Recording active" : "Podcast idle"}</span>
+          <span>{recordingStatus}</span>
           <span className="sep" />
           <span style={{ color: "rgba(23,24,15,0.35)" }}>{snapshot.settings.schedule.timezone}</span>
         </div>
@@ -370,6 +372,7 @@ function Dashboard({ snapshot, run, pendingAction }: { snapshot: StudyBoxSnapsho
         <Metric label="Podcast"      value={snapshot.podcast.status}                        detail={formatDuration(snapshot.podcast.elapsedSeconds)} gray={snapshot.podcast.status === "idle"} />
         <Metric label="Next Meeting" value={snapshot.settings.schedule.dayOfWeek}          detail={snapshot.settings.schedule.time} accent />
       </div>
+      <MobileControlBar snapshot={snapshot} run={run} pendingAction={pendingAction} />
       <div className="toolbar">
         <button className="command" onClick={() => run(meetingPath)} disabled={Boolean(pendingAction)}>
           👥 {pendingAction === meetingPath ? "Processing…" : meetingPrimaryAction(snapshot)}
@@ -378,6 +381,60 @@ function Dashboard({ snapshot, run, pendingAction }: { snapshot: StudyBoxSnapsho
       </div>
       <Meeting snapshot={snapshot} run={run} compact pendingAction={pendingAction} />
     </div>
+  );
+}
+
+function MobileControlBar({ snapshot, run, pendingAction }: { snapshot: StudyBoxSnapshot; run: (path: string, body?: unknown) => Promise<void>; pendingAction?: string }) {
+  const meetingLive = snapshot.meeting.status === "live";
+  const recordingActive = isRecordingActive(snapshot);
+  const paused = snapshot.podcast.status === "paused";
+  const waitingForAudio = snapshot.podcast.status === "waitingForAudio";
+  const meetingPath = meetingLive ? "/api/meeting/end" : "/api/meeting/start";
+  const recordingPath = !recordingActive
+    ? "/api/podcast/start"
+    : paused
+    ? "/api/podcast/resume"
+    : "/api/podcast/pause";
+  const meetingLabel = meetingLive ? "End Zoom" : "Start Zoom";
+  const recordingLabel = !recordingActive ? "Start Recording" : paused ? "Resume Recording" : "Pause Recording";
+
+  function confirmAndRun(path: string, message: string) {
+    if (window.confirm(message)) void run(path);
+  }
+
+  return (
+    <section className="mobileControlBar" aria-label="Mobile controls">
+      <div className="mobileControlHeader">
+        <div>
+          <span className="mobileControlEyebrow">Operator controls</span>
+          <strong>StudyBox now</strong>
+        </div>
+        <span className={`mobileControlStatus${meetingLive ? " live" : ""}`}><span />{meetingLive ? "Live" : "Ready"}</span>
+      </div>
+      <div className="mobileControlGrid">
+        <button
+          className={`mobileControlButton zoom${meetingLive ? " active" : ""}`}
+          onClick={() => meetingLive ? confirmAndRun(meetingPath, "End the Zoom meeting?") : void run(meetingPath)}
+          disabled={Boolean(pendingAction)}
+        >
+          <span className="mobileControlIcon"><Users size={22} /></span>
+          <span><b>{pendingAction === meetingPath ? "Working…" : meetingLabel}</b><small>{meetingLive ? `${snapshot.meeting.participants.length} participants` : "Open the meeting room"}</small></span>
+        </button>
+        <button
+          className={`mobileControlButton recording${recordingActive ? " active" : ""}`}
+          onClick={() => void run(recordingPath)}
+          disabled={Boolean(pendingAction) || waitingForAudio}
+        >
+          <span className="mobileControlIcon">{paused ? <Play size={22} /> : recordingActive ? <Pause size={22} /> : <Disc3 size={22} />}</span>
+          <span><b>{pendingAction === recordingPath ? "Working…" : waitingForAudio ? "Waiting for audio" : recordingLabel}</b><small>{recordingActive ? formatDuration(snapshot.podcast.elapsedSeconds) : "Capture the study audio"}</small></span>
+        </button>
+      </div>
+      {recordingActive && (
+        <button className="mobileFinishButton" onClick={() => confirmAndRun("/api/podcast/stop", "Finish and save this recording?")} disabled={Boolean(pendingAction)}>
+          <Square size={16} /> {pendingAction === "/api/podcast/stop" ? "Saving recording…" : "Finish recording"}
+        </button>
+      )}
+    </section>
   );
 }
 
@@ -390,10 +447,12 @@ function Meeting({ snapshot, run, compact = false, pendingAction }: { snapshot: 
   return (
     <div className="stack">
       <div className="metricGrid compactMetrics">
-        <Metric label="Moderation"     value={snapshot.meeting.moderationMode} detail="default meeting mode" />
-        <Metric label="Remote Speaker" value={activeSpeaker?.displayName ?? "None"} detail={moderationConnected ? (activeSpeaker ? (activeSpeaker.includedInPodcast ? "included in podcast" : "room audio only") : "raised hand required") : "Zoom sync pending"} />
+        <Metric label="Entry"            value="Automatic" detail="No waiting room" green />
+        <Metric label="Participant Audio" value="Muted" detail="Muted on entry" />
+        <Metric label="Screen Sharing"   value="Automatic" detail="Participants may share" green />
+        <Metric label="Remote Speaker"   value={activeSpeaker?.displayName ?? "None"} detail={moderationConnected ? (activeSpeaker ? (activeSpeaker.includedInPodcast ? "included in podcast" : "room audio only") : "participant audio remains muted") : "Zoom sync pending"} />
       </div>
-      {!moderationConnected && <p className="inlineNotice">Live Zoom waiting room, participant, and raised-hand sync is not connected yet. Use the Zoom client controls for admission during this test.</p>}
+      {!moderationConnected && <p className="inlineNotice">Zoom participant sync is not connected yet. The native runner still applies automatic entry, mute, and screen-sharing policies when the meeting starts.</p>}
       {activeSpeaker && (
         <div className="toolbar">
           <button className="command" onClick={() => run(`/api/meeting/participants/${activeSpeaker.id}/podcast-inclusion`, { included: !activeSpeaker.includedInPodcast })}>
@@ -409,11 +468,6 @@ function Meeting({ snapshot, run, compact = false, pendingAction }: { snapshot: 
           <button className="command" onClick={() => run(meetingPath)} disabled={Boolean(pendingAction)}>
             👥 {pendingAction === meetingPath ? "Processing…" : meetingPrimaryAction(snapshot)}
           </button>
-          {snapshot.meeting.status === "live" && (
-            <button className="command outline" onClick={() => run("/api/meeting/screen-share/allow")}>
-              <MonitorDot size={16} /> Allow Screen Share
-            </button>
-          )}
         </div>
       )}
       <div className="twoColumn">
@@ -424,8 +478,8 @@ function Meeting({ snapshot, run, compact = false, pendingAction }: { snapshot: 
                 <span>{p.displayName}</span>
                 {p.status === "raised-hand" ? (
                   <span className="inlineActions">
-                    <button className="inlineButton" onClick={() => run(`/api/meeting/raised-hands/${p.id}/allow`)}><Mic size={13} /> Allow</button>
-                    <button className="inlineButton secondary" onClick={() => run(`/api/meeting/raised-hands/${p.id}/dismiss`)}><Hand size={13} /> Clear</button>
+                    <small style={{ color: "rgba(23,24,15,0.5)", fontSize: 12 }}>raised hand · remains muted</small>
+                    <button className="inlineButton secondary" onClick={() => run(`/api/meeting/raised-hands/${p.id}/dismiss`)}>Clear</button>
                   </span>
                 ) : (
                   <span className="inlineActions">
@@ -441,20 +495,6 @@ function Meeting({ snapshot, run, compact = false, pendingAction }: { snapshot: 
           <EmptyList empty="No web join requests">
             {snapshot.meeting.lobbyRequests.map((p) => (
               <ListRow key={p.id}><span>{p.displayName}</span><small style={{ color: "rgba(23,24,15,0.5)", fontSize: 12 }}>sent to Zoom join link</small></ListRow>
-            ))}
-          </EmptyList>
-        </Panel>
-        <Panel title="Zoom Waiting Room" sm>
-          <EmptyList empty={moderationConnected ? "No one waiting" : "Waiting room sync not connected"}>
-            {snapshot.meeting.waitingRoom.map((p) => (
-              <ListRow key={p.id}><span>{p.displayName}</span><button className="inlineButton" onClick={() => run(`/api/meeting/waiting/${p.id}/admit`)}>Admit</button></ListRow>
-            ))}
-          </EmptyList>
-        </Panel>
-        <Panel title="Raised Hands" sm>
-          <EmptyList empty={moderationConnected ? "No raised hands" : "Raised-hand sync not connected"}>
-            {snapshot.meeting.raisedHands.map((p) => (
-              <ListRow key={p.id}><span>{p.displayName}</span><button className="inlineButton" onClick={() => run(`/api/meeting/raised-hands/${p.id}/allow`)}>Allow to Speak</button></ListRow>
             ))}
           </EmptyList>
         </Panel>
@@ -870,6 +910,8 @@ function TranscriptReader({ entry, onBack, adminUnlocked, setError, lockAdmin }:
   const [audioLoading, setAudioLoading] = useState(false);
   const [shareUrl, setShareUrl] = useState<string>();
   const [sharing, setSharing] = useState(false);
+  const [title, setTitle] = useState(document.title ?? recording?.title ?? "");
+  const [savingTitle, setSavingTitle] = useState(false);
   const transcriptSections = parseTranscript(fullText ?? "");
 
   useEffect(() => () => { if (audioUrl) URL.revokeObjectURL(audioUrl); }, [audioUrl]);
@@ -909,6 +951,21 @@ function TranscriptReader({ entry, onBack, adminUnlocked, setError, lockAdmin }:
     catch (caught) { if (isAdminAuthError(caught)) lockAdmin(); setError(caught instanceof Error ? caught.message : "Recording download failed"); }
   }
 
+  async function saveTitle() {
+    if (!adminUnlocked) { setError("Enter the admin PIN before editing the title."); return; }
+    setSavingTitle(true);
+    try {
+      await saveLibraryTitle(document.recordingId, title);
+      document.title = title.trim().replace(/\s+/g, " ");
+      if (recording) recording.title = document.title;
+      setTitle(document.title);
+      setError(undefined);
+    } catch (caught) {
+      if (isAdminAuthError(caught)) lockAdmin();
+      setError(caught instanceof Error ? caught.message : "Title could not be saved");
+    } finally { setSavingTitle(false); }
+  }
+
   return (
     <article className="transcriptReader">
       <div className="readerToolbar">
@@ -919,7 +976,10 @@ function TranscriptReader({ entry, onBack, adminUnlocked, setError, lockAdmin }:
       {shareUrl && <div className="shareNotice">Share link copied: <a href={shareUrl}>{shareUrl}</a></div>}
       <header className="readerHeader">
         <div className="readerKicker">StudyBox transcript</div>
-        <h2>{transcriptTitle(document)}</h2>
+        <div className="readerTitleEditor">
+          <input aria-label="Teaching title" maxLength={180} value={title} onChange={(event) => setTitle(event.target.value)} />
+          <button className="readerDownload" onClick={() => void saveTitle()} disabled={savingTitle || !title.trim()}><Save size={15} /> {savingTitle ? "Saving..." : "Save title"}</button>
+        </div>
         <div className="readerSubheading">Bible study recording</div>
         <p>{document.description ?? "No description available."}</p>
         <div className="readerMeta"><span>{document.chunks.length} timed sections</span><span>{document.recordedAt ? `Recorded ${formatReaderDate(document.recordedAt)}` : `Updated ${formatReaderDate(document.updatedAt)}`}</span></div>
@@ -1048,16 +1108,11 @@ function SettingsView({ snapshot, saving, save, adminUnlocked, lockAdmin }: { sn
           <label>Timezone<input value={draft.schedule.timezone} onChange={(e) => update({ ...draft, schedule: { ...draft.schedule, timezone: e.target.value } })} /></label>
         </div>
       </Panel>
-      <Panel title="Moderation">
+      <Panel title="Meeting behavior">
         <div className="formGrid">
-          <label>Mode<div className="fieldDisplay">{draft.moderation.mode}</div></label>
-          <label>Remote Speaker Podcast
-            <select value={draft.moderation.includeApprovedRemoteSpeakersInPodcast ? "include" : "exclude"} onChange={(e) => update({ ...draft, moderation: { ...draft.moderation, includeApprovedRemoteSpeakersInPodcast: e.target.value === "include" } })}>
-              <option value="exclude">Exclude by default</option>
-              <option value="include">Include approved speakers</option>
-            </select>
-          </label>
-          <label>Approval<div className="fieldDisplay">{draft.moderation.assistantApprovesSpeakers ? "Assistant approves" : "Open speaking"}</div></label>
+          <label>Entry<div className="fieldDisplay">Automatic, no waiting room</div></label>
+          <label>Participant Audio<div className="fieldDisplay">Muted on entry</div></label>
+          <label>Screen Sharing<div className="fieldDisplay">Enabled automatically</div></label>
         </div>
       </Panel>
       <Panel title="Zoom">
@@ -1285,7 +1340,6 @@ function OledPanel({ snapshot, run, pendingAction }: { snapshot: StudyBoxSnapsho
           <div className="oledScanlines" />
           <div className="oledRow">
             <span className="oledTitle">{currentPage.title}</span>
-            {currentPage.id === "system" && <img className="oledPiLogo" src="/raspberrylogo.png" alt="" />}
           </div>
           {currentPage.lines.map((line, i) => (
             i === 0 && currentPage.id === "home"
@@ -1298,13 +1352,14 @@ function OledPanel({ snapshot, run, pendingAction }: { snapshot: StudyBoxSnapsho
               ? <div key={`${line}-${i}`} className="oledLabel">{line}</div>
               : <div key={`${line}-${i}`} className="oledValue">{line}</div>
           ))}
-          {currentPage.actionLabel && <div className="oledValue" style={{ marginTop: 8, borderTop: "1px solid rgba(95,224,160,0.2)", paddingTop: 8 }}>{currentPage.actionLabel}</div>}
+          {currentPage.id === "system" && <img className="oledPiLogo" src="/raspberrylogo.png" alt="" />}
         </div>
       </div>
       <div className="oledCaption">mirrors the physical StudyBox display</div>
       <div className="oledButtons">
         <button onClick={() => run("/api/buttons/page")} disabled={Boolean(pendingAction)}>{pendingAction === "/api/buttons/page" ? "WORKING…" : "PAGE"}</button>
-        <button onClick={() => run("/api/buttons/action")} disabled={Boolean(pendingAction)}>{pendingAction === "/api/buttons/action" ? "WORKING…" : "ACTION"}</button>
+        <button onClick={() => run("/api/buttons/zoom")} disabled={Boolean(pendingAction)}>{pendingAction === "/api/buttons/zoom" ? "WORKING…" : "ZOOM"}</button>
+        <button onClick={() => run("/api/buttons/recording")} disabled={Boolean(pendingAction)}>{pendingAction === "/api/buttons/recording" ? "WORKING…" : "REC"}</button>
       </div>
     </div>
   );

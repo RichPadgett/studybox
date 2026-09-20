@@ -12,7 +12,7 @@ import { LocalPodcastService, MockPodcastService, S3ZoomArchive } from "@studybo
 import { MockSchedulerService } from "@studybox/scheduler";
 import { MockBackupSyncService } from "@studybox/sync";
 import { TranscriptLibraryService } from "@studybox/transcripts";
-import type { BackupSyncService, BackupSyncState, ButtonController, HardwareMode, HardwareState, LedColor, LedController, LogEntry, LogLevel, LogResult, LogSource, MeetingService, MeetingState, OledDisplay, OledPageId, Participant, PodcastService, RecLedState, Recording, RecordingAssetKind, RecordingDownload, StudyBoxSettings, StudyBoxSnapshot, SystemMetrics, SystemStatus, ZoomLedState } from "@studybox/shared";
+import type { BackupSyncService, BackupSyncState, ButtonController, HardwareMode, HardwareState, LedColor, LedController, LogEntry, LogLevel, LogResult, LogSource, MeetingSchedule, MeetingService, MeetingState, OledDisplay, OledPage, OledPageId, Participant, PodcastService, RecLedState, RecorderButtonState, Recording, RecordingAssetKind, RecordingDownload, StudyBoxSettings, StudyBoxSnapshot, SystemMetrics, SystemStatus, ZoomButtonState, ZoomLedState } from "@studybox/shared";
 import { LogStore } from "./logStore.js";
 import { projectPath } from "./paths.js";
 import { SettingsStore } from "./settingsStore.js";
@@ -52,6 +52,7 @@ export class StudyBoxAppliance {
   readonly buttons: ButtonController = createButtonController(
     this.buttonMode,
     async () => {
+      await this.wakeOled();
       this.lastPagePressedAt = new Date().toISOString();
       const page = await this.oled.nextPage();
       await this.log({
@@ -66,6 +67,14 @@ export class StudyBoxAppliance {
     async () => {
       this.lastActionPressedAt = new Date().toISOString();
       await this.executeCurrentPageAction();
+    },
+    async (longPress) => {
+      await this.wakeOled();
+      await this.pressZoomButton(longPress);
+    },
+    async (longPress) => {
+      await this.wakeOled();
+      await this.pressRecordingButton(longPress);
     }
   );
   private finalizedRecordingId?: string;
@@ -75,7 +84,16 @@ export class StudyBoxAppliance {
   private zoomLedState: ZoomLedState = "off";
   private backupDoneRenderTimer?: NodeJS.Timeout;
   private debugHeartbeatTimer?: NodeJS.Timeout;
+  private oledScreensaverTimer?: NodeJS.Timeout;
+  private oledScreensaverActive = false;
+  private oledScreensaverPosition = 0;
+  private lastOledActivityAt = Date.now();
+  private readonly oledScreensaverIdleMs = Number(process.env.STUDYBOX_OLED_SCREENSAVER_IDLE_MS ?? 5 * 60 * 1000);
+  private readonly oledScheduleGuardMinutes = Number(process.env.STUDYBOX_OLED_SCHEDULE_GUARD_MINUTES ?? 60);
+  private readonly zoomLocalRecordingEnabled = process.env.STUDYBOX_ZOOM_LOCAL_RECORDING_ENABLED !== "false";
   private readonly dashboardViewers = new Map<string, number>();
+  private meetingSyncAt = 0;
+  private meetingSyncInFlight?: Promise<MeetingState>;
 
   constructor(
     private readonly settingsStore: SettingsStore,
@@ -145,11 +163,16 @@ export class StudyBoxAppliance {
     if ("load" in this.podcast && typeof this.podcast.load === "function") {
       await this.podcast.load();
     }
-    await this.library.processPending(this.podcast.getState().recordings, (recording) => recording.filePath);
     await this.backup.load();
-    await this.queueBackupIfSessionFinalized({ source: "system", actor: "startup-recovery" });
+    this.startBackgroundRecovery();
     await this.oled.showPage("home");
     await this.syncLeds();
+    this.oledScreensaverTimer = setInterval(() => {
+      void this.updateOledScreensaver().catch((error: unknown) => {
+        console.error("StudyBox OLED screensaver update failed", error);
+      });
+    }, 30_000);
+    this.oledScreensaverTimer.unref();
     const debugIntervalMs = process.env.STUDYBOX_DEBUG_HEARTBEAT_MS
       ? Number(process.env.STUDYBOX_DEBUG_HEARTBEAT_MS)
       : 0;
@@ -171,6 +194,15 @@ export class StudyBoxAppliance {
       result: "success",
       message: `StudyBox appliance initialized (${this.hardwareMode} hardware, ${getZoomRuntimeStatus().mode} meeting mode)`
     });
+  }
+
+  private startBackgroundRecovery(): void {
+    const recordings = this.podcast.getState().recordings;
+    void this.library.processPending(recordings, (recording) => recording.filePath)
+      .then(() => this.queueBackupIfSessionFinalized({ source: "system", actor: "startup-recovery" }))
+      .catch((error: unknown) => {
+        console.error(`StudyBox background recovery failed: ${error instanceof Error ? error.message : String(error)}`);
+      });
   }
 
   snapshot(viewerId?: string): StudyBoxSnapshot {
@@ -195,13 +227,28 @@ export class StudyBoxAppliance {
   }
 
   async syncMeetingState(): Promise<MeetingState> {
+    const now = Date.now();
+    if (this.meetingSyncInFlight) return this.meetingSyncInFlight;
+    if (now - this.meetingSyncAt < 1000) return this.meeting.getState();
+
+    this.meetingSyncInFlight = this.syncMeetingStateOnce();
+    try {
+      return await this.meetingSyncInFlight;
+    } finally {
+      this.meetingSyncInFlight = undefined;
+    }
+  }
+
+  private async syncMeetingStateOnce(): Promise<MeetingState> {
     const previous = this.meeting.getState();
     const current = await this.meeting.syncState();
+    this.meetingSyncAt = Date.now();
     const urgentBefore = previous.waitingRoom.length > 0 || previous.raisedHands.length > 0;
     const urgentNow = current.waitingRoom.length > 0 || current.raisedHands.length > 0;
+    const stateChanged = previous.status !== current.status || urgentBefore !== urgentNow;
     if (urgentNow || urgentBefore !== urgentNow) {
       await this.oled.showPage("home");
-    } else {
+    } else if (stateChanged) {
       await this.renderCurrentOledPage();
     }
     return current;
@@ -235,6 +282,33 @@ export class StudyBoxAppliance {
     return this.snapshot();
   }
 
+  async pressZoomButton(longPress = false): Promise<StudyBoxSnapshot> {
+    const meeting = this.meeting.getState();
+    if (longPress) {
+      if (meeting.status === "live" || meeting.status === "starting") return this.endMeeting({ source: "button", actor: "zoom-button-long-press" });
+      await this.logAction("meeting.end.noop", "Zoom long press ignored because no meeting is active", { source: "button", actor: "zoom-button" });
+      return this.snapshot();
+    }
+    if (meeting.status === "idle" || meeting.status === "error") return this.startMeeting({ source: "button", actor: "zoom-button" });
+    await this.logAction("meeting.start.noop", "Zoom short press ignored while meeting is already active", { source: "button", actor: "zoom-button" });
+    return this.snapshot();
+  }
+
+  async pressRecordingButton(longPress = false): Promise<StudyBoxSnapshot> {
+    const podcast = this.podcast.getState();
+    const context = { source: "button" as const, actor: "recording-button" };
+    if (longPress) {
+      if (podcast.activeRecording) return this.stopRecording({ ...context, actor: "recording-button-long-press" });
+      await this.logAction("podcast.recording.finish.noop", "Recording long press ignored because no recording is active", context);
+      return this.snapshot();
+    }
+    if (podcast.status === "idle") return this.startRecording(context);
+    if (podcast.status === "recording") return this.pauseRecording(context);
+    if (podcast.status === "paused") return this.resumeRecording(context);
+    await this.logAction("podcast.recording.button.noop", "Recording short press ignored while recorder is waiting for audio or has an error", context);
+    return this.snapshot();
+  }
+
   async requestParticipantJoin(displayName: string, context: ActionContext = {}): Promise<Participant> {
     const participant = await this.meeting.requestParticipantJoin(displayName);
     await this.logAction("meeting.participant.requestJoin", "Participant entered StudyBox lobby", context, {
@@ -246,6 +320,7 @@ export class StudyBoxAppliance {
   }
 
   async startMeeting(context: ActionContext = {}): Promise<StudyBoxSnapshot> {
+    await this.wakeOled();
     await this.meeting.startMeeting();
     await this.logAction("meeting.start", "Meeting started", context);
     await this.syncHardwareIndicators();
@@ -253,6 +328,7 @@ export class StudyBoxAppliance {
   }
 
   async endMeeting(context: ActionContext = {}): Promise<StudyBoxSnapshot> {
+    await this.wakeOled();
     if (this.podcast.getState().status !== "idle") {
       await this.logAction("meeting.end.finalizeRecording", "Finalizing recording before ending meeting", context);
       await this.stopRecording(context);
@@ -341,16 +417,23 @@ export class StudyBoxAppliance {
   }
 
   async startRecording(context: ActionContext = {}): Promise<StudyBoxSnapshot> {
+    await this.wakeOled();
     const podcast = await this.podcast.startRecording();
-    if (this.meeting.getState().status === "live" && podcast.activeRecording?.filePath) {
+    if (this.zoomLocalRecordingEnabled && this.meeting.getState().status === "live" && podcast.activeRecording?.filePath) {
       await this.meeting.startZoomRecording(dirname(podcast.activeRecording.filePath));
     }
-    await this.logAction("podcast.recording.start", "Recording started", context);
+    const captureStarted = podcast.status === "recording";
+    await this.logAction(
+      captureStarted ? "podcast.recording.start" : "podcast.recording.waitingForAudio",
+      captureStarted ? "Recording started" : "Recording requested; waiting for DJI audio",
+      context
+    );
     await this.syncHardwareIndicators();
     return this.snapshot();
   }
 
   async pauseRecording(context: ActionContext = {}): Promise<StudyBoxSnapshot> {
+    await this.wakeOled();
     await this.podcast.pauseRecording();
     await this.logAction("podcast.recording.pause", "Recording paused", context);
     await this.syncHardwareIndicators();
@@ -358,6 +441,7 @@ export class StudyBoxAppliance {
   }
 
   async resumeRecording(context: ActionContext = {}): Promise<StudyBoxSnapshot> {
+    await this.wakeOled();
     await this.podcast.resumeRecording();
     await this.logAction("podcast.recording.resume", "Recording resumed", context);
     await this.syncHardwareIndicators();
@@ -365,12 +449,14 @@ export class StudyBoxAppliance {
   }
 
   async stopRecording(context: ActionContext = {}): Promise<StudyBoxSnapshot> {
+    await this.wakeOled();
     const activeRecordingId = this.podcast.getState().activeRecording?.id;
     const activeRecordingStartedAt = this.podcast.getState().activeRecording?.startedAt;
-    const zoomRecordingDirectory = this.meeting.getState().status === "live"
+    const zoomRecordingDirectory = this.zoomLocalRecordingEnabled && this.meeting.getState().status === "live"
       ? await this.meeting.stopZoomRecording()
       : undefined;
     await this.podcast.stopRecording();
+    const completedRecording = this.podcast.getState().recordings.find((recording) => recording.id === activeRecordingId);
     if (activeRecordingId) {
       this.finalizedRecordingId = activeRecordingId;
     }
@@ -383,10 +469,13 @@ export class StudyBoxAppliance {
         await this.logAction("zoom.recording.missing", "Zoom recording did not produce a local video file", context, { recordingId: activeRecordingId });
       }
     }
-    await this.logAction("podcast.recording.finish", "Recording finished", context);
+    await this.logAction(
+      completedRecording ? "podcast.recording.finish" : "podcast.recording.cancel",
+      completedRecording ? "Recording finished" : "Recording cancelled: DJI audio unavailable",
+      context
+    );
     await this.syncHardwareIndicators();
     await this.queueBackupIfSessionFinalized(context);
-    const completedRecording = this.podcast.getState().recordings.find((recording) => recording.id === activeRecordingId);
     if (completedRecording?.filePath) {
       await this.library.enqueue(completedRecording, completedRecording.filePath);
     }
@@ -433,6 +522,40 @@ export class StudyBoxAppliance {
     return url;
   }
 
+  async attachZoomCloudRecording(startedAt: string, filePath: string): Promise<string> {
+    const targetTime = Date.parse(startedAt);
+    const candidates = (await this.podcast.listRecordings())
+      .filter((recording) => recording.endedAt && !recording.assets?.some((asset) => asset.kind === "zoom" && asset.archiveProvider === "s3"))
+      .map((recording) => ({ recording, distance: Math.abs(Date.parse(recording.startedAt) - targetTime) }))
+      .sort((left, right) => left.distance - right.distance);
+    const match = candidates[0];
+    const maximumDistanceMs = Number(process.env.STUDYBOX_ZOOM_MATCH_WINDOW_MINUTES ?? 180) * 60_000;
+    if (!match || !Number.isFinite(targetTime) || match.distance > maximumDistanceMs) {
+      throw new Error(`No local audio recording matched Zoom meeting start ${startedAt}`);
+    }
+    await this.podcast.setZoomRecordingAsset(match.recording.id, filePath);
+    const archivedAsset = (await this.podcast.listRecordings())
+      .find((recording) => recording.id === match.recording.id)
+      ?.assets?.find((asset) => asset.kind === "zoom");
+    if (archivedAsset?.archiveProvider !== "s3" || !archivedAsset.archiveSha256 || !archivedAsset.archiveKey) {
+      throw new Error(`Zoom recording ${match.recording.id} was not verified in S3`);
+    }
+    return match.recording.id;
+  }
+
+  async setLibraryTitle(recordingId: string, title: string, context: ActionContext = {}): Promise<StudyBoxSnapshot> {
+    const normalizedTitle = title.trim().replace(/\s+/g, " ");
+    if (!normalizedTitle) throw new Error("Title is required");
+    if (normalizedTitle.length > 180) throw new Error("Title must be 180 characters or fewer");
+    const recording = (await this.podcast.listRecordings()).find((candidate) => candidate.id === recordingId);
+    const document = this.library.getDocument(recordingId);
+    if (!recording || !document) throw new Error("Library recording not found");
+    await this.podcast.setRecordingTitle(recordingId, normalizedTitle);
+    await this.library.setTitle(recordingId, normalizedTitle);
+    await this.logAction("library.title.update", `Library title updated: ${normalizedTitle}`, context, { recordingId });
+    return this.snapshot();
+  }
+
   async getRecordingFile(recordingId: string, context: ActionContext = {}, assetKind: RecordingAssetKind = "audio"): Promise<{ recording: Recording; filePath: string; fileName: string; mimeType: string } | undefined> {
     const recording = (await this.podcast.listRecordings()).find((candidate) => candidate.id === recordingId);
     const asset = recording?.assets?.find((candidate) => candidate.kind === assetKind);
@@ -441,7 +564,10 @@ export class StudyBoxAppliance {
       return undefined;
     }
 
-    const fileName = asset?.fileName ?? recording.downloadFileName ?? recording.id;
+    const originalFileName = asset?.fileName ?? recording.downloadFileName ?? recording.id;
+    const extension = originalFileName.split(".").at(-1)?.toLowerCase() ?? (assetKind === "zoom" ? "mp4" : "wav");
+    const slug = recording.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 120) || "bible-study";
+    const fileName = `${slug}-${assetKind}.${extension}`;
     const mimeType = asset?.mimeType ?? recording.downloadMimeType ?? "audio/wav";
     await this.logAction("podcast.recording.download", `${assetKind} download prepared: ${fileName}`, context, { recordingId, fileName, assetKind });
     return {
@@ -709,11 +835,18 @@ export class StudyBoxAppliance {
   }
 
   private async syncHardwareIndicators(): Promise<void> {
+    if (this.meeting.getState().status !== "idle" || this.podcast.getState().status !== "idle") {
+      await this.wakeOled();
+    }
     await this.syncLeds();
     await this.renderCurrentOledPage();
   }
 
   private async renderCurrentOledPage(): Promise<void> {
+    if (this.oledScreensaverActive) {
+      if (this.canUseOledScreensaver()) return;
+      await this.wakeOled();
+    }
     const renderedPage = "getRenderedPage" in this.oled && typeof this.oled.getRenderedPage === "function"
       ? this.oled.getRenderedPage()
       : undefined;
@@ -721,6 +854,40 @@ export class StudyBoxAppliance {
       return;
     }
     await this.oled.showPage(renderedPage.id);
+  }
+
+  private async updateOledScreensaver(): Promise<void> {
+    const idleLongEnough = Date.now() - this.lastOledActivityAt >= this.oledScreensaverIdleMs;
+    if (!idleLongEnough || !this.canUseOledScreensaver()) {
+      if (this.oledScreensaverActive) await this.wakeOled();
+      return;
+    }
+
+    this.oledScreensaverActive = true;
+    const page: OledPage = {
+      id: "screensaver",
+      title: "",
+      lines: [String(this.oledScreensaverPosition)]
+    };
+    this.oledScreensaverPosition = (this.oledScreensaverPosition + 1) % 3;
+    await this.oled.render(page);
+  }
+
+  private canUseOledScreensaver(): boolean {
+    const meetingIdle = this.meeting.getState().status === "idle";
+    const recordingIdle = this.podcast.getState().status === "idle";
+    const backupIdle = !this.backup.getState().bundles.some((bundle) => bundle.status === "zipping" || bundle.status === "uploading" || bundle.status === "promoting");
+    return meetingIdle
+      && recordingIdle
+      && backupIdle
+      && !isNearScheduledMeeting(new Date(), this.settingsStore.get().schedule, this.oledScheduleGuardMinutes);
+  }
+
+  private async wakeOled(): Promise<void> {
+    this.lastOledActivityAt = Date.now();
+    if (!this.oledScreensaverActive) return;
+    this.oledScreensaverActive = false;
+    await this.oled.showPage(this.oled.getCurrentPage().id);
   }
 
   private logDebugHeartbeat(): void {
@@ -774,11 +941,27 @@ export class StudyBoxAppliance {
     const podcast = this.podcast.getState();
     const recordingStatus = podcast.status;
     this.recordingLedState = recordingStatus === "recording" ? "solid" : recordingStatus === "paused" || recordingStatus === "waitingForAudio" || recordingStatus === "error" && Boolean(podcast.activeRecording) ? "blinking" : "off";
-    await this.leds.setRecording(this.recordingLedState);
+    const recorderState: RecorderButtonState = podcast.status === "recording"
+      ? "recording"
+      : podcast.status === "paused"
+        ? "paused"
+        : podcast.status === "error" || podcast.status === "waitingForAudio"
+          ? "error"
+          : podcast.audioReady === true ? "ready" : "unavailable";
+    await this.leds.setRecorderState(recorderState);
 
     const meetingStatus = this.meeting.getState().status;
     this.zoomLedState = meetingStatus === "live" ? "solid" : meetingStatus === "starting" || meetingStatus === "ending" ? "slowBlink" : meetingStatus === "error" ? "fastBlink" : "off";
-    await this.leds.setZoomConnection(this.zoomLedState);
+    const meeting = this.meeting.getState();
+    const runtime = getZoomRuntimeStatus();
+    const zoomState: ZoomButtonState = !runtime.configured || !runtime.runnerAvailable
+      ? "unavailable"
+      : meeting.status === "live"
+        ? (meeting.waitingRoom.length > 0 || meeting.raisedHands.length > 0 ? "attention" : "live")
+        : meeting.status === "error"
+          ? "error"
+          : "ready";
+    await this.leds.setZoomState(zoomState);
   }
 
   private async logAction(action: string, message: string, context: ActionContext = {}, details?: Record<string, string | number | boolean | undefined>): Promise<void> {
@@ -919,6 +1102,39 @@ function clampPercent(value: number): number {
   return Math.max(0, Math.min(100, value));
 }
 
+function isNearScheduledMeeting(now: Date, schedule: MeetingSchedule, guardMinutes: number): boolean {
+  const weekdayIndexes: Record<MeetingSchedule["dayOfWeek"], number> = {
+    Sunday: 0,
+    Monday: 1,
+    Tuesday: 2,
+    Wednesday: 3,
+    Thursday: 4,
+    Friday: 5,
+    Saturday: 6
+  };
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: schedule.timezone,
+    weekday: "long",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23"
+  }).formatToParts(now);
+  const weekday = parts.find((part) => part.type === "weekday")?.value as MeetingSchedule["dayOfWeek"] | undefined;
+  const hour = Number(parts.find((part) => part.type === "hour")?.value);
+  const minute = Number(parts.find((part) => part.type === "minute")?.value);
+  const [scheduledHour, scheduledMinute] = schedule.time.split(":").map(Number);
+  if (!weekday || !Number.isFinite(hour) || !Number.isFinite(minute) || !Number.isFinite(scheduledHour) || !Number.isFinite(scheduledMinute)) {
+    return false;
+  }
+
+  const minutesPerWeek = 7 * 24 * 60;
+  const currentWeekMinute = weekdayIndexes[weekday] * 24 * 60 + hour * 60 + minute;
+  const scheduledWeekMinute = weekdayIndexes[schedule.dayOfWeek] * 24 * 60 + scheduledHour * 60 + scheduledMinute;
+  const directDistance = Math.abs(currentWeekMinute - scheduledWeekMinute);
+  const weeklyDistance = Math.min(directDistance, minutesPerWeek - directDistance);
+  return weeklyDistance <= Math.max(0, guardMinutes);
+}
+
 function createOledDisplay(
   mode: HardwareMode,
   getMeeting: () => MeetingState,
@@ -927,7 +1143,12 @@ function createOledDisplay(
   getBackup: () => BackupSyncState
 ): OledDisplay {
   if (mode === "raspberryPi") {
-    return new RaspberryPiOledDisplay(getMeeting, getPodcast, getMetrics, getBackup);
+    try {
+      return new RaspberryPiOledDisplay(getMeeting, getPodcast, getMetrics, getBackup);
+    } catch (error) {
+      console.error(`StudyBox OLED unavailable; continuing without display: ${error instanceof Error ? error.message : String(error)}`);
+      return new MockOledDisplay(getMeeting, getPodcast, getMetrics, getBackup);
+    }
   }
 
   return new MockOledDisplay(getMeeting, getPodcast, getMetrics, getBackup);
@@ -936,13 +1157,15 @@ function createOledDisplay(
 function createButtonController(
   mode: HardwareMode,
   onPage: () => Promise<void>,
-  onAction: () => Promise<void>
+  onAction: () => Promise<void>,
+  onZoom: (longPress: boolean) => Promise<void>,
+  onRecording: (longPress: boolean) => Promise<void>
 ): ButtonController {
   if (mode === "raspberryPi") {
-    return new RaspberryPiButtonController(onPage, onAction);
+    return new RaspberryPiButtonController(onPage, onZoom, onRecording);
   }
 
-  return new MockButtonController(onPage, onAction);
+  return new MockButtonController(onPage, onZoom, onRecording);
 }
 
 function createLedController(mode: HardwareMode): LedController {
