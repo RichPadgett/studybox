@@ -446,6 +446,33 @@ a:hover { color: #8f6a08; }
   font-weight: 700;
 }
 
+.readerTitleEditor {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 0 14px;
+}
+
+.readerTitleEditor input {
+  min-width: 0;
+  border: 1px solid rgba(23,24,15,0.2);
+  border-radius: 4px;
+  padding: 10px 12px;
+  color: #20211B;
+  background: #FFF;
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 24px;
+  font-weight: 700;
+}
+
+.readerTitleEditor .readerDownload { display: inline-flex; align-items: center; gap: 6px; margin-left: 0; }
+
+@media (max-width: 640px) {
+  .readerTitleEditor { grid-template-columns: 1fr; }
+  .readerTitleEditor .readerDownload { justify-content: center; }
+}
+
 .readerSubheading {
   margin-top: -6px;
   margin-bottom: 14px;
@@ -660,6 +687,10 @@ a:hover { color: #8f6a08; }
   display: flex;
   gap: 12px;
   flex-wrap: wrap;
+}
+
+.mobileControlBar {
+  display: none;
 }
 
 /* ── Buttons ── */
@@ -1117,10 +1148,14 @@ input, select {
 }
 
 .oledPiLogo {
+  position: absolute;
+  left: 50%;
+  bottom: 2px;
   width: 22px;
   height: 22px;
   object-fit: contain;
   flex: 0 0 auto;
+  transform: translateX(-50%);
   filter: grayscale(1) brightness(1.7);
   opacity: 0.9;
 }
@@ -1172,7 +1207,7 @@ input, select {
 
 .oledButtons {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, 1fr);
   gap: 8px;
   margin-top: 12px;
 }
@@ -1232,6 +1267,7 @@ input, select {
 .led.blue   { background: #3288ff; }
 .led.yellow { background: #E0A22D; }
 .led.red    { background: #D64545; }
+.led.orange { background: #E4772E; }
 .led.off    { background: #C8CAC5; }
 .led.blinkSlow { animation: ledBlink 1s steps(2, jump-none) infinite; }
 .led.blinkFast { animation: ledBlink 250ms steps(2, jump-none) infinite; }
@@ -1589,6 +1625,81 @@ input, select {
   .joinButton { width: 100%; justify-content: center; padding: 15px; font-size: 15px; }
   .podcastPromo { flex-direction: column; }
   .main { padding: 20px 16px; }
+  .topbar { gap: 14px; }
+  .topbar h1 { font-size: 24px; }
+  .topbarActions { width: 100%; gap: 8px; }
+  .topbarActions > * { flex: 1 1 auto; }
+  .mobileControlBar {
+    display: block;
+    padding: 16px;
+    border: 1px solid rgba(23,24,15,0.1);
+    border-radius: 14px;
+    background: #17180F;
+    color: #FFFFFF;
+    box-shadow: 0 10px 24px rgba(23,24,15,0.12);
+  }
+  .mobileControlHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 14px;
+  }
+  .mobileControlHeader > div { display: flex; flex-direction: column; gap: 3px; }
+  .mobileControlHeader strong { font-size: 16px; }
+  .mobileControlEyebrow {
+    color: #D6A600;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+  .mobileControlStatus {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: rgba(255,255,255,0.58);
+    font-size: 11px;
+    font-weight: 700;
+  }
+  .mobileControlStatus span { width: 7px; height: 7px; border-radius: 50%; background: #8B928A; }
+  .mobileControlStatus.live { color: #77E0A2; }
+  .mobileControlStatus.live span { background: #4FD381; box-shadow: 0 0 8px rgba(79,211,129,0.7); }
+  .mobileControlGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .mobileControlButton {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 76px;
+    padding: 12px;
+    border-radius: 10px;
+    color: #17180F;
+    text-align: left;
+  }
+  .mobileControlButton.zoom { background: #DCE4FF; }
+  .mobileControlButton.zoom.active { background: #6E84FF; color: #FFFFFF; }
+  .mobileControlButton.recording { background: #D9F3E4; }
+  .mobileControlButton.recording.active { background: #E86A68; color: #FFFFFF; }
+  .mobileControlButton:disabled { opacity: 0.58; }
+  .mobileControlIcon { display: grid; place-items: center; width: 36px; height: 36px; flex: none; border-radius: 9px; background: rgba(255,255,255,0.58); }
+  .mobileControlButton > span:last-child { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
+  .mobileControlButton b { font-size: 13px; line-height: 1.1; }
+  .mobileControlButton small { color: currentColor; opacity: 0.62; font-size: 10px; line-height: 1.2; }
+  .mobileFinishButton {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    width: 100%;
+    min-height: 42px;
+    margin-top: 10px;
+    border: 1px solid rgba(255,255,255,0.22);
+    border-radius: 9px;
+    color: rgba(255,255,255,0.86);
+    font-size: 12px;
+    font-weight: 700;
+  }
+  .mobileFinishButton:disabled { opacity: 0.55; }
   .topbar { flex-direction: column; }
   .metricGrid, .twoColumn, .formGrid, .deviceAuth { grid-template-columns: 1fr; }
   .toolbar { gap: 8px; }

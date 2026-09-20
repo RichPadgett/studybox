@@ -1,4 +1,4 @@
-import type { AdminSession, LogEntry, Participant, Recording, RecordingAssetKind, StudyBoxSettings, StudyBoxSnapshot, TranscriptDocument, TranscriptSearchResult, ZoomDeviceAuthorization } from "@studybox/shared";
+import type { AdminSession, LogEntry, Participant, RecorderButtonState, Recording, RecordingAssetKind, StudyBoxSettings, StudyBoxSnapshot, TranscriptDocument, TranscriptSearchResult, ZoomButtonState, ZoomDeviceAuthorization } from "@studybox/shared";
 import {
   Activity,
   ArrowLeft,
@@ -1167,22 +1167,22 @@ function Diagnostics({ snapshot }: { snapshot: StudyBoxSnapshot }) {
     <div className="stack">
       <div className="metricGrid">
         <Metric label="CPU"         value={`${snapshot.metrics.cpuPercent}%`}                     detail="1-min load across cores" />
-        <Metric label="Storage"     value={`${snapshot.metrics.ssdPercent}%`}                     detail="microSD now, NVMe later" />
+        <Metric label="Storage"     value={`${snapshot.metrics.ssdPercent}%`}                     detail="root filesystem used" />
         <Metric label="WiFi"        value={snapshot.metrics.wifiConnected ? "Connected" : "Offline"} detail={snapshot.settings.wifi.ssid || "Ethernet preferred"} green={snapshot.metrics.wifiConnected} />
         <Metric label="Temperature" value={`${snapshot.metrics.temperatureC}C`}                   detail="Pi thermal sensor" />
       </div>
       <div className="metricGrid">
         <Metric label="Zoom Mode" value={snapshot.zoom.mode}            detail={snapshot.zoom.configured ? "credentials loaded" : "credentials missing"} />
-        <Metric label="SDK Arch"  value={snapshot.zoom.sdkArch}         detail="Pi target is linux-arm64" />
+        <Metric label="SDK Arch"  value={snapshot.zoom.sdkArch}         detail="native Zoom target" />
         <Metric label="Webhook"   value={snapshot.zoom.webhookSecretConfigured ? "Configured" : "Missing"} detail="event verification token" green={snapshot.zoom.webhookSecretConfigured} />
-        <Metric label="Runner"    value={snapshot.zoom.runnerAvailable ? "Available" : "Missing"} detail="native process bridge" green={snapshot.zoom.runnerAvailable} />
+        <Metric label="Runner"    value={snapshot.zoom.runnerAvailable ? "Available" : "Missing"} detail="Zoom meeting bridge" green={snapshot.zoom.runnerAvailable} />
         <Metric label="Backup"    value={`${snapshot.backup.pendingCount} pending`} detail={snapshot.backup.lastEvent ?? snapshot.backup.target} />
       </div>
       <div className="metricGrid">
         <Metric label="OLED"        value={snapshot.hardware.oled.health}             detail={`${snapshot.hardware.oled.mode} · ${snapshot.hardware.oled.currentPageTitle}`} green={snapshot.hardware.oled.health === "ready"} />
         <Metric label="Page Button" value={snapshot.hardware.pageButton.health}       detail={snapshot.hardware.pageButton.lastEvent ?? "Ready"} green={snapshot.hardware.pageButton.health === "ready"} />
-        <Metric label="Action Ring" value={snapshot.hardware.actionButton.ringColor}  detail={`${snapshot.hardware.actionButton.ringMode} · ${snapshot.hardware.actionButton.health}`} />
-        <Metric label="REC LED"     value={snapshot.hardware.recordingLed.state}      detail={snapshot.hardware.recordingLed.lastEvent ?? "Ready"} gray={snapshot.hardware.recordingLed.state === "off"} />
+        <Metric label="ZOOM RGB"   value={formatZoomButtonState(snapshot)} detail={`${snapshot.hardware.zoomLed.health} · ${snapshot.hardware.zoomLed.mode}`} green={zoomButtonState(snapshot) === "ready" || zoomButtonState(snapshot) === "live"} />
+        <Metric label="REC RGB"    value={formatRecorderButtonState(snapshot)} detail={`${snapshot.hardware.recordingLed.health} · ${snapshot.hardware.recordingLed.mode}`} green={recorderButtonState(snapshot) === "ready" || recorderButtonState(snapshot) === "recording"} />
       </div>
       <Panel title="Audio Hardware">
         {snapshot.hardware.audio.mode === "mock"
@@ -1368,20 +1368,18 @@ function OledPanel({ snapshot, run, pendingAction }: { snapshot: StudyBoxSnapsho
 // ── LED panel ─────────────────────────────────────────────────────────────────
 
 function LedPanel({ snapshot }: { snapshot: StudyBoxSnapshot }) {
-  const sysColor = snapshot.systemStatus === "ready" ? "green" : snapshot.systemStatus === "meeting-live" ? "blue" : snapshot.systemStatus === "attention" ? "yellow" : "red";
-  const zoomColor = zoomLedClass(snapshot.hardware.zoomLed.state);
-  const recColor = snapshot.podcast.status === "recording" ? "red" : "off";
+  const zoomState = zoomButtonState(snapshot);
+  const recState = recorderButtonState(snapshot);
   return (
     <div className="ledCard">
-      <h2>LEDs</h2>
+      <h2>Button Status</h2>
       <div className="ledRows">
-        <div className="ledRow"><span className={`led ${sysColor}`} />System {sysColor}</div>
-        <div className={`ledRow${snapshot.hardware.zoomLed.state === "off" ? " muted" : ""}`}><span className={`led ${zoomColor}`} />Zoom {formatZoomLedState(snapshot.hardware.zoomLed.state)}</div>
-        <div className={`ledRow${snapshot.podcast.status !== "recording" ? " muted" : ""}`}><span className={`led ${recColor}`} />REC {snapshot.podcast.status}</div>
+        <div className={`ledRow${zoomState === "unavailable" ? " muted" : ""}`}><span className={`led ${zoomButtonColor(zoomState)}`} />ZOOM {formatZoomButtonState(snapshot)}</div>
+        <div className={`ledRow${recState === "unavailable" ? " muted" : ""}`}><span className={`led ${recButtonColor(recState)}`} />REC {formatRecorderButtonState(snapshot)}</div>
       </div>
       <div className="ledFooter">
         <img className="ledPiLogo" src="/raspberrylogo.png" alt="" />
-        Raspberry Pi 5 · DJI Mic Receiver
+        RGB status rings · DJI Mic Receiver
       </div>
     </div>
   );
@@ -1486,21 +1484,59 @@ function commandCopy(path: string): string {
   if (path === "/api/podcast/pause") return "Pausing recording…";
   if (path === "/api/podcast/resume") return "Resuming recording…";
   if (path === "/api/buttons/page") return "Changing OLED page…";
-  if (path === "/api/buttons/action") return "Running OLED action…";
+  if (path === "/api/buttons/zoom") return "Updating Zoom…";
+  if (path === "/api/buttons/recording") return "Updating recording…";
   return "Working…";
 }
 
-function formatZoomLedState(state: StudyBoxSnapshot["hardware"]["zoomLed"]["state"]): string {
-  if (state === "slowBlink") return "joining";
-  if (state === "fastBlink") return "problem";
-  return state;
+function zoomButtonState(snapshot: StudyBoxSnapshot): ZoomButtonState {
+  if (!snapshot.zoom.configured || !snapshot.zoom.runnerAvailable) return "unavailable";
+  if (snapshot.meeting.status === "live") {
+    return snapshot.meeting.waitingRoom.length > 0 || snapshot.meeting.raisedHands.length > 0 ? "attention" : "live";
+  }
+  if (snapshot.meeting.status === "error") return "error";
+  return "ready";
 }
 
-function zoomLedClass(state: StudyBoxSnapshot["hardware"]["zoomLed"]["state"]): string {
-  if (state === "off") return "off";
-  if (state === "slowBlink") return "green blinkSlow";
-  if (state === "fastBlink") return "green blinkFast";
-  return "green";
+function recorderButtonState(snapshot: StudyBoxSnapshot): RecorderButtonState {
+  if (snapshot.podcast.status === "recording") return "recording";
+  if (snapshot.podcast.status === "paused") return "paused";
+  if (snapshot.podcast.status === "error" || snapshot.podcast.status === "waitingForAudio") return "error";
+  return snapshot.podcast.audioReady === true ? "ready" : "unavailable";
+}
+
+function formatZoomButtonState(snapshot: StudyBoxSnapshot): string {
+  return {
+    unavailable: "Unavailable",
+    ready: "Ready",
+    live: "Live",
+    attention: "Attention",
+    error: "Error"
+  }[zoomButtonState(snapshot)];
+}
+
+function formatRecorderButtonState(snapshot: StudyBoxSnapshot): string {
+  return {
+    unavailable: "Unavailable",
+    ready: "Ready",
+    recording: "Recording",
+    paused: "Paused",
+    error: "Audio Error"
+  }[recorderButtonState(snapshot)];
+}
+
+function zoomButtonColor(state: ReturnType<typeof zoomButtonState>): string {
+  if (state === "live") return "blue";
+  if (state === "attention") return "yellow";
+  if (state === "error") return "orange";
+  if (state === "ready") return "blue";
+  return "off";
+}
+
+function recButtonColor(state: ReturnType<typeof recorderButtonState>): string {
+  if (state === "recording" || state === "paused" || state === "error") return "red";
+  if (state === "ready") return "green";
+  return "off";
 }
 
 function formatDuration(seconds: number): string {
