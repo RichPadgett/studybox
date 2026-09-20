@@ -14,6 +14,7 @@ import { ZoomOAuthClient } from "./zoomOAuthClient.js";
 import { ZoomOAuthStore } from "./zoomOAuthStore.js";
 import { createZoomSdkJwt } from "./zoomSdkJwt.js";
 import { ZoomZakService } from "./zoomZakService.js";
+import { ZoomCloudRecordingService } from "./zoomCloudRecordings.js";
 import { createValidationResponse, toWebhookRecord, verifyZoomWebhookSignature, webhookRecordToLog, type ZoomWebhookBody } from "./zoomWebhook.js";
 
 const port = Number(process.env.PORT ?? 4000);
@@ -23,6 +24,18 @@ const appliance = new StudyBoxAppliance(new SettingsStore(), new LogStore());
 const zoomOAuthStore = new ZoomOAuthStore();
 const libraryShares = new LibraryShareStore(process.env.STUDYBOX_LIBRARY_SHARES_PATH ?? "/var/lib/studybox/library/shares.json");
 const webAdminContext = { source: "web" as const, actor: "admin" };
+const zoomCloudRecordings = new ZoomCloudRecordingService(
+  getZoomConfig(),
+  zoomOAuthStore,
+  process.env.STUDYBOX_ZOOM_CLOUD_QUEUE_PATH ?? "/var/lib/studybox/zoom-cloud/queue.json",
+  process.env.STUDYBOX_ZOOM_CLOUD_DOWNLOAD_DIR ?? "/var/lib/studybox/zoom-cloud/downloads",
+  {
+    attach: (startedAt, filePath) => appliance.attachZoomCloudRecording(startedAt, filePath),
+    audit: async (action, result, message, details) => {
+      await appliance.recordAudit({ source: "zoom-webhook", level: result === "success" ? "info" : "error", action, result, message, details });
+    }
+  }
+);
 let backupRetryInProgress = false;
 
 app.use(cors());
@@ -112,6 +125,9 @@ app.post("/api/zoom/webhooks", async (request, response, next) => {
       result: "success",
       message: log.message
     });
+    if (body.event === "recording.completed") {
+      await zoomCloudRecordings.enqueue(body);
+    }
     response.json({ ok: true });
   } catch (error) {
     next(error);
@@ -214,7 +230,10 @@ app.post("/api/zoom/sdk-jwt", requireAdmin, (_request, response, next) => {
 
 app.post("/api/buttons/page", requireAdmin, async (_request, response, next) => {
   try {
-    response.json(await appliance.pressPage());
+    void appliance.pressPage().catch((error: unknown) => {
+      console.error("StudyBox web page action failed", error);
+    });
+    response.json(appliance.snapshot());
   } catch (error) {
     next(error);
   }
@@ -223,6 +242,22 @@ app.post("/api/buttons/page", requireAdmin, async (_request, response, next) => 
 app.post("/api/buttons/action", requireAdmin, async (_request, response, next) => {
   try {
     response.json(await appliance.pressAction());
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/buttons/zoom", requireAdmin, async (_request, response, next) => {
+  try {
+    response.json(await appliance.pressZoomButton(false));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/buttons/recording", requireAdmin, async (_request, response, next) => {
+  try {
+    response.json(await appliance.pressRecordingButton(false));
   } catch (error) {
     next(error);
   }
@@ -264,14 +299,6 @@ app.post("/api/meeting/waiting/:participantId/admit", requireAdmin, async (reque
 app.post("/api/meeting/raised-hands/:participantId/dismiss", requireAdmin, async (request, response, next) => {
   try {
     response.json(await appliance.dismissRaisedHand(request.params.participantId, webAdminContext));
-  } catch (error) {
-    next(error);
-  }
-});
-
-app.post("/api/meeting/raised-hands/:participantId/allow", requireAdmin, async (request, response, next) => {
-  try {
-    response.json(await appliance.allowParticipantToSpeak(request.params.participantId, webAdminContext));
   } catch (error) {
     next(error);
   }
@@ -449,6 +476,10 @@ app.get("/api/library", requireAdmin, (_request, response) => {
   response.json(appliance.library.getState());
 });
 
+app.get("/api/library/export", requireAdmin, (_request, response) => {
+  response.json({ documents: appliance.library.getAllDocuments() });
+});
+
 app.get("/api/library/search", requireAdmin, async (request, response, next) => {
   try {
     const query = String(request.query.q ?? "").trim();
@@ -543,6 +574,14 @@ app.get("/api/library/:recordingId", requireAdmin, async (request, response, nex
       return;
     }
     response.json({ document, fullText: await appliance.library.readFullText(request.params.recordingId) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.put("/api/library/:recordingId/title", requireAdmin, async (request, response, next) => {
+  try {
+    response.json(await appliance.setLibraryTitle(request.params.recordingId, String(request.body?.title ?? ""), webAdminContext));
   } catch (error) {
     next(error);
   }
@@ -666,6 +705,7 @@ app.use((error: unknown, _request: express.Request, response: express.Response, 
 
 await libraryShares.load();
 await appliance.initialize();
+await zoomCloudRecordings.load();
 startBackupRetryLoop();
 
 app.listen(port, () => {

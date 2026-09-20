@@ -1,5 +1,5 @@
 import { closeSync, openSync, writeFileSync } from "node:fs";
-import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import type { BackupSyncState, MeetingState, OledDisplay, OledPage, OledPageId, PodcastState, SystemMetrics } from "@studybox/shared";
 import { MockOledDisplay } from "./mock.js";
 
@@ -50,14 +50,22 @@ export class RaspberryPiOledDisplay implements OledDisplay {
 
   async showPage(pageId: OledPageId): Promise<OledPage> {
     const page = await this.pages.showPage(pageId);
-    await this.render(page);
+    this.scheduleRender(page);
     return page;
   }
 
   async nextPage(): Promise<OledPage> {
     const page = await this.pages.nextPage();
-    await this.render(page);
+    this.scheduleRender(page);
     return page;
+  }
+
+  private scheduleRender(page: OledPage): void {
+    setTimeout(() => {
+      void this.render(page).catch((error: unknown) => {
+        console.error(`StudyBox OLED scheduled render failed: ${error instanceof Error ? error.message : String(error)}`);
+      });
+    }, 50).unref();
   }
 
   async render(page: OledPage): Promise<void> {
@@ -65,7 +73,7 @@ export class RaspberryPiOledDisplay implements OledDisplay {
     const signature = frameSignature(frame);
     if (signature !== this.lastRenderedFrameSignature && !this.closed) {
       try {
-        this.renderFrame(frame);
+        await this.renderFrame(frame);
         this.initialized = true;
         this.lastRenderedFrameSignature = signature;
       } catch (error) {
@@ -171,31 +179,36 @@ export class RaspberryPiOledDisplay implements OledDisplay {
     });
   }
 
-  private renderFrame(frame: number[][]): void {
+  private async renderFrame(frame: number[][]): Promise<void> {
     this.release(this.rstHolder);
     this.rstHolder = undefined;
 
     try {
-      const result = spawnSync("python3", ["-c", pythonSsd1309Renderer], {
-        input: JSON.stringify({
+      await new Promise<void>((resolve, reject) => {
+        const renderer = spawn("python3", ["-c", pythonSsd1309Renderer], {
+          stdio: ["pipe", "ignore", "pipe"]
+        });
+        let stderr = "";
+        renderer.stderr?.on("data", (chunk: Buffer) => {
+          stderr += chunk.toString("utf8");
+        });
+        renderer.once("error", reject);
+        renderer.once("close", (code) => {
+          if (code === 0) {
+            resolve();
+          } else {
+            reject(new Error(stderr.trim() || `OLED renderer exited with status ${code ?? "unknown"}`));
+          }
+        });
+        renderer.stdin.end(JSON.stringify({
           spiDevice: this.spiDevice,
           gpioChip: this.gpioChip,
           dcGpio: this.dcGpio,
           rstGpio: this.rstGpio,
           initialize: !this.initialized,
           frame
-        }),
-        encoding: "utf8",
-        maxBuffer: 1024 * 1024
+        }));
       });
-
-      if (result.error) {
-        throw result.error;
-      }
-
-      if (result.status !== 0) {
-        throw new Error(result.stderr.trim() || `OLED renderer exited with status ${result.status ?? "unknown"}`);
-      }
     } finally {
       // Keep reset actively high between frames, especially across long ribbon cables.
       this.setRst(1);
