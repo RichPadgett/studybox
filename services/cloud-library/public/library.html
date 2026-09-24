@@ -6,7 +6,7 @@
   <title>StudyBox Teaching Library</title>
   <style>
     :root { color-scheme: light; font-family: system-ui, -apple-system, sans-serif; color: #17180f; background: #f7f8f3; }
-    body { margin: 0; } main { max-width: 980px; margin: 0 auto; padding: 32px 18px 64px; }
+    body { margin: 0; } main { max-width: 1180px; margin: 0 auto; padding: 32px 18px 64px; }
     a { color: inherit; } .kicker { color: #668c43; font-size: 12px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
     h1 { margin: 8px 0 10px; font-size: clamp(30px, 6vw, 52px); line-height: 1; } .lede { color: #657064; max-width: 640px; }
     .tabs { display: flex; gap: 8px; margin: 26px 0 0; border-bottom: 1px solid #dfe5db; }
@@ -17,16 +17,31 @@
     button.secondary, .download.secondary { background: #e4ebdf; color: #244f35; } button:disabled { opacity: .55; cursor: wait; }
     .item { display: block; width: 100%; text-align: left; margin: 10px 0; padding: 17px; border: 1px solid #dfe5db; border-radius: 6px; background: white; color: inherit; }
     .item strong { display: block; font-size: 18px; } .item small { display: block; margin-top: 5px; color: #758071; } .item p { margin: 10px 0 0; color: #4d584c; }
-    .reader { margin-top: 26px; padding-top: 22px; border-top: 1px solid #dfe5db; } .reader h2 { font-size: clamp(24px, 5vw, 40px); margin: 8px 0; }
+    .workspace { display: block; } main.reader-open .workspace { display: grid; grid-template-columns: minmax(300px, .85fr) minmax(420px, 1.15fr); gap: 24px; align-items: start; }
+    main.reader-open #results { position: sticky; top: 16px; max-height: calc(100vh - 32px); overflow: auto; padding-right: 5px; }
+    main.reader-open .item { margin: 0 0 7px; padding: 11px 12px; }
+    main.reader-open .item strong { font-size: 14px; line-height: 1.3; }
+    main.reader-open .item small { font-size: 11px; }
+    main.reader-open .item p { display: none; }
+    .reader-shell:empty { display: none; } .reader-shell { position: sticky; top: 16px; max-height: calc(100vh - 32px); overflow: auto; border: 1px solid #dfe5db; border-radius: 10px; background: white; box-shadow: 0 16px 40px rgba(36,79,53,.12); }
+    .reader { padding: 22px; } .reader h2 { font-size: clamp(24px, 4vw, 36px); margin: 8px 0; }
     .meta { color: #758071; font-size: 14px; } .actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0; }
     .marker { display: flex; gap: 14px; padding: 12px 0; border-bottom: 1px solid #e4e9e0; } .time { min-width: 58px; color: #668c43; font-weight: 800; }
-    .empty { color: #758071; padding: 18px 0; } .back { background: transparent; color: #244f35; padding-left: 0; }
+    .empty { color: #758071; padding: 18px 0; } .back { position: sticky; top: 0; z-index: 2; width: 100%; margin: -22px -22px 16px; padding: 14px 18px; border-radius: 9px 9px 0 0; background: #edf3e9; color: #244f35; text-align: left; }
+    .item.selected { border-color: #668c43; background: #f1f6ee; box-shadow: inset 4px 0 #668c43; }
     .file-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); gap: 12px; }
     .file-card { padding: 18px; border: 1px solid #dfe5db; border-radius: 8px; background: white; }
     .file-card h2 { margin: 8px 0; font-size: 18px; line-height: 1.3; overflow-wrap: anywhere; }
     .file-card p { color: #4d584c; margin: 6px 0; } .file-card .actions { margin-bottom: 0; }
     .tag { display: inline-block; color: #4f6d3a; background: #edf3e9; border-radius: 999px; padding: 4px 8px; font-size: 12px; font-weight: 800; }
-    @media (max-width: 520px) { form { flex-direction: column; } form button { width: 100%; } }
+    @media (max-width: 760px) {
+      form { flex-direction: column; } form button { width: 100%; }
+      main.reader-open .workspace { display: block; }
+      main.reader-open #results { position: static; max-height: none; overflow: visible; }
+      main.reader-open .reader-shell { display: block; position: fixed; inset: 0; z-index: 100; max-height: none; border: 0; border-radius: 0; overflow: auto; }
+      .reader { min-height: 100%; box-sizing: border-box; }
+      .back { border-radius: 0; }
+    }
   </style>
 </head>
 <body>
@@ -39,14 +54,17 @@
     <button class="tab" type="button" data-view="files">Calendar Files</button>
   </nav>
   <form id="search"><input id="query" aria-label="Search teachings" placeholder="Search transcripts or Scripture"><button>Search</button></form>
-  <section id="results" aria-live="polite"></section>
-  <section id="reader"></section>
+  <div class="workspace">
+    <section id="results" aria-live="polite"></section>
+    <section id="reader" class="reader-shell" aria-live="polite"></section>
+  </div>
 </main>
 <script>
   const results = document.querySelector('#results');
   const reader = document.querySelector('#reader');
   const query = document.querySelector('#query');
   const lede = document.querySelector('#lede');
+  const main = document.querySelector('main');
   let activeView = 'teachings';
   const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
   const formatTime = (seconds) => { const total = Math.max(0, Math.floor(Number(seconds) || 0)); return `${String(Math.floor(total / 3600)).padStart(2,'0')}:${String(Math.floor(total / 60) % 60).padStart(2,'0')}:${String(total % 60).padStart(2,'0')}`; };
@@ -66,15 +84,21 @@
     results.innerHTML = data.items.length ? `<div class="file-grid">${data.items.map((item) => `<article class="file-card"><span class="tag">${escapeHtml(item.mimeType === 'application/pdf' ? 'PDF' : item.mimeType.split('/').pop().toUpperCase())}</span><h2>${escapeHtml(item.label)}</h2><p><strong>${escapeHtml(item.dayTitle)}</strong></p><p class="meta">Enoch Year ${escapeHtml(item.enochYear)} · Month ${escapeHtml(item.month)}, Day ${escapeHtml(item.day)}<br>${new Date(`${item.gregorianDate}T12:00:00`).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })}${item.sizeBytes ? ` · ${formatSize(item.sizeBytes)}` : ''}</p><div class="actions"><a class="download" href="${escapeHtml(item.url)}" target="_blank" rel="noopener">Open file</a><a class="download secondary" href="${escapeHtml(item.url)}" download>Download</a></div></article>`).join('')}</div>` : '<p class="empty">No calendar files found.</p>';
   }
   async function loadReader(id) {
+    document.querySelectorAll('[data-id]').forEach((item) => item.classList.toggle('selected', item.dataset.id === id));
     const response = await fetch(`/api/library/${encodeURIComponent(id)}`);
     const data = await response.json();
     const recording = data.recording;
     reader.innerHTML = `<article class="reader"><button class="back" id="back">← Library</button><div class="kicker">Archived teaching</div><h2>${escapeHtml(recording.title)}</h2><p class="meta">${recording.recorded_at ? new Date(recording.recorded_at).toLocaleString() : ''} · ${formatTime(recording.duration_seconds)}</p><p>${escapeHtml(recording.description || '')}</p><div class="actions">${recording.audio_asset ? `<a class="download" href="/api/library/${encodeURIComponent(recording.id)}/assets/audio/download">Download audio</a>` : '<span class="meta">Audio archive is processing</span>'}${recording.zoom_asset ? `<a class="download secondary" href="/api/library/${encodeURIComponent(recording.id)}/assets/zoom/download">Download Zoom</a>` : ''}</div><h3>Audio map</h3>${data.markers.map((marker) => `<div class="marker"><span class="time">${formatTime(marker.timestamp_seconds)}</span><span>${escapeHtml(marker.label)}</span></div>`).join('') || '<p class="empty">No section markers yet.</p>'}<h3>Transcript sections</h3>${data.chunks.map((chunk) => `<div class="marker"><span class="time">${formatTime(chunk.start_seconds)}</span><span>${escapeHtml(chunk.text || '')}</span></div>`).join('') || '<p class="empty">Transcript is still processing.</p>'}</article>`;
-    document.querySelector('#back').addEventListener('click', () => { reader.innerHTML = ''; window.scrollTo({top: 0, behavior: 'smooth'}); });
-    reader.scrollIntoView({ behavior: 'smooth' });
+    main.classList.add('reader-open');
+    document.querySelector('#back').addEventListener('click', () => {
+      reader.innerHTML = '';
+      main.classList.remove('reader-open');
+      document.querySelectorAll('[data-id]').forEach((item) => item.classList.remove('selected'));
+    });
   }
   function loadActiveView() {
     reader.innerHTML = '';
+    main.classList.remove('reader-open');
     const loader = activeView === 'files' ? loadFiles : loadList;
     loader().catch(() => { results.innerHTML = '<p class="empty">Library is temporarily unavailable.</p>'; });
   }
