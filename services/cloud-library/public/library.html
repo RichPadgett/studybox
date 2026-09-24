@@ -9,7 +9,10 @@
     body { margin: 0; } main { max-width: 980px; margin: 0 auto; padding: 32px 18px 64px; }
     a { color: inherit; } .kicker { color: #668c43; font-size: 12px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
     h1 { margin: 8px 0 10px; font-size: clamp(30px, 6vw, 52px); line-height: 1; } .lede { color: #657064; max-width: 640px; }
-    form { display: flex; gap: 8px; margin: 26px 0; } input { flex: 1; min-width: 0; padding: 13px 14px; border: 1px solid #cbd3c4; border-radius: 6px; font: inherit; background: #fff; }
+    .tabs { display: flex; gap: 8px; margin: 26px 0 0; border-bottom: 1px solid #dfe5db; }
+    .tab { border-radius: 6px 6px 0 0; background: transparent; color: #596456; padding: 12px 16px; }
+    .tab.active { background: #244f35; color: white; }
+    form { display: flex; gap: 8px; margin: 18px 0 26px; } input { flex: 1; min-width: 0; padding: 13px 14px; border: 1px solid #cbd3c4; border-radius: 6px; font: inherit; background: #fff; }
     button, .download { border: 0; border-radius: 6px; background: #244f35; color: white; padding: 12px 15px; font: inherit; font-weight: 700; cursor: pointer; text-decoration: none; }
     button.secondary, .download.secondary { background: #e4ebdf; color: #244f35; } button:disabled { opacity: .55; cursor: wait; }
     .item { display: block; width: 100%; text-align: left; margin: 10px 0; padding: 17px; border: 1px solid #dfe5db; border-radius: 6px; background: white; color: inherit; }
@@ -18,6 +21,11 @@
     .meta { color: #758071; font-size: 14px; } .actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0; }
     .marker { display: flex; gap: 14px; padding: 12px 0; border-bottom: 1px solid #e4e9e0; } .time { min-width: 58px; color: #668c43; font-weight: 800; }
     .empty { color: #758071; padding: 18px 0; } .back { background: transparent; color: #244f35; padding-left: 0; }
+    .file-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); gap: 12px; }
+    .file-card { padding: 18px; border: 1px solid #dfe5db; border-radius: 8px; background: white; }
+    .file-card h2 { margin: 8px 0; font-size: 18px; line-height: 1.3; overflow-wrap: anywhere; }
+    .file-card p { color: #4d584c; margin: 6px 0; } .file-card .actions { margin-bottom: 0; }
+    .tag { display: inline-block; color: #4f6d3a; background: #edf3e9; border-radius: 999px; padding: 4px 8px; font-size: 12px; font-weight: 800; }
     @media (max-width: 520px) { form { flex-direction: column; } form button { width: 100%; } }
   </style>
 </head>
@@ -25,7 +33,11 @@
 <main>
   <div class="kicker">Church of the Word</div>
   <h1>StudyBox Teaching Library</h1>
-  <p class="lede">Search archived Bible studies, open transcripts, and follow the audio map for each teaching.</p>
+  <p class="lede" id="lede">Search archived Bible studies, open transcripts, and follow the audio map for each teaching.</p>
+  <nav class="tabs" aria-label="Library sections">
+    <button class="tab active" type="button" data-view="teachings">Teachings</button>
+    <button class="tab" type="button" data-view="files">Calendar Files</button>
+  </nav>
   <form id="search"><input id="query" aria-label="Search teachings" placeholder="Search transcripts or Scripture"><button>Search</button></form>
   <section id="results" aria-live="polite"></section>
   <section id="reader"></section>
@@ -34,14 +46,24 @@
   const results = document.querySelector('#results');
   const reader = document.querySelector('#reader');
   const query = document.querySelector('#query');
+  const lede = document.querySelector('#lede');
+  let activeView = 'teachings';
   const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
   const formatTime = (seconds) => { const total = Math.max(0, Math.floor(Number(seconds) || 0)); return `${String(Math.floor(total / 3600)).padStart(2,'0')}:${String(Math.floor(total / 60) % 60).padStart(2,'0')}:${String(total % 60).padStart(2,'0')}`; };
+  const formatSize = (bytes) => { const value = Number(bytes); if (!Number.isFinite(value)) return ''; if (value < 1024 * 1024) return `${Math.max(1, Math.round(value / 1024))} KB`; return `${(value / (1024 * 1024)).toFixed(1)} MB`; };
   async function loadList() {
     results.innerHTML = '<p class="empty">Loading library...</p>';
     const response = await fetch(`/api/library?${query.value.trim() ? `q=${encodeURIComponent(query.value.trim())}&` : ''}limit=50`);
     const data = await response.json();
     results.innerHTML = data.items.length ? data.items.map((item) => `<button class="item" data-id="${escapeHtml(item.id)}"><strong>${escapeHtml(item.title)}</strong><small>${item.recorded_at ? new Date(item.recorded_at).toLocaleDateString() : ''} · ${formatTime(item.duration_seconds)}</small><p>${escapeHtml(item.description || item.match_preview || 'Open transcript')}</p></button>`).join('') : '<p class="empty">No teachings found.</p>';
     document.querySelectorAll('[data-id]').forEach((item) => item.addEventListener('click', () => loadReader(item.dataset.id)));
+  }
+  async function loadFiles() {
+    results.innerHTML = '<p class="empty">Loading calendar files...</p>';
+    const response = await fetch(`/api/calendar/files?${query.value.trim() ? `q=${encodeURIComponent(query.value.trim())}&` : ''}limit=200`);
+    if (!response.ok) throw new Error('Calendar files unavailable');
+    const data = await response.json();
+    results.innerHTML = data.items.length ? `<div class="file-grid">${data.items.map((item) => `<article class="file-card"><span class="tag">${escapeHtml(item.mimeType === 'application/pdf' ? 'PDF' : item.mimeType.split('/').pop().toUpperCase())}</span><h2>${escapeHtml(item.label)}</h2><p><strong>${escapeHtml(item.dayTitle)}</strong></p><p class="meta">Enoch Year ${escapeHtml(item.enochYear)} · Month ${escapeHtml(item.month)}, Day ${escapeHtml(item.day)}<br>${new Date(`${item.gregorianDate}T12:00:00`).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })}${item.sizeBytes ? ` · ${formatSize(item.sizeBytes)}` : ''}</p><div class="actions"><a class="download" href="${escapeHtml(item.url)}" target="_blank" rel="noopener">Open file</a><a class="download secondary" href="${escapeHtml(item.url)}" download>Download</a></div></article>`).join('')}</div>` : '<p class="empty">No calendar files found.</p>';
   }
   async function loadReader(id) {
     const response = await fetch(`/api/library/${encodeURIComponent(id)}`);
@@ -51,7 +73,21 @@
     document.querySelector('#back').addEventListener('click', () => { reader.innerHTML = ''; window.scrollTo({top: 0, behavior: 'smooth'}); });
     reader.scrollIntoView({ behavior: 'smooth' });
   }
-  document.querySelector('#search').addEventListener('submit', (event) => { event.preventDefault(); loadList().catch(() => { results.innerHTML = '<p class="empty">Library is temporarily unavailable.</p>'; }); });
+  function loadActiveView() {
+    reader.innerHTML = '';
+    const loader = activeView === 'files' ? loadFiles : loadList;
+    loader().catch(() => { results.innerHTML = '<p class="empty">Library is temporarily unavailable.</p>'; });
+  }
+  document.querySelectorAll('[data-view]').forEach((tab) => tab.addEventListener('click', () => {
+    activeView = tab.dataset.view;
+    document.querySelectorAll('[data-view]').forEach((item) => item.classList.toggle('active', item === tab));
+    query.value = '';
+    query.placeholder = activeView === 'files' ? 'Search calendar files or dates' : 'Search transcripts or Scripture';
+    query.setAttribute('aria-label', activeView === 'files' ? 'Search calendar files' : 'Search teachings');
+    lede.textContent = activeView === 'files' ? 'Find documents and images by the calendar day where they were shared.' : 'Search archived Bible studies, open transcripts, and follow the audio map for each teaching.';
+    loadActiveView();
+  }));
+  document.querySelector('#search').addEventListener('submit', (event) => { event.preventDefault(); loadActiveView(); });
   loadList().catch(() => { results.innerHTML = '<p class="empty">Library is temporarily unavailable.</p>'; });
 </script>
 </body>
