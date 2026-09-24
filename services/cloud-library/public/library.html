@@ -28,11 +28,17 @@
     .meta { color: #758071; font-size: 14px; } .actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0; }
     .marker { display: flex; gap: 14px; padding: 12px 0; border-bottom: 1px solid #e4e9e0; } .time { min-width: 58px; color: #668c43; font-weight: 800; }
     .empty { color: #758071; padding: 18px 0; } .back { position: sticky; top: 0; z-index: 2; width: 100%; margin: -22px -22px 16px; padding: 14px 18px; border-radius: 9px 9px 0 0; background: #edf3e9; color: #244f35; text-align: left; }
-    .item.selected { border-color: #668c43; background: #f1f6ee; box-shadow: inset 4px 0 #668c43; }
+    .item.selected, .file-card.selected { border-color: #668c43; background: #f1f6ee; box-shadow: inset 4px 0 #668c43; }
     .file-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); gap: 12px; }
-    .file-card { padding: 18px; border: 1px solid #dfe5db; border-radius: 8px; background: white; }
+    .file-card { display: block; width: 100%; padding: 18px; border: 1px solid #dfe5db; border-radius: 8px; background: white; color: inherit; text-align: left; }
     .file-card h2 { margin: 8px 0; font-size: 18px; line-height: 1.3; overflow-wrap: anywhere; }
     .file-card p { color: #4d584c; margin: 6px 0; } .file-card .actions { margin-bottom: 0; }
+    .file-preview { display: block; width: 100%; max-height: 62vh; object-fit: contain; border: 1px solid #dfe5db; border-radius: 8px; background: #f7f8f3; }
+    .file-preview-frame { display: block; width: 100%; height: 62vh; border: 1px solid #dfe5db; border-radius: 8px; background: #f7f8f3; }
+    main.reader-open .file-grid { display: block; }
+    main.reader-open .file-card { margin: 0 0 7px; padding: 11px 12px; }
+    main.reader-open .file-card h2 { margin: 5px 0; font-size: 14px; }
+    main.reader-open .file-card p { font-size: 11px; }
     .tag { display: inline-block; color: #4f6d3a; background: #edf3e9; border-radius: 999px; padding: 4px 8px; font-size: 12px; font-weight: 800; }
     @media (max-width: 760px) {
       form { flex-direction: column; } form button { width: 100%; }
@@ -66,6 +72,7 @@
   const lede = document.querySelector('#lede');
   const main = document.querySelector('main');
   let activeView = 'teachings';
+  let calendarFiles = [];
   const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
   const formatTime = (seconds) => { const total = Math.max(0, Math.floor(Number(seconds) || 0)); return `${String(Math.floor(total / 3600)).padStart(2,'0')}:${String(Math.floor(total / 60) % 60).padStart(2,'0')}:${String(total % 60).padStart(2,'0')}`; };
   const formatSize = (bytes) => { const value = Number(bytes); if (!Number.isFinite(value)) return ''; if (value < 1024 * 1024) return `${Math.max(1, Math.round(value / 1024))} KB`; return `${(value / (1024 * 1024)).toFixed(1)} MB`; };
@@ -81,7 +88,25 @@
     const response = await fetch(`/api/calendar/files?${query.value.trim() ? `q=${encodeURIComponent(query.value.trim())}&` : ''}limit=200`);
     if (!response.ok) throw new Error('Calendar files unavailable');
     const data = await response.json();
-    results.innerHTML = data.items.length ? `<div class="file-grid">${data.items.map((item) => `<article class="file-card"><span class="tag">${escapeHtml(item.mimeType === 'application/pdf' ? 'PDF' : item.mimeType.split('/').pop().toUpperCase())}</span><h2>${escapeHtml(item.label)}</h2><p><strong>${escapeHtml(item.dayTitle)}</strong></p><p class="meta">Enoch Year ${escapeHtml(item.enochYear)} · Month ${escapeHtml(item.month)}, Day ${escapeHtml(item.day)}<br>${new Date(`${item.gregorianDate}T12:00:00`).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })}${item.sizeBytes ? ` · ${formatSize(item.sizeBytes)}` : ''}</p><div class="actions"><a class="download" href="${escapeHtml(item.url)}" target="_blank" rel="noopener">Open file</a><a class="download secondary" href="${escapeHtml(item.url)}" download>Download</a></div></article>`).join('')}</div>` : '<p class="empty">No calendar files found.</p>';
+    calendarFiles = data.items;
+    results.innerHTML = data.items.length ? `<div class="file-grid">${data.items.map((item, index) => `<button class="file-card" type="button" data-file-index="${index}"><span class="tag">${escapeHtml(item.mimeType === 'application/pdf' ? 'PDF' : item.mimeType.split('/').pop().toUpperCase())}</span><h2>${escapeHtml(item.label)}</h2><p><strong>${escapeHtml(item.dayTitle)}</strong></p><p class="meta">Enoch Year ${escapeHtml(item.enochYear)} · Month ${escapeHtml(item.month)}, Day ${escapeHtml(item.day)}<br>${new Date(`${item.gregorianDate}T12:00:00`).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })}${item.sizeBytes ? ` · ${formatSize(item.sizeBytes)}` : ''}</p></button>`).join('')}</div>` : '<p class="empty">No calendar files found.</p>';
+    document.querySelectorAll('[data-file-index]').forEach((item) => item.addEventListener('click', () => loadFileReader(calendarFiles[Number(item.dataset.fileIndex)])));
+  }
+  function closeReader() {
+    reader.innerHTML = '';
+    main.classList.remove('reader-open');
+    document.querySelectorAll('[data-id], [data-file-index]').forEach((item) => item.classList.remove('selected'));
+  }
+  function loadFileReader(item) {
+    if (!item) return;
+    document.querySelectorAll('[data-file-index]').forEach((entry) => entry.classList.toggle('selected', Number(entry.dataset.fileIndex) === calendarFiles.indexOf(item)));
+    const isImage = String(item.mimeType || '').startsWith('image/');
+    const preview = isImage
+      ? `<img class="file-preview" src="${escapeHtml(item.url)}" alt="${escapeHtml(item.label)}">`
+      : `<iframe class="file-preview-frame" src="${escapeHtml(item.url)}" title="${escapeHtml(item.label)}"></iframe>`;
+    reader.innerHTML = `<article class="reader"><button class="back" id="back">← Calendar Files</button><div class="kicker">Calendar file</div><h2>${escapeHtml(item.label)}</h2><p><strong>${escapeHtml(item.dayTitle)}</strong></p><p class="meta">Enoch Year ${escapeHtml(item.enochYear)} · Month ${escapeHtml(item.month)}, Day ${escapeHtml(item.day)} · ${new Date(`${item.gregorianDate}T12:00:00`).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })}${item.sizeBytes ? ` · ${formatSize(item.sizeBytes)}` : ''}</p><div class="actions"><a class="download" href="${escapeHtml(item.url)}" target="_blank" rel="noopener">Open in new tab</a><a class="download secondary" href="${escapeHtml(item.url)}" download>Download</a></div>${preview}</article>`;
+    main.classList.add('reader-open');
+    document.querySelector('#back').addEventListener('click', closeReader);
   }
   async function loadReader(id) {
     document.querySelectorAll('[data-id]').forEach((item) => item.classList.toggle('selected', item.dataset.id === id));
@@ -90,11 +115,7 @@
     const recording = data.recording;
     reader.innerHTML = `<article class="reader"><button class="back" id="back">← Library</button><div class="kicker">Archived teaching</div><h2>${escapeHtml(recording.title)}</h2><p class="meta">${recording.recorded_at ? new Date(recording.recorded_at).toLocaleString() : ''} · ${formatTime(recording.duration_seconds)}</p><p>${escapeHtml(recording.description || '')}</p><div class="actions">${recording.audio_asset ? `<a class="download" href="/api/library/${encodeURIComponent(recording.id)}/assets/audio/download">Download audio</a>` : '<span class="meta">Audio archive is processing</span>'}${recording.zoom_asset ? `<a class="download secondary" href="/api/library/${encodeURIComponent(recording.id)}/assets/zoom/download">Download Zoom</a>` : ''}</div><h3>Audio map</h3>${data.markers.map((marker) => `<div class="marker"><span class="time">${formatTime(marker.timestamp_seconds)}</span><span>${escapeHtml(marker.label)}</span></div>`).join('') || '<p class="empty">No section markers yet.</p>'}<h3>Transcript sections</h3>${data.chunks.map((chunk) => `<div class="marker"><span class="time">${formatTime(chunk.start_seconds)}</span><span>${escapeHtml(chunk.text || '')}</span></div>`).join('') || '<p class="empty">Transcript is still processing.</p>'}</article>`;
     main.classList.add('reader-open');
-    document.querySelector('#back').addEventListener('click', () => {
-      reader.innerHTML = '';
-      main.classList.remove('reader-open');
-      document.querySelectorAll('[data-id]').forEach((item) => item.classList.remove('selected'));
-    });
+    document.querySelector('#back').addEventListener('click', closeReader);
   }
   function loadActiveView() {
     reader.innerHTML = '';
