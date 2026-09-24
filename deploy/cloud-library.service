@@ -1,0 +1,19 @@
+[Unit]
+Description=StudyBox Cloud Library API
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=deploy
+Group=deploy
+WorkingDirectory=/var/www/studybox/services/cloud-library
+EnvironmentFile=/etc/studybox/cloud-library.env
+ExecStart=/usr/bin/node /var/www/studybox/services/cloud-library/dist/server.js
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

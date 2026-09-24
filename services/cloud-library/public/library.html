@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>StudyBox Teaching Library</title>
+  <style>
+    :root { color-scheme: light; font-family: system-ui, -apple-system, sans-serif; color: #17180f; background: #f7f8f3; }
+    body { margin: 0; } main { max-width: 980px; margin: 0 auto; padding: 32px 18px 64px; }
+    a { color: inherit; } .kicker { color: #668c43; font-size: 12px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+    h1 { margin: 8px 0 10px; font-size: clamp(30px, 6vw, 52px); line-height: 1; } .lede { color: #657064; max-width: 640px; }
+    form { display: flex; gap: 8px; margin: 26px 0; } input { flex: 1; min-width: 0; padding: 13px 14px; border: 1px solid #cbd3c4; border-radius: 6px; font: inherit; background: #fff; }
+    button, .download { border: 0; border-radius: 6px; background: #244f35; color: white; padding: 12px 15px; font: inherit; font-weight: 700; cursor: pointer; text-decoration: none; }
+    button.secondary, .download.secondary { background: #e4ebdf; color: #244f35; } button:disabled { opacity: .55; cursor: wait; }
+    .item { display: block; width: 100%; text-align: left; margin: 10px 0; padding: 17px; border: 1px solid #dfe5db; border-radius: 6px; background: white; color: inherit; }
+    .item strong { display: block; font-size: 18px; } .item small { display: block; margin-top: 5px; color: #758071; } .item p { margin: 10px 0 0; color: #4d584c; }
+    .reader { margin-top: 26px; padding-top: 22px; border-top: 1px solid #dfe5db; } .reader h2 { font-size: clamp(24px, 5vw, 40px); margin: 8px 0; }
+    .meta { color: #758071; font-size: 14px; } .actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0; }
+    .marker { display: flex; gap: 14px; padding: 12px 0; border-bottom: 1px solid #e4e9e0; } .time { min-width: 58px; color: #668c43; font-weight: 800; }
+    .empty { color: #758071; padding: 18px 0; } .back { background: transparent; color: #244f35; padding-left: 0; }
+    @media (max-width: 520px) { form { flex-direction: column; } form button { width: 100%; } }
+  </style>
+</head>
+<body>
+<main>
+  <div class="kicker">Church of the Word</div>
+  <h1>StudyBox Teaching Library</h1>
+  <p class="lede">Search archived Bible studies, open transcripts, and follow the audio map for each teaching.</p>
+  <form id="search"><input id="query" aria-label="Search teachings" placeholder="Search transcripts or Scripture"><button>Search</button></form>
+  <section id="results" aria-live="polite"></section>
+  <section id="reader"></section>
+</main>
+<script>
+  const results = document.querySelector('#results');
+  const reader = document.querySelector('#reader');
+  const query = document.querySelector('#query');
+  const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
+  const formatTime = (seconds) => { const total = Math.max(0, Math.floor(Number(seconds) || 0)); return `${String(Math.floor(total / 3600)).padStart(2,'0')}:${String(Math.floor(total / 60) % 60).padStart(2,'0')}:${String(total % 60).padStart(2,'0')}`; };
+  async function loadList() {
+    results.innerHTML = '<p class="empty">Loading library...</p>';
+    const response = await fetch(`/api/library?${query.value.trim() ? `q=${encodeURIComponent(query.value.trim())}&` : ''}limit=50`);
+    const data = await response.json();
+    results.innerHTML = data.items.length ? data.items.map((item) => `<button class="item" data-id="${escapeHtml(item.id)}"><strong>${escapeHtml(item.title)}</strong><small>${item.recorded_at ? new Date(item.recorded_at).toLocaleDateString() : ''} · ${formatTime(item.duration_seconds)}</small><p>${escapeHtml(item.description || item.match_preview || 'Open transcript')}</p></button>`).join('') : '<p class="empty">No teachings found.</p>';
+    document.querySelectorAll('[data-id]').forEach((item) => item.addEventListener('click', () => loadReader(item.dataset.id)));
+  }
+  async function loadReader(id) {
+    const response = await fetch(`/api/library/${encodeURIComponent(id)}`);
+    const data = await response.json();
+    const recording = data.recording;
+    reader.innerHTML = `<article class="reader"><button class="back" id="back">← Library</button><div class="kicker">Archived teaching</div><h2>${escapeHtml(recording.title)}</h2><p class="meta">${recording.recorded_at ? new Date(recording.recorded_at).toLocaleString() : ''} · ${formatTime(recording.duration_seconds)}</p><p>${escapeHtml(recording.description || '')}</p><div class="actions">${recording.audio_asset ? `<a class="download" href="/api/library/${encodeURIComponent(recording.id)}/assets/audio/download">Download audio</a>` : '<span class="meta">Audio archive is processing</span>'}${recording.zoom_asset ? `<a class="download secondary" href="/api/library/${encodeURIComponent(recording.id)}/assets/zoom/download">Download Zoom</a>` : ''}</div><h3>Audio map</h3>${data.markers.map((marker) => `<div class="marker"><span class="time">${formatTime(marker.timestamp_seconds)}</span><span>${escapeHtml(marker.label)}</span></div>`).join('') || '<p class="empty">No section markers yet.</p>'}<h3>Transcript sections</h3>${data.chunks.map((chunk) => `<div class="marker"><span class="time">${formatTime(chunk.start_seconds)}</span><span>${escapeHtml(chunk.text || '')}</span></div>`).join('') || '<p class="empty">Transcript is still processing.</p>'}</article>`;
+    document.querySelector('#back').addEventListener('click', () => { reader.innerHTML = ''; window.scrollTo({top: 0, behavior: 'smooth'}); });
+    reader.scrollIntoView({ behavior: 'smooth' });
+  }
+  document.querySelector('#search').addEventListener('submit', (event) => { event.preventDefault(); loadList().catch(() => { results.innerHTML = '<p class="empty">Library is temporarily unavailable.</p>'; }); });
+  loadList().catch(() => { results.innerHTML = '<p class="empty">Library is temporarily unavailable.</p>'; });
+</script>
+</body>
+</html>
