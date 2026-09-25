@@ -1,6 +1,9 @@
 import cors from "cors";
 import express from "express";
 import { Pool } from "pg";
+import { GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -8,6 +11,77 @@ const port = Number(process.env.PORT ?? 4010);
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const app = express();
 const publicDir = join(dirname(fileURLToPath(import.meta.url)), "../public");
+
+type ArchivedAsset = {
+  fileName?: string;
+  mimeType?: string;
+  archiveKey?: string;
+  archiveBucket?: string;
+  archiveEndpoint?: string;
+  archiveProvider?: string;
+};
+
+let archiveCredentialsPromise: Promise<{
+  accessKeyId: string;
+  secretAccessKey: string;
+}> | null = null;
+
+function getArchiveCredentials(): Promise<{
+  accessKeyId: string;
+  secretAccessKey: string;
+}> {
+  if (!archiveCredentialsPromise) {
+    const accessKeyPath =
+      process.env.STUDYBOX_S3_ACCESS_KEY_FILE ?? "/home/studybox/accesskey";
+    const secretKeyPath =
+      process.env.STUDYBOX_S3_SECRET_KEY_FILE ?? "/home/studybox/secretkey";
+
+    archiveCredentialsPromise = Promise.all([
+      readFile(accessKeyPath, "utf8"),
+      readFile(secretKeyPath, "utf8"),
+    ]).then(([accessKeyId, secretAccessKey]) => ({
+      accessKeyId: accessKeyId.trim(),
+      secretAccessKey: secretAccessKey.trim(),
+    }));
+  }
+
+  return archiveCredentialsPromise;
+}
+
+function safeDownloadName(fileName: string) {
+  return fileName.replace(/[\r\n"\\]/g, "_");
+}
+
+async function getArchiveDownloadUrl(asset: ArchivedAsset) {
+  if (
+    asset.archiveProvider !== "s3" ||
+    !asset.archiveEndpoint ||
+    !asset.archiveBucket ||
+    !asset.archiveKey
+  ) {
+    return null;
+  }
+
+  const credentials = await getArchiveCredentials();
+  const client = new S3Client({
+    endpoint: asset.archiveEndpoint,
+    region: "us-east-1",
+    forcePathStyle: true,
+    credentials,
+  });
+  const fileName = safeDownloadName(asset.fileName ?? "studybox-recording");
+
+  return getSignedUrl(
+    client,
+    new GetObjectCommand({
+      Bucket: asset.archiveBucket,
+      Key: asset.archiveKey,
+      ResponseContentDisposition: `attachment; filename="${fileName}"`,
+      ...(asset.mimeType ? { ResponseContentType: asset.mimeType } : {}),
+    }),
+    { expiresIn: 900 }
+  );
+}
 
 app.use(cors());
 app.use(express.json({ limit: "2mb" }));
@@ -51,6 +125,43 @@ app.get("/api/library", async (request, response, next) => {
     next(error);
   }
 });
+
+app.get(
+  "/api/library/:id/assets/:assetKind/download",
+  async (request, response, next) => {
+    try {
+      const assetColumn =
+        request.params.assetKind === "zoom"
+          ? "zoom_asset"
+          : request.params.assetKind === "audio"
+            ? "audio_asset"
+            : null;
+
+      if (!assetColumn) {
+        response.status(404).json({ error: "Recording asset not found" });
+        return;
+      }
+
+      const result = await pool.query(
+        `SELECT ${assetColumn} AS asset
+           FROM library_recordings
+          WHERE id = $1 AND visibility = 'public'`,
+        [request.params.id]
+      );
+      const asset = result.rows[0]?.asset as ArchivedAsset | null | undefined;
+      const archiveUrl = asset ? await getArchiveDownloadUrl(asset) : null;
+
+      if (!archiveUrl) {
+        response.status(404).json({ error: "Recording asset not found" });
+        return;
+      }
+
+      response.redirect(302, archiveUrl);
+    } catch (error) {
+      next(error);
+    }
+  }
+);
 
 app.get("/api/library/:id", async (request, response, next) => {
   try {
