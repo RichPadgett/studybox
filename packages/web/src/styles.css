@@ -514,6 +514,67 @@ a:hover { color: #8f6a08; }
   margin-left: 0;
 }
 
+.shareTimestamps {
+  border-bottom: 1px solid rgba(23,24,15,0.14);
+  padding: 24px 0 28px;
+}
+
+.shareTimestampsHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 14px;
+}
+
+.shareTimestampsHeader p {
+  margin: 7px 0 0;
+  color: rgba(23,24,15,0.58);
+  font-family: 'Inter', -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif;
+  font-size: 13px;
+}
+
+.shareTimestampsCopy {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid rgba(143,106,8,0.35);
+  padding: 8px 12px;
+  color: #8F6A08;
+  font-family: 'Inter', sans-serif;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.shareTimestampsCopy:hover { background: #FFFDF5; }
+
+.shareTimestampsText {
+  display: block;
+  width: 100%;
+  min-height: 190px;
+  resize: vertical;
+  border: 1px solid rgba(23,24,15,0.16);
+  padding: 14px 16px;
+  background: #F7F6F1;
+  color: #20211B;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.65;
+  font-variant-numeric: tabular-nums;
+}
+
+.shareTimestampsError {
+  margin: 9px 0 0;
+  color: #9B451D;
+  font-family: 'Inter', sans-serif;
+  font-size: 12px;
+}
+
+@media (max-width: 640px) {
+  .shareTimestampsHeader { flex-direction: column; }
+}
+
 .readerAudio {
   border-bottom: 1px solid rgba(23,24,15,0.14);
   padding: 24px 0 28px;
@@ -676,6 +737,11 @@ a:hover { color: #8f6a08; }
   font-size: 15px;
   margin-bottom: 16px;
 }
+
+.toggleRow { display: flex; align-items: flex-start; gap: 10px; cursor: pointer; }
+.toggleRow input { margin-top: 3px; }
+.toggleRow strong, .toggleRow small { display: block; }
+.toggleRow small { margin-top: 4px; color: rgba(23,24,15,0.55); font-size: 12.5px; }
 
 .panel > h2.sm {
   font-size: 14px;
@@ -1585,24 +1651,6 @@ input, select {
   text-align: center;
   color: rgba(23,24,15,0.35);
   font-size: 12px;
-}
-
-.adminLink {
-  position: absolute;
-  top: 20px;
-  right: 20px;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  background: #FFFFFF;
-  border: 1px solid rgba(23,24,15,0.1);
-  border-radius: 8px;
-  color: #17180F;
-  font-size: 13px;
-  font-weight: 700;
-  min-height: 34px;
-  padding: 0 12px;
-  text-decoration: none;
 }
 
 /* ── Responsive ── */

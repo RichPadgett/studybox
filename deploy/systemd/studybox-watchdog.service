@@ -1,0 +1,10 @@
+[Unit]
+Description=StudyBox state-aware service watchdog
+After=network-online.target studybox-api.service studybox-web.service cloudflared.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+EnvironmentFile=-/etc/studybox/studybox.env
+ExecStart=/opt/studybox/scripts/studybox-watchdog.sh

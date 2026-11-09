@@ -1,0 +1,12 @@
+[Unit]
+Description=Sync completed StudyBox teachings to Hetzner and S3
+After=network-online.target studybox-api.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=studybox
+Group=studybox
+WorkingDirectory=/opt/studybox
+EnvironmentFile=-/etc/studybox/studybox.env
+ExecStart=/usr/bin/node /opt/studybox/scripts/sync-cloud-library.mjs

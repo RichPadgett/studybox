@@ -46,7 +46,7 @@ test("search requires all terms and respects result limits", async () => {
 async function seed(library: TranscriptLibraryService, transcriptPath: string, text = "Daniel 7 and Revelation 13 are compared in the first-century timeline.", startSeconds = 1200, label = "Daniel 7 and Revelation 13", scripture = "Daniel 7:1-14"): Promise<void> {
   const dbPath = join(library.getState().rootDir, "studybox.db");
   const db = await open(dbPath);
-  await run(db, "INSERT INTO documents VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", "recording-1", "recording-uuid-1", "audio-uuid-1", "sha256-1", "Daniel and Revelation", "A study of prophecy", transcriptPath, "completed", "2026-09-05T12:00:00.000Z", "2026-09-05T12:30:00.000Z", null);
+  await run(db, "INSERT INTO documents (recording_id, recording_uuid, source_file_uuid, source_file_sha256, title, description, full_text_path, status, created_at, updated_at, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", "recording-1", "recording-uuid-1", "audio-uuid-1", "sha256-1", "Daniel and Revelation", "A study of prophecy", transcriptPath, "completed", "2026-09-05T12:00:00.000Z", "2026-09-05T12:30:00.000Z", null);
   await run(db, "INSERT INTO chunks VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", "recording-1-chunk-0", "chunk-uuid-1", "recording-1", 0, startSeconds, startSeconds + 600, "chunk-000.m4a", text, "transcribed", null);
   await run(db, "INSERT INTO transcript_fts VALUES (?, ?, ?)", "recording-1-chunk-0", "recording-1", text);
   await run(db, "INSERT INTO markers (recording_id, timestamp_seconds, label, scripture, kind) VALUES (?, ?, ?, ?, ?)", "recording-1", startSeconds, label, scripture, "major");

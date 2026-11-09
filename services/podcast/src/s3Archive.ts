@@ -41,10 +41,14 @@ export class S3ZoomArchive {
     return { archiveProvider: "s3", archiveBucket: this.bucket, archiveKey: key, archiveEndpoint: this.endpoint, archiveSha256: sha256, archiveEtag: put.ETag?.replaceAll('"', "") };
   }
 
-  async signedUrl(bucket: string, key: string): Promise<string | undefined> {
+  async signedUrl(bucket: string, key: string, downloadFileName?: string): Promise<string | undefined> {
     await this.configure();
     if (!this.client) return undefined;
-    return getSignedUrl(this.client, new GetObjectCommand({ Bucket: bucket, Key: key }), { expiresIn: 900 });
+    return getSignedUrl(this.client, new GetObjectCommand({
+      Bucket: bucket,
+      Key: key,
+      ResponseContentDisposition: downloadFileName ? `attachment; filename="${downloadFileName}"` : undefined
+    }), { expiresIn: 900 });
   }
 
   private async configure(): Promise<void> {

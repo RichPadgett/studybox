@@ -1,0 +1,14 @@
+[Unit]
+Description=StudyBox watchdog boot confirmation
+After=network-online.target
+Wants=network-online.target
+Before=studybox-api.service
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/bin/sh -c 'mkdir -p /var/lib/studybox; date -Is > /var/lib/studybox/watchdog-boot-live'
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

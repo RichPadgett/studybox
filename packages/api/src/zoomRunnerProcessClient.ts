@@ -13,9 +13,11 @@ interface PendingCommand {
 
 export class ZoomRunnerProcessClient implements ZoomMeetingRunnerClient {
   private child?: ChildProcessWithoutNullStreams;
+  private resetInFlight?: Promise<void>;
+  private readonly expectedExits = new WeakSet<ChildProcessWithoutNullStreams>();
   private state: MeetingState = {
     status: "idle",
-    title: "Weekly Bible Study",
+    title: "Weekly & Appointed Assembly's",
     moderationMode: "moderated",
     participants: [],
     lobbyRequests: [],
@@ -29,6 +31,56 @@ export class ZoomRunnerProcessClient implements ZoomMeetingRunnerClient {
 
   async startMeeting(payload?: ZoomRunnerStartMeetingPayload): Promise<void> {
     await this.send({ id: createId(), type: "startMeeting", ...payload });
+  }
+
+  async reset(): Promise<void> {
+    if (this.resetInFlight) return this.resetInFlight;
+    this.resetInFlight = this.resetOnce().finally(() => {
+      this.resetInFlight = undefined;
+    });
+    return this.resetInFlight;
+  }
+
+  private async resetOnce(): Promise<void> {
+    const child = this.child;
+    if (!child || child.exitCode !== null) {
+      this.child = undefined;
+      return;
+    }
+
+    this.expectedExits.add(child);
+    this.state = {
+      ...this.state,
+      status: "starting",
+      reconnecting: true,
+      lastEvent: "Restarting Zoom runner"
+    };
+
+    await new Promise<void>((resolve, reject) => {
+      let completed = false;
+      const finish = () => {
+        if (completed) return;
+        completed = true;
+        clearTimeout(forceTimer);
+        clearTimeout(giveUpTimer);
+        resolve();
+      };
+      const forceTimer = setTimeout(() => {
+        if (child.exitCode === null) child.kill("SIGKILL");
+      }, 3_000);
+      const giveUpTimer = setTimeout(() => {
+        if (completed) return;
+        completed = true;
+        clearTimeout(forceTimer);
+        reject(new Error("Zoom runner did not stop during reconnect reset"));
+      }, 5_000);
+      forceTimer.unref();
+      giveUpTimer.unref();
+      child.once("exit", finish);
+      if (!child.kill("SIGTERM")) finish();
+    });
+
+    if (this.child === child) this.child = undefined;
   }
 
   async endMeeting(): Promise<void> {
@@ -85,7 +137,8 @@ export class ZoomRunnerProcessClient implements ZoomMeetingRunnerClient {
     return this.send({ id: createId(), type: "getState" });
   }
 
-  private send(command: ZoomRunnerCommand): Promise<MeetingState> {
+  private async send(command: ZoomRunnerCommand): Promise<MeetingState> {
+    if (this.resetInFlight) await this.resetInFlight;
     const child = this.ensureStarted();
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -103,22 +156,26 @@ export class ZoomRunnerProcessClient implements ZoomMeetingRunnerClient {
       return this.child;
     }
 
-    this.child = spawn(isAbsolute(this.command) ? this.command : projectPath(this.command), this.args, {
+    const child = spawn(isAbsolute(this.command) ? this.command : projectPath(this.command), this.args, {
       cwd: process.env.ZOOM_RUNNER_CWD?.trim() || projectPath(),
       env: process.env
     });
+    this.child = child;
 
-    const stdout = createInterface({ input: this.child.stdout });
+    const stdout = createInterface({ input: child.stdout });
     stdout.on("line", (line) => this.handleLine(line));
 
-    this.child.stderr.on("data", (chunk: Buffer) => {
+    child.stderr.on("data", (chunk: Buffer) => {
+      const message = chunk.toString("utf8").trim();
+      console.error(`[zoom-runner] ${message}`);
       this.state = {
         ...this.state,
-        lastEvent: `Runner stderr: ${chunk.toString("utf8").trim()}`
+        lastEvent: `Runner stderr: ${message}`
       };
     });
 
-    this.child.once("error", (error) => {
+    child.once("error", (error) => {
+      console.error(`[zoom-runner] process error: ${error.message}`);
       this.state = {
         ...this.state,
         status: "error",
@@ -126,21 +183,26 @@ export class ZoomRunnerProcessClient implements ZoomMeetingRunnerClient {
       };
     });
 
-    this.child.on("exit", (code) => {
+    child.on("exit", (code, signal) => {
       for (const pending of this.pending.values()) {
         clearTimeout(pending.timeout);
         pending.reject(new Error(`Zoom runner exited with code ${code ?? "unknown"}`));
       }
       this.pending.clear();
-      this.child = undefined;
+      if (this.child === child) this.child = undefined;
+      const expected = this.expectedExits.has(child);
+      console.error(`[zoom-runner] exited code=${code ?? "unknown"} signal=${signal ?? "none"} expected=${expected}`);
       this.state = {
         ...this.state,
-        status: "error",
-        lastEvent: `Zoom runner exited with code ${code ?? "unknown"}`
+        status: expected ? "starting" : "error",
+        reconnecting: expected,
+        lastEvent: expected
+          ? "Zoom runner stopped for reconnect"
+          : `Zoom runner exited with code ${code ?? "unknown"}`
       };
     });
 
-    return this.child;
+    return child;
   }
 
   private handleLine(line: string): void {
@@ -190,6 +252,9 @@ export class ZoomRunnerProcessClient implements ZoomMeetingRunnerClient {
   private mergeRunnerState(runnerState: MeetingState): MeetingState {
     return {
       ...runnerState,
+      // Keep the user-facing meeting name owned by StudyBox even when the
+      // native runner reports its own default title.
+      title: "Weekly & Appointed Assembly's",
       lobbyRequests: this.state.lobbyRequests
     };
   }

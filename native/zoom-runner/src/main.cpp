@@ -36,11 +36,6 @@ StartMeetingRequest startMeetingRequest(const RunnerCommand& command) {
 void execute(const RunnerCommand& command) {
   if (command.type == "startMeeting") {
     state = zoomAdapter().startMeeting(startMeetingRequest(command), state);
-    if (state.status != "error") {
-      state.status = "live";
-      state.meetingId = field(command, "meetingNumber");
-      state.startedAt = nowIso8601();
-    }
     std::cout << eventJson("meeting.state", state) << std::endl;
     std::cout << responseJson(command.id, state.status != "error", state, state.status == "error" ? state.lastEvent : "") << std::endl;
     return;

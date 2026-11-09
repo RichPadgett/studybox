@@ -6,6 +6,7 @@ import { projectPath } from "./paths.js";
 const settingsPath = projectPath("data/settings.json");
 
 export const defaultSettings: StudyBoxSettings = {
+  testMode: false,
   schedule: {
     dayOfWeek: "Saturday",
     time: "11:00",

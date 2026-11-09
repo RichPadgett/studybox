@@ -6,13 +6,13 @@ import {
   CalendarClock,
   CloudUpload,
   ClipboardList,
+  Copy,
   Crown,
   Disc3,
   Download,
   ExternalLink,
   Eye,
   Gauge,
-  KeyRound,
   Library,
   Mic,
   MonitorDot,
@@ -28,7 +28,7 @@ import {
   Users
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { ApiError, connectWifi, createLibraryShare, downloadRecordingAsset, getPublicLibraryAudio, getPublicLibraryDocument, getPublicLibraryShare, getPublicLibraryShareAudio, getSnapshot, getTranscript, getTranscriptAudio, loginAdmin, pollZoomDeviceToken, postAction, refreshZoomToken, requestMeetingJoin, saveLibraryTitle, saveSettings, scanWifiNetworks, searchPublicLibrary, searchTranscriptLibrary, setAdminToken, setDashboardViewerId, startZoomDeviceAuthorization, validateAdminSession } from "./api.js";
+import { ApiError, connectWifi, createLibraryShare, downloadRecordingAsset, getLibraryPublicationStatus, getPublicLibraryAudio, getPublicLibraryDocument, getPublicLibraryShare, getPublicLibraryShareAudio, getSnapshot, getTranscript, getTranscriptAudio, loginAdmin, pollZoomDeviceToken, postAction, publishLibraryRecording, refreshZoomToken, requestMeetingJoin, saveLibraryTitle, saveSettings, scanWifiNetworks, searchPublicLibrary, searchTranscriptLibrary, setAdminToken, setDashboardViewerId, startZoomDeviceAuthorization, validateAdminSession } from "./api.js";
 
 const primaryNavItems = [
   { id: "dashboard", label: "Dashboard", icon: Gauge },
@@ -282,8 +282,6 @@ function PublicJoinPage({ snapshot, error }: { snapshot: StudyBoxSnapshot; error
 
   return (
     <main className="publicPage" style={{ position: "relative" }}>
-      <a className="adminLink" href="/admin"><KeyRound size={14} /> Admin</a>
-
       <div className="publicInner">
         {/* Hero */}
         <div className="publicHero">
@@ -338,19 +336,6 @@ function PublicJoinPage({ snapshot, error }: { snapshot: StudyBoxSnapshot; error
           <span>{recordingStatus}</span>
           <span className="sep" />
           <span style={{ color: "rgba(23,24,15,0.35)" }}>{snapshot.settings.schedule.timezone}</span>
-        </div>
-
-        {/* Podcast promo */}
-        <div className="podcastPromo">
-          <div className="podcastPromoText">
-            <div className="podcastPromoEyebrow">Previous Teachings</div>
-            <h3>Listen to previous teachings</h3>
-            <p>Hear recent Church of the Word Bible studies and browse their transcripts.</p>
-          </div>
-          <div className="podcastPromoActions">
-            <a className="podcastPromoBtn" href="https://open.spotify.com/show/0R8U9lsiYV4RTKODWZbRo6" target="_blank" rel="noreferrer">Listen to Previous Teachings</a>
-            <a className="podcastLibraryBtn" href="/library"><Library size={16} /> Browse the Library</a>
-          </div>
         </div>
 
         <div className="publicFooter">StudyBox · powered for Church of the Word</div>
@@ -729,10 +714,10 @@ function TranscriptLibrary({ snapshot, adminUnlocked, setError, lockAdmin }: { s
         <div className="libraryRecentList">
           {snapshot.library.documents.length === 0
             ? <div className="mutedText">No transcripts have been archived yet.</div>
-            : sortTranscriptDocuments(snapshot.library.documents).slice(0, 20).map((document) => (
+            : sortTranscriptDocuments(snapshot.library.documents, snapshot.podcast.recordings).slice(0, 20).map((document) => (
               <button key={document.recordingId} className="libraryRecentItem" onClick={() => void openDocument(document.recordingId)}>
                 <span>{transcriptDisplayTitle(document, snapshot.podcast.recordings)}</span>
-                <span>{document.recordedAt ? formatReaderDate(document.recordedAt) : `${document.chunks.length} sections`}</span>
+                <span>{document.recordedAt ? formatReaderDate(document.recordedAt) : `${document.chunkCount ?? document.chunks.length} sections`}</span>
               </button>
             ))}
         </div>
@@ -748,10 +733,14 @@ function transcriptDisplayTitle(document: TranscriptDocument, recordings: StudyB
   return title ?? `Bible study recording - ${formatReaderDate(document.createdAt)}`;
 }
 
-function sortTranscriptDocuments(documents: TranscriptDocument[]): TranscriptDocument[] {
+function sortTranscriptDocuments(
+  documents: TranscriptDocument[],
+  recordings: StudyBoxSnapshot["podcast"]["recordings"]
+): TranscriptDocument[] {
+  const recordingStartedAt = new Map(recordings.map((recording) => [recording.id, recording.startedAt]));
   return [...documents].sort((a, b) => {
-    const aDate = Date.parse(a.recordedAt ?? a.createdAt);
-    const bDate = Date.parse(b.recordedAt ?? b.createdAt);
+    const aDate = Date.parse(recordingStartedAt.get(a.recordingId) ?? a.recordedAt ?? a.createdAt);
+    const bDate = Date.parse(recordingStartedAt.get(b.recordingId) ?? b.recordedAt ?? b.createdAt);
     return bDate - aDate || b.recordingId.localeCompare(a.recordingId);
   });
 }
@@ -809,7 +798,7 @@ function PublicLibraryPage({ snapshot }: { snapshot: StudyBoxSnapshot }) {
         <button type="submit" disabled={searching}>{searching ? "Searching..." : "Search"}</button>
       </form>
       {results.length > 0 && <section className="publicLibraryResults"><div className="readerSectionLabel">Search results</div>{results.map((result, index) => { const document = snapshot.library.documents.find((candidate) => candidate.recordingId === result.recordingId); const resultTitle = isUsableTranscriptTitle(result.recordingTitle) ? result.recordingTitle : undefined; return <button className="publicLibraryItem" key={`${result.recordingId}-${index}`} onClick={() => setSelectedId(result.recordingId)}><strong>{document ? transcriptDisplayTitle(document, snapshot.podcast.recordings) : resultTitle ?? "Study transcript"}</strong><span>{result.timestampLabel}</span><p>{result.snippet}</p></button>; })}</section>}
-      <section className="publicLibraryResults"><div className="readerSectionLabel">Recent studies</div>{snapshot.library.documents.length === 0 ? <p className="mutedText">No transcripts are available yet.</p> : sortTranscriptDocuments(snapshot.library.documents).map((document) => <button className="publicLibraryItem" key={document.recordingId} onClick={() => setSelectedId(document.recordingId)}><strong>{transcriptDisplayTitle(document, snapshot.podcast.recordings)}</strong><span>{document.recordedAt ? formatReaderDate(document.recordedAt) : `${document.chunks.length} timed sections`}</span><p>{document.description ?? "Open transcript"}</p></button>)}</section>
+      <section className="publicLibraryResults"><div className="readerSectionLabel">Recent studies</div>{snapshot.library.documents.length === 0 ? <p className="mutedText">No transcripts are available yet.</p> : sortTranscriptDocuments(snapshot.library.documents, snapshot.podcast.recordings).map((document) => <button className="publicLibraryItem" key={document.recordingId} onClick={() => setSelectedId(document.recordingId)}><strong>{transcriptDisplayTitle(document, snapshot.podcast.recordings)}</strong><span>{document.recordedAt ? formatReaderDate(document.recordedAt) : `${document.chunkCount ?? document.chunks.length} timed sections`}</span><p>{document.description ?? "Open transcript"}</p></button>)}</section>
     </main>
   );
 }
@@ -841,6 +830,8 @@ function PublicLibraryShare({ token }: { token: string }) {
   const [activeChunk, setActiveChunk] = useState(0);
   const [audioUrl, setAudioUrl] = useState<string>();
   const [audioLoading, setAudioLoading] = useState(false);
+  const [timestampsCopied, setTimestampsCopied] = useState(false);
+  const [timestampCopyError, setTimestampCopyError] = useState(false);
 
   useEffect(() => {
     void getPublicLibraryShare(token)
@@ -855,6 +846,7 @@ function PublicLibraryShare({ token }: { token: string }) {
 
   const { document, fullText } = entry;
   const transcriptSections = parseTranscript(fullText ?? "");
+  const spotifyTimestamps = formatSpotifyTimestamps(document);
   const audioPath = (chunkIndex: number) => `/api/library/share/${encodeURIComponent(token)}/audio/${chunkIndex}`;
 
   async function playChunk(chunkIndex: number) {
@@ -868,12 +860,22 @@ function PublicLibraryShare({ token }: { token: string }) {
     } finally { setAudioLoading(false); }
   }
 
+  async function copyTimestamps() {
+    try {
+      await navigator.clipboard.writeText(spotifyTimestamps);
+      setTimestampsCopied(true);
+      setTimestampCopyError(false);
+      window.setTimeout(() => setTimestampsCopied(false), 2000);
+    } catch {
+      setTimestampCopyError(true);
+    }
+  }
+
   return (
     <main className="publicSharePage">
       <article className="transcriptReader publicShareReader">
         <div className="readerToolbar">
           <span className="readerKicker">StudyBox shared transcript</span>
-          <a className="readerDownload" href={`/api/library/share/${encodeURIComponent(token)}`} download={`${transcriptTitle(document)}.json`}>Download record</a>
         </div>
         <header className="readerHeader">
           <div className="readerKicker">Church of the Word</div>
@@ -881,7 +883,24 @@ function PublicLibraryShare({ token }: { token: string }) {
           <div className="readerSubheading">Bible study recording</div>
           <p>{document.description ?? "No description available."}</p>
           <div className="readerMeta"><span>{document.chunks.length} timed sections</span><span>{document.recordedAt ? `Recorded ${formatReaderDate(document.recordedAt)}` : `Updated ${formatReaderDate(document.updatedAt)}`}</span></div>
+          <div className="readerAssetActions">
+            <a className="readerDownload" href={`/api/library/share/${encodeURIComponent(token)}/assets/audio/download`} download><Download size={15} /> Download full audio</a>
+            <a className="readerDownload" href={`/api/library/share/${encodeURIComponent(token)}`} download={`${transcriptTitle(document)}.json`}>Download transcript data</a>
+          </div>
         </header>
+        <section className="shareTimestamps" aria-labelledby="share-timestamps-heading">
+          <div className="shareTimestampsHeader">
+            <div>
+              <div className="readerSectionLabel" id="share-timestamps-heading">Spotify timestamps</div>
+              <p>Copy these minute markers into the Spotify episode description.</p>
+            </div>
+            <button className="shareTimestampsCopy" onClick={() => void copyTimestamps()} disabled={!spotifyTimestamps}>
+              <Copy size={15} /> {timestampsCopied ? "Copied" : "Copy timestamps"}
+            </button>
+          </div>
+          <textarea className="shareTimestampsText" readOnly value={spotifyTimestamps} aria-label="Spotify timestamp text" />
+          {timestampCopyError && <p className="shareTimestampsError">Automatic copy was unavailable. Select the text above and copy it manually.</p>}
+        </section>
         <section className="readerAudio" aria-label="Audio map">
           <div className="readerSectionLabel">Audio map</div>
           {audioUrl ? <audio className="readerPlayer" controls src={audioUrl} autoFocus /> : <div className="readerAudioEmpty">Select a section to listen.</div>}
@@ -903,6 +922,23 @@ function PublicLibraryShare({ token }: { token: string }) {
   );
 }
 
+function formatSpotifyTimestamps(document: TranscriptDocument): string {
+  const markers = document.markers.length > 0
+    ? document.markers.map((marker) => ({
+        timestampSeconds: marker.timestampSeconds,
+        label: `${marker.label}${marker.scripture ? ` — ${marker.scripture}` : ""}`
+      }))
+    : document.chunks.map((chunk) => ({
+        timestampSeconds: chunk.startSeconds,
+        label: transcriptChunkLabel(document, chunk)
+      }));
+
+  return markers
+    .sort((a, b) => a.timestampSeconds - b.timestampSeconds)
+    .map((marker) => `${formatReaderTimestamp(marker.timestampSeconds)} ${marker.label}`)
+    .join("\n");
+}
+
 function TranscriptReader({ entry, onBack, adminUnlocked, setError, lockAdmin }: { entry: { document: TranscriptDocument; fullText?: string; recording?: Recording }; onBack: () => void; adminUnlocked: boolean; setError: (e?: string) => void; lockAdmin: () => void }) {
   const { document, fullText, recording } = entry;
   const [activeChunk, setActiveChunk] = useState(0);
@@ -912,9 +948,28 @@ function TranscriptReader({ entry, onBack, adminUnlocked, setError, lockAdmin }:
   const [sharing, setSharing] = useState(false);
   const [title, setTitle] = useState(document.title ?? recording?.title ?? "");
   const [savingTitle, setSavingTitle] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+  const [publicationStatus, setPublicationStatus] = useState<"idle" | "publishing" | "published" | "failed">("idle");
+  const [publicationError, setPublicationError] = useState<string>();
   const transcriptSections = parseTranscript(fullText ?? "");
 
   useEffect(() => () => { if (audioUrl) URL.revokeObjectURL(audioUrl); }, [audioUrl]);
+  useEffect(() => {
+    let active = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    async function refreshPublicationStatus() {
+      if (!adminUnlocked) return;
+      try {
+        const next = await getLibraryPublicationStatus(document.recordingId);
+        if (!active) return;
+        setPublicationStatus(next.status);
+        setPublicationError(next.error);
+        if (next.status === "publishing") timer = setTimeout(() => void refreshPublicationStatus(), 3000);
+      } catch { /* The reader remains usable if the status endpoint is temporarily unavailable. */ }
+    }
+    void refreshPublicationStatus();
+    return () => { active = false; if (timer) clearTimeout(timer); };
+  }, [adminUnlocked, document.recordingId]);
 
   async function playChunk(chunkIndex: number) {
     if (!adminUnlocked) { setError("Enter the admin PIN before playing transcript audio."); return; }
@@ -959,11 +1014,28 @@ function TranscriptReader({ entry, onBack, adminUnlocked, setError, lockAdmin }:
       document.title = title.trim().replace(/\s+/g, " ");
       if (recording) recording.title = document.title;
       setTitle(document.title);
+      setPublicationStatus("idle");
+      setPublicationError(undefined);
       setError(undefined);
     } catch (caught) {
       if (isAdminAuthError(caught)) lockAdmin();
       setError(caught instanceof Error ? caught.message : "Title could not be saved");
     } finally { setSavingTitle(false); }
+  }
+
+  async function publishRecording() {
+    if (!adminUnlocked) { setError("Enter the admin PIN before publishing a transcript."); return; }
+    if (!title.trim()) { setError("Set the teaching title before publishing."); return; }
+    setPublishing(true);
+    try {
+      const result = await publishLibraryRecording(document.recordingId);
+      setPublicationStatus(result.status);
+      setPublicationError(undefined);
+      setError(undefined);
+    } catch (caught) {
+      if (isAdminAuthError(caught)) lockAdmin();
+      setError(caught instanceof Error ? caught.message : "Public publication could not be started");
+    } finally { setPublishing(false); }
   }
 
   return (
@@ -979,7 +1051,10 @@ function TranscriptReader({ entry, onBack, adminUnlocked, setError, lockAdmin }:
         <div className="readerTitleEditor">
           <input aria-label="Teaching title" maxLength={180} value={title} onChange={(event) => setTitle(event.target.value)} />
           <button className="readerDownload" onClick={() => void saveTitle()} disabled={savingTitle || !title.trim()}><Save size={15} /> {savingTitle ? "Saving..." : "Save title"}</button>
+          <button className="readerDownload" onClick={() => void publishRecording()} disabled={publishing || publicationStatus === "publishing" || publicationStatus === "published" || !title.trim()}><CloudUpload size={15} /> {publicationStatus === "published" ? "Published" : publicationStatus === "publishing" || publishing ? "Publishing..." : publicationStatus === "failed" ? "Retry publish" : "Publish public"}</button>
         </div>
+        {publicationStatus === "failed" && <div className="shareNotice">Public publication failed{publicationError ? `: ${publicationError}` : "."} Fix the issue, then retry.</div>}
+        {publicationStatus === "published" && <div className="shareNotice">Published to the public library.</div>}
         <div className="readerSubheading">Bible study recording</div>
         <p>{document.description ?? "No description available."}</p>
         <div className="readerMeta"><span>{document.chunks.length} timed sections</span><span>{document.recordedAt ? `Recorded ${formatReaderDate(document.recordedAt)}` : `Updated ${formatReaderDate(document.updatedAt)}`}</span></div>
@@ -1030,15 +1105,16 @@ function formatReaderDate(value: string): string {
 
 // ── Backup ────────────────────────────────────────────────────────────────────
 
-function BackupView({ snapshot, run, adminUnlocked }: { snapshot: StudyBoxSnapshot; run: (path: string, body?: unknown) => Promise<void>; adminUnlocked: boolean }) {
+function BackupView({ snapshot }: { snapshot: StudyBoxSnapshot; run: (path: string, body?: unknown) => Promise<void>; adminUnlocked: boolean }) {
   const activeBackup = snapshot.backup.bundles.find((b) => b.id === snapshot.backup.activeBundleId);
   return (
     <div className="stack">
       <div className="metricGrid">
-        <Metric label="Target"   value={snapshot.backup.target}                   detail={snapshot.backup.mode} />
-        <Metric label="Pending"  value={snapshot.backup.pendingCount.toString()}   detail="waiting to upload" />
-        <Metric label="Uploaded" value={snapshot.backup.uploadedCount.toString()}  detail="synced bundles" />
-        <Metric label="Failed"   value={snapshot.backup.failedCount.toString()}    detail="needs retry" />
+        <Metric label="Archive"  value="Pi local"                                  detail="local bundles" />
+        <Metric label="Pending"  value={snapshot.backup.pendingCount.toString()}   detail="awaiting approval" />
+        <Metric label="Retained" value={snapshot.backup.bundles.length.toString()} detail="bundles on Pi" />
+        <Metric label="Public"   value="Manual"                                    detail="publish after title" />
+        <Metric label="Zoom cloud" value={snapshot.cloudRecording.processing + snapshot.cloudRecording.pending > 0 ? "Processing" : snapshot.cloudRecording.failed > 0 ? "Failed" : "Clear"} detail={`${snapshot.cloudRecording.completed} archived`} />
       </div>
       {activeBackup && (
         <Panel title="Current Upload">
@@ -1049,11 +1125,7 @@ function BackupView({ snapshot, run, adminUnlocked }: { snapshot: StudyBoxSnapsh
           </div>
         </Panel>
       )}
-      <div className="toolbar">
-        <button className="command disabled" style={{ cursor: adminUnlocked && snapshot.backup.pendingCount > 0 ? "pointer" : "not-allowed" }} onClick={() => run("/api/backup/sync")} disabled={!adminUnlocked}>
-          ↻ Retry Sync
-        </button>
-      </div>
+      <div className="mutedText">Local bundles stay on the StudyBox. Public publication is started from the transcript reader after the teaching title is approved.</div>
       <Panel title="Session Bundles">
         <div className="stack" style={{ gap: 10 }}>
           {snapshot.backup.bundles.length === 0
@@ -1061,7 +1133,7 @@ function BackupView({ snapshot, run, adminUnlocked }: { snapshot: StudyBoxSnapsh
             : snapshot.backup.bundles.map((b) => (
               <div key={b.id} style={{ background: "#F7F6F1", borderRadius: 8, padding: "14px 16px" }}>
                 <div style={{ color: "#17180F", fontWeight: 700, fontSize: 13.5 }}>{b.recordingTitle}</div>
-                <div style={{ color: "rgba(23,24,15,0.5)", fontSize: 12 }}>{b.fileName} · {b.stage ?? b.status} · {b.target}</div>
+                <div style={{ color: "rgba(23,24,15,0.5)", fontSize: 12 }}>{b.fileName} · local archive · {b.stage ?? b.status}</div>
                 <div style={{ color: "rgba(23,24,15,0.35)", fontSize: 11.5, marginTop: 2 }}>{new Date(b.createdAt).toLocaleString()} · {b.logEntryCount} log entries</div>
                 {b.progressPercent !== undefined && b.status !== "uploaded" && <div style={{ color: "rgba(23,24,15,0.5)", fontSize: 12 }}>{Math.round(b.progressPercent)}% complete</div>}
                 {b.error && <div style={{ color: "#D64545", fontWeight: 700, fontSize: 12 }}>{b.error}</div>}
@@ -1107,6 +1179,12 @@ function SettingsView({ snapshot, saving, save, adminUnlocked, lockAdmin }: { sn
           <label>Time<input type="time" value={draft.schedule.time} onChange={(e) => update({ ...draft, schedule: { ...draft.schedule, time: e.target.value } })} /></label>
           <label>Timezone<input value={draft.schedule.timezone} onChange={(e) => update({ ...draft, schedule: { ...draft.schedule, timezone: e.target.value } })} /></label>
         </div>
+      </Panel>
+      <Panel title="Recording mode">
+        <label className="toggleRow">
+          <input type="checkbox" checked={draft.testMode} onChange={(e) => update({ ...draft, testMode: e.target.checked })} />
+          <span><strong>Test mode</strong><small>Keep test audio and Zoom files local. Do not publish to S3, backups, or the library.</small></span>
+        </label>
       </Panel>
       <Panel title="Meeting behavior">
         <div className="formGrid">
@@ -1176,6 +1254,7 @@ function Diagnostics({ snapshot }: { snapshot: StudyBoxSnapshot }) {
         <Metric label="SDK Arch"  value={snapshot.zoom.sdkArch}         detail="native Zoom target" />
         <Metric label="Webhook"   value={snapshot.zoom.webhookSecretConfigured ? "Configured" : "Missing"} detail="event verification token" green={snapshot.zoom.webhookSecretConfigured} />
         <Metric label="Runner"    value={snapshot.zoom.runnerAvailable ? "Available" : "Missing"} detail="Zoom meeting bridge" green={snapshot.zoom.runnerAvailable} />
+        <Metric label="Screen Share" value={snapshot.meeting.screenSharePolicy === "all-participants" ? "All participants" : snapshot.meeting.screenSharePolicy === "error" ? "Policy error" : "Pending"} detail="Verified after Zoom connects" green={snapshot.meeting.screenSharePolicy === "all-participants"} />
         <Metric label="Backup"    value={`${snapshot.backup.pendingCount} pending`} detail={snapshot.backup.lastEvent ?? snapshot.backup.target} />
       </div>
       <div className="metricGrid">
@@ -1494,7 +1573,7 @@ function zoomButtonState(snapshot: StudyBoxSnapshot): ZoomButtonState {
   if (snapshot.meeting.status === "live") {
     return snapshot.meeting.waitingRoom.length > 0 || snapshot.meeting.raisedHands.length > 0 ? "attention" : "live";
   }
-  if (snapshot.meeting.status === "error") return "error";
+  if (snapshot.meeting.reconnecting || snapshot.meeting.status === "error") return "error";
   return "ready";
 }
 
@@ -1506,6 +1585,9 @@ function recorderButtonState(snapshot: StudyBoxSnapshot): RecorderButtonState {
 }
 
 function formatZoomButtonState(snapshot: StudyBoxSnapshot): string {
+  if (snapshot.meeting.reconnecting) return snapshot.meeting.reconnectAttempt
+    ? `Rejoining (${snapshot.meeting.reconnectAttempt})`
+    : "Rejoining";
   return {
     unavailable: "Unavailable",
     ready: "Ready",

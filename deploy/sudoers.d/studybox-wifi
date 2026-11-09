@@ -1,2 +1,3 @@
 studybox ALL=(root) NOPASSWD: /opt/studybox/scripts/studybox-wifi-scan.py
 studybox ALL=(root) NOPASSWD: /opt/studybox/scripts/studybox-wifi-connect.py
+studybox ALL=(root) NOPASSWD: /usr/bin/systemctl restart studybox-wifi-fallback.service

@@ -21,13 +21,17 @@ struct Participant {
 
 struct MeetingState {
   std::string status = "idle";
-  std::string title = "Weekly Bible Study";
+  std::string title = "Weekly & Appointed Assembly's";
   std::string moderationMode = "moderated";
   std::string meetingId;
   std::string startedAt;
   std::vector<Participant> participants;
   std::vector<Participant> waitingRoom;
   std::vector<Participant> raisedHands;
+  bool reconnecting = false;
+  std::string sdkStatus;
+  int sdkResult = 0;
+  std::string screenSharePolicy;
   std::string lastEvent = "Native Zoom runner initialized";
 };
 

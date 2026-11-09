@@ -18,5 +18,8 @@
     "@types/node": "^22.10.5",
     "concurrently": "^9.1.2",
     "typescript": "^5.7.2"
+  },
+  "dependencies": {
+    "@aws-sdk/lib-storage": "^3.1136.0"
   }
 }

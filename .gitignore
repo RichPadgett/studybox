@@ -10,3 +10,7 @@ dist-types/
 data/
 native/zoom-runner/build/
 native/zoom-runner/build-sdk/
+*.swp
+__pycache__/
+*.pyc
+scripts/.spotify-auth.json

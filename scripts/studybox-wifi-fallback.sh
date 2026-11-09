@@ -26,11 +26,15 @@ fi
 # hostapd and dnsmasq run as background daemons and can outlive a prior boot.
 stop_fallback
 
-for ((second = 0; second < ${STUDYBOX_WIFI_FALLBACK_WAIT_SECONDS:-75}; second += 5)); do
+if [[ ! -f /tmp/studybox-force-wifi-setup ]]; then
+  for ((second = 0; second < ${STUDYBOX_WIFI_FALLBACK_WAIT_SECONDS:-75}; second += 5)); do
+    if is_connected; then exit 0; fi
+    sleep 5
+  done
   if is_connected; then exit 0; fi
-  sleep 5
-done
-if is_connected; then exit 0; fi
+else
+  rm -f /tmp/studybox-force-wifi-setup
+fi
 
 mkdir -p "$setup_dir"
 systemctl stop netplan-wpa-wlan0.service 2>/dev/null || true

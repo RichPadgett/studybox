@@ -1,6 +1,7 @@
 import cors from "cors";
 import express from "express";
 import { Pool } from "pg";
+import { timingSafeEqual } from "node:crypto";
 import { GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { readFile } from "node:fs/promises";
@@ -82,7 +83,6 @@ async function getArchiveDownloadUrl(asset: ArchivedAsset) {
     { expiresIn: 900 }
   );
 }
-
 app.use(cors());
 app.use(express.json({ limit: "2mb" }));
 app.use("/library", express.static(publicDir, { index: "library.html" }));
@@ -96,6 +96,70 @@ app.get("/health", async (_request, response) => {
   }
 });
 
+app.post("/api/library/sync", requireSyncToken, async (request, response, next) => {
+  const connection = await pool.connect();
+  try {
+    const recording = request.body?.recording as Record<string, unknown> | undefined;
+    const document = request.body?.document as Record<string, unknown> | undefined;
+    const recordingId = stringValue(document?.recordingId) ?? stringValue(recording?.id);
+    if (!recordingId || !document) {
+      response.status(400).json({ error: "A transcript document with a recordingId is required" });
+      return;
+    }
+    const chunks = Array.isArray(document.chunks) ? document.chunks as Array<Record<string, unknown>> : [];
+    const markers = Array.isArray(document.markers) ? document.markers as Array<Record<string, unknown>> : [];
+    const entities = Array.isArray(document.entities) ? document.entities as Array<Record<string, unknown>> : [];
+    const occurrences = Array.isArray(document.occurrences) ? document.occurrences as Array<Record<string, unknown>> : [];
+    const relationships = Array.isArray(document.relationships) ? document.relationships as Array<Record<string, unknown>> : [];
+    const inferredDuration = Math.max(0, ...chunks.map((chunk) => Number(chunk.endSeconds ?? chunk.startSeconds ?? 0)));
+    const searchable = [recording?.title, document.title, document.description,
+      ...chunks.map((chunk) => chunk.text), ...markers.flatMap((marker) => [marker.label, marker.scripture, marker["scripture?"]]),
+      ...entities.flatMap((entity) => [entity.canonicalName, ...(Array.isArray(entity.aliases) ? entity.aliases : [])]),
+      ...occurrences.flatMap((occurrence) => [occurrence.quote]),
+      ...relationships.flatMap((relationship) => [relationship.relationship, relationship.evidence])
+    ].filter(Boolean).join(" ");
+    const audioAsset = request.body?.audioAsset ?? document.audioAsset ?? (recording?.assets as Array<Record<string, unknown>> | undefined)?.find((asset) => asset.kind === "audio") ?? null;
+    const zoomAsset = request.body?.zoomAsset ?? document.zoomAsset ?? (recording?.assets as Array<Record<string, unknown>> | undefined)?.find((asset) => asset.kind === "zoom") ?? null;
+    await connection.query("BEGIN");
+    await connection.query(`
+      INSERT INTO library_recordings
+        (id, title, description, recorded_at, duration_seconds, source_file_sha256, transcript_status, visibility, searchable_text, audio_asset, zoom_asset, updated_at)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,'public',$8,$9,$10,now())
+      ON CONFLICT (id) DO UPDATE SET title=EXCLUDED.title, description=EXCLUDED.description,
+        recorded_at=EXCLUDED.recorded_at, duration_seconds=COALESCE(EXCLUDED.duration_seconds, library_recordings.duration_seconds),
+        source_file_sha256=EXCLUDED.source_file_sha256, transcript_status=EXCLUDED.transcript_status,
+        visibility='public', searchable_text=EXCLUDED.searchable_text,
+        audio_asset=COALESCE(EXCLUDED.audio_asset, library_recordings.audio_asset),
+        zoom_asset=COALESCE(EXCLUDED.zoom_asset, library_recordings.zoom_asset), updated_at=now()`,
+      [recordingId, stringValue(document.title) ?? stringValue(recording?.title) ?? "Untitled teaching", stringValue(document.description) ?? null,
+        stringValue(recording?.startedAt) ?? stringValue(document.recordedAt) ?? null,
+        typeof recording?.durationSeconds === "number" && recording.durationSeconds > 0 ? recording.durationSeconds : inferredDuration || null,
+        stringValue(document.sourceFileSha256) ?? null, stringValue(document.status) ?? "completed", searchable,
+        audioAsset ? JSON.stringify(audioAsset) : null, zoomAsset ? JSON.stringify(zoomAsset) : null]
+    );
+    await connection.query("DELETE FROM transcript_chunks WHERE recording_id = $1", [recordingId]);
+    await connection.query("DELETE FROM transcript_markers WHERE recording_id = $1", [recordingId]);
+    for (const chunk of chunks) {
+      await connection.query(
+        "INSERT INTO transcript_chunks (id, recording_id, chunk_index, start_seconds, end_seconds, text, audio_asset) VALUES ($1,$2,$3,$4,$5,$6,$7)",
+        [stringValue(chunk.id), recordingId, Number(chunk.index), Number(chunk.startSeconds ?? 0), chunk.endSeconds == null ? null : Number(chunk.endSeconds), stringValue(chunk.text) ?? null, audioAsset ? JSON.stringify({ ...audioAsset, chunkIndex: chunk.index }) : null]
+      );
+    }
+    for (const marker of markers) {
+      await connection.query(
+        "INSERT INTO transcript_markers (recording_id, timestamp_seconds, label, scripture, kind) VALUES ($1,$2,$3,$4,$5)",
+        [recordingId, Number(marker.timestampSeconds ?? 0), stringValue(marker.label) ?? "Section", stringValue(marker.scripture ?? marker["scripture?"]) ?? null, stringValue(marker.kind) ?? null]
+      );
+    }
+    await connection.query("COMMIT");
+    response.json({ ok: true, recordingId, chunks: chunks.length, markers: markers.length });
+  } catch (error) {
+    await connection.query("ROLLBACK").catch(() => undefined);
+    next(error);
+  } finally {
+    connection.release();
+  }
+});
 app.get("/api/library", async (request, response, next) => {
   try {
     const query = String(request.query.q ?? "").trim();
@@ -104,9 +168,11 @@ app.get("/api/library", async (request, response, next) => {
     const result = query
       ? await pool.query(
           `SELECT id, title, description, recorded_at, duration_seconds, transcript_status,
-                  audio_asset, zoom_asset, ts_headline('simple', searchable_text, websearch_to_tsquery('simple', $1)) AS match_preview
+                  audio_asset, zoom_asset,
+                  ts_headline('simple', left(searchable_text, 12000), websearch_to_tsquery('simple', $1), 'MaxFragments=2,MaxWords=35,MinWords=12') AS match_preview
              FROM library_recordings
-            WHERE searchable_text @@ websearch_to_tsquery('simple', $1)
+            WHERE visibility = 'public'
+              AND to_tsvector('simple', searchable_text) @@ websearch_to_tsquery('simple', $1)
             ORDER BY recorded_at DESC NULLS LAST, created_at DESC
             LIMIT $2 OFFSET $3`,
           [query, limit, offset]
@@ -186,3 +252,18 @@ app.use((error: unknown, _request: express.Request, response: express.Response, 
 });
 
 app.listen(port, () => console.log(`StudyBox cloud library listening on ${port}`));
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function requireSyncToken(request: express.Request, response: express.Response, next: express.NextFunction): void {
+  const expected = process.env.STUDYBOX_CLOUD_SYNC_TOKEN?.trim();
+  const header = request.header("authorization");
+  const actual = header?.startsWith("Bearer ") ? header.slice("Bearer ".length) : "";
+  if (!expected || actual.length !== expected.length || !timingSafeEqual(Buffer.from(actual), Buffer.from(expected))) {
+    response.status(401).json({ error: "Cloud library sync authorization required" });
+    return;
+  }
+  next();
+}

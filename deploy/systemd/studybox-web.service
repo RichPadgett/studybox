@@ -2,7 +2,6 @@
 Description=StudyBox Web UI
 After=network-online.target studybox-api.service
 Wants=network-online.target
-Requires=studybox-api.service
 
 [Service]
 Type=simple

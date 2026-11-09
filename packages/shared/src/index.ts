@@ -4,6 +4,8 @@ export type LedColor = "green" | "blue" | "yellow" | "red" | "purple" | "white" 
 
 export type RecLedState = "solid" | "blinking" | "off";
 export type ZoomLedState = "off" | "solid" | "slowBlink" | "fastBlink";
+export type ZoomButtonState = "unavailable" | "ready" | "live" | "attention" | "error";
+export type RecorderButtonState = "unavailable" | "ready" | "recording" | "paused" | "error";
 
 export type ParticipantStatus = "joined" | "waiting" | "raised-hand";
 
@@ -33,6 +35,11 @@ export interface MeetingState {
   waitingRoom: Participant[];
   raisedHands: Participant[];
   activeSpeaker?: Participant;
+  reconnecting?: boolean;
+  reconnectAttempt?: number;
+  sdkStatus?: string;
+  sdkResult?: number;
+  screenSharePolicy?: "all-participants" | "error" | "unknown";
   lastEvent?: string;
 }
 
@@ -78,6 +85,12 @@ export interface RecordingDownload {
   contentBase64: string;
 }
 
+export interface BackupFileSource {
+  filePath: string;
+  fileName: string;
+  mimeType: string;
+}
+
 export interface PodcastState {
   status: "idle" | "recording" | "paused" | "waitingForAudio" | "stopping" | "error";
   audioReady?: boolean;
@@ -91,9 +104,11 @@ export interface PodcastState {
   elapsedSeconds: number;
   recordings: Recording[];
   lastEvent?: string;
+  recoveredFinalization?: boolean;
+  recoveredRecordingIds?: string[];
 }
 
-export type OledPageId = "home" | "meeting" | "podcast" | "screenShare" | "recordingStop" | "system";
+export type OledPageId = "home" | "meeting" | "podcast" | "screenShare" | "recordingStop" | "system" | "wifiSetup" | "screensaver";
 
 export interface OledPage {
   id: OledPageId;
@@ -229,6 +244,7 @@ export interface WifiNetwork {
 }
 
 export interface StudyBoxSettings {
+  testMode: boolean;
   schedule: MeetingSchedule;
   moderation: MeetingModerationSettings;
   zoom: ZoomSettings;
@@ -258,6 +274,7 @@ export interface StudyBoxSnapshot {
   systemStatus: SystemStatus;
   meeting: MeetingState;
   zoom: ZoomRuntimeStatus;
+  cloudRecording: ZoomCloudRecordingStatus;
   podcast: PodcastState;
   backup: BackupSyncState;
   library: TranscriptLibraryState;
@@ -270,6 +287,15 @@ export interface StudyBoxSnapshot {
   presence: DashboardPresence;
   settings: StudyBoxSettings;
   logs: LogEntry[];
+}
+
+export interface ZoomCloudRecordingStatus {
+  pending: number;
+  processing: number;
+  failed: number;
+  completed: number;
+  lastEvent?: string;
+  lastError?: string;
 }
 
 export type TranscriptJobStatus = "queued" | "chunking" | "transcribing" | "analyzing" | "completed" | "failed";
@@ -334,6 +360,7 @@ export interface TranscriptDocument {
   markers: TranscriptMarker[];
   fullTextPath: string;
   chunks: TranscriptChunk[];
+  chunkCount?: number;
   entities?: TranscriptEntity[];
   occurrences?: TranscriptEntityOccurrence[];
   relationships?: TranscriptEntityRelationship[];
@@ -469,7 +496,7 @@ export interface BackupSyncService {
   getState(): BackupSyncState;
   createBundle(input: {
     recording: Recording;
-    download: RecordingDownload;
+    source: BackupFileSource;
     logs: LogEntry[];
     meetingEndedAt: string;
   }): Promise<BackupBundle>;
@@ -481,7 +508,9 @@ export interface MeetingService {
   syncState(): Promise<MeetingState>;
   requestParticipantJoin(displayName: string): Promise<Participant>;
   startMeeting(): Promise<MeetingState>;
+  recoverMeeting(): Promise<MeetingState>;
   endMeeting(): Promise<MeetingState>;
+  markTerminalError(message: string): MeetingState;
   admitParticipant(participantId: string): Promise<MeetingState>;
   dismissRaisedHand(participantId: string): Promise<MeetingState>;
   allowParticipantToSpeak(participantId: string): Promise<MeetingState>;
@@ -504,7 +533,8 @@ export interface PodcastService {
   getRecordingDownload(recordingId: string): Promise<RecordingDownload | undefined>;
   getRecordingAssetDownload(recordingId: string, assetKind: RecordingAssetKind): Promise<RecordingDownload | undefined>;
   getRecordingAssetUrl(recordingId: string, assetKind: RecordingAssetKind): Promise<string | undefined>;
-  setZoomRecordingAsset(recordingId: string, filePath: string): Promise<PodcastState>;
+  setRecordingTitle(recordingId: string, title: string): Promise<PodcastState>;
+  setZoomRecordingAsset(recordingId: string | string[], filePath: string, archive?: boolean): Promise<PodcastState>;
 }
 
 export interface SchedulerService {
@@ -515,20 +545,31 @@ export interface SchedulerService {
 export interface OledDisplay {
   getPages(): OledPage[];
   getCurrentPage(): OledPage;
+  showWatchdogStatus(): Promise<void>;
   showPage(pageId: OledPageId): Promise<OledPage>;
   nextPage(): Promise<OledPage>;
   render(page: OledPage): Promise<void>;
 }
 
+export interface WatchdogStatus {
+  live: boolean;
+  issues: string[];
+  lastCheckAt?: string;
+}
+
 export interface ButtonController {
   pressPage(): Promise<void>;
   pressAction(): Promise<void>;
+  pressZoom(): Promise<void>;
+  pressRecording(): Promise<void>;
 }
 
 export interface LedController {
   setSystem(color: LedColor): Promise<void>;
   setRecording(state: RecLedState): Promise<void>;
   setZoomConnection(state: ZoomLedState): Promise<void>;
+  setRecorderState(state: RecorderButtonState): Promise<void>;
+  setZoomState(state: ZoomButtonState): Promise<void>;
 }
 
 export interface AudioDevice {

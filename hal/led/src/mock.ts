@@ -1,4 +1,4 @@
-import type { LedColor, LedController, RecLedState, ZoomLedState } from "@studybox/shared";
+import type { LedColor, LedController, RecLedState, RecorderButtonState, ZoomButtonState, ZoomLedState } from "@studybox/shared";
 
 export class MockLedController implements LedController {
   systemColor: LedColor = "white";
@@ -15,5 +15,13 @@ export class MockLedController implements LedController {
 
   async setZoomConnection(state: ZoomLedState): Promise<void> {
     this.zoomConnectionState = state;
+  }
+
+  async setRecorderState(state: RecorderButtonState): Promise<void> {
+    this.recordingState = state === "recording" ? "solid" : state === "paused" || state === "error" ? "blinking" : "off";
+  }
+
+  async setZoomState(state: ZoomButtonState): Promise<void> {
+    this.zoomConnectionState = state === "live" ? "solid" : state === "ready" || state === "attention" ? "slowBlink" : state === "error" ? "fastBlink" : "off";
   }
 }

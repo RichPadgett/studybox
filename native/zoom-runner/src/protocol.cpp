@@ -123,6 +123,17 @@ std::string stateJson(const MeetingState& state) {
     << ",\"waitingRoom\":" << participantsJson(state.waitingRoom)
     << ",\"raisedHands\":" << participantsJson(state.raisedHands);
 
+  if (state.reconnecting) {
+    output << ",\"reconnecting\":true";
+  }
+  if (!state.sdkStatus.empty()) {
+    output << ",\"sdkStatus\":\"" << jsonEscape(state.sdkStatus) << "\"";
+    output << ",\"sdkResult\":" << state.sdkResult;
+  }
+  if (!state.screenSharePolicy.empty()) {
+    output << ",\"screenSharePolicy\":\"" << jsonEscape(state.screenSharePolicy) << "\"";
+  }
+
   if (!state.lastEvent.empty()) {
     output << ",\"lastEvent\":\"" << jsonEscape(state.lastEvent) << "\"";
   }

@@ -91,10 +91,9 @@ const backup = new MockBackupSyncService({
   }
 });
 await backup.load();
-const audioBase64 = (await readFile(audioPath)).toString("base64");
 await backup.createBundle({
   recording,
-  download: { recording, fileName: testAudioName, mimeType: "audio/wav", contentBase64: audioBase64 },
+  source: { filePath: audioPath, fileName: testAudioName, mimeType: "audio/wav" },
   logs: [{ id: randomUUID(), timestamp: new Date().toISOString(), source: "system", level: "info", action: "e2e.archive-test", result: "success", message: "Synthetic Lorem ipsum archive test" }],
   meetingEndedAt: recording.endedAt
 });

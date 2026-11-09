@@ -1,6 +1,6 @@
 import { closeSync, openSync, writeFileSync } from "node:fs";
 import { spawn, type ChildProcess } from "node:child_process";
-import type { BackupSyncState, MeetingState, OledDisplay, OledPage, OledPageId, PodcastState, SystemMetrics } from "@studybox/shared";
+import type { BackupSyncState, MeetingState, OledDisplay, OledPage, OledPageId, PodcastState, SystemMetrics, WatchdogStatus, ZoomCloudRecordingStatus, ZoomRuntimeStatus } from "@studybox/shared";
 import { MockOledDisplay } from "./mock.js";
 
 export class RaspberryPiOledDisplay implements OledDisplay {
@@ -15,15 +15,19 @@ export class RaspberryPiOledDisplay implements OledDisplay {
   private rstHolder?: ChildProcess;
   private lastRenderedPage?: OledPage;
   private lastRenderedFrameSignature?: string;
+  private renderQueue: Promise<void> = Promise.resolve();
   private closed = false;
 
   constructor(
     getMeeting: () => MeetingState,
     getPodcast: () => PodcastState,
     getMetrics: () => SystemMetrics,
-    getBackup?: () => BackupSyncState
+    getBackup?: () => BackupSyncState,
+    getZoom?: () => ZoomRuntimeStatus,
+    getCloud?: () => ZoomCloudRecordingStatus,
+    getWatchdog?: () => WatchdogStatus
   ) {
-    this.pages = new MockOledDisplay(getMeeting, getPodcast, getMetrics, getBackup);
+    this.pages = new MockOledDisplay(getMeeting, getPodcast, getMetrics, getBackup, getZoom, getCloud, getWatchdog);
     process.once("beforeExit", () => this.close());
     process.once("exit", () => this.close());
     process.once("uncaughtException", (error) => {
@@ -48,6 +52,10 @@ export class RaspberryPiOledDisplay implements OledDisplay {
     return this.pages.getCurrentPage();
   }
 
+  async showWatchdogStatus(): Promise<void> {
+    await this.render({ id: "system", title: "WATCHDOG LIVE", lines: ["WATCHDOG", "LIVE"] });
+  }
+
   async showPage(pageId: OledPageId): Promise<OledPage> {
     const page = await this.pages.showPage(pageId);
     this.scheduleRender(page);
@@ -69,19 +77,32 @@ export class RaspberryPiOledDisplay implements OledDisplay {
   }
 
   async render(page: OledPage): Promise<void> {
-    const frame = this.createFrame(page);
-    const signature = frameSignature(frame);
-    if (signature !== this.lastRenderedFrameSignature && !this.closed) {
-      try {
-        await this.renderFrame(frame);
+    const operation = this.renderQueue.then(async () => {
+      const frame = this.createFrame(page);
+      const signature = frameSignature(frame);
+      if (signature !== this.lastRenderedFrameSignature && !this.closed) {
+        try {
+          await this.renderFrame(frame);
+        } catch (error) {
+          // gpioset can briefly report a busy line when a previous frame is
+          // finishing. Keep the display alive and retry within the queue.
+          await wait(100);
+          try {
+            await this.renderFrame(frame);
+          } catch (retryError) {
+            console.error(`StudyBox OLED render failed; will retry on the next update: ${retryError instanceof Error ? retryError.message : String(retryError)}`);
+            return;
+          }
+        }
         this.initialized = true;
         this.lastRenderedFrameSignature = signature;
-      } catch (error) {
-        console.error(`StudyBox OLED disabled after render failure: ${error instanceof Error ? error.message : String(error)}`);
-        this.close();
       }
-    }
-    this.lastRenderedPage = page;
+      this.lastRenderedPage = page;
+    });
+    this.renderQueue = operation.catch((error: unknown) => {
+      console.error(`StudyBox OLED render queue failed: ${error instanceof Error ? error.message : String(error)}`);
+    });
+    await this.renderQueue;
   }
 
   getRenderedPage(): OledPage | undefined {
@@ -101,8 +122,9 @@ export class RaspberryPiOledDisplay implements OledDisplay {
       0x40,
       0x8d, 0x14,
       0x20, 0x02,
-      0xa1,
-      0xc8,
+      // Rotate the panel 180 degrees for the inverted Pelican-case mounting.
+      0xa0,
+      0xc0,
       0xda, 0x12,
       0x81, 0xcf,
       0xd9, 0xf1,
@@ -125,11 +147,36 @@ export class RaspberryPiOledDisplay implements OledDisplay {
 
   private createFrame(page: OledPage): number[][] {
     const frame = Array.from({ length: 8 }, () => new Array(128).fill(0));
+    if (page.title === "WATCHDOG LIVE") {
+      this.drawWatchdog(frame, 47, 2);
+      this.drawTextToFrame(frame, 37, 5, "WATCHDOG");
+      this.drawTextToFrame(frame, 55, 7, "LIVE");
+      return rotateFrame180(frame);
+    }
+    if (page.title === "WATCHDOG") {
+      if (page.lines[0] === "SYSTEMS GOOD") {
+        this.drawWatchdog(frame, 48, 4);
+        this.drawTextToFrame(frame, 28, 6, "SYSTEMS GOOD");
+      } else {
+        this.drawTextToFrame(frame, 34, 0, "SYSTEM ISSUE");
+        page.lines.slice(1, 6).forEach((line, index) => {
+          this.drawTextToFrame(frame, 0, index + 2, line);
+        });
+      }
+      return rotateFrame180(frame);
+    }
     if (page.id === "screensaver") {
-      const positions = [2, 34, 66];
-      const positionIndex = Number(page.lines[0] ?? 0);
-      this.drawLogo(frame, positions[positionIndex % positions.length] ?? positions[1], 2, 3);
-      return frame;
+      if (page.lines[0] === "logo") {
+        const label = "STUDYBOX";
+        this.drawTextToFrame(frame, Math.floor((128 - label.length * 6) / 2), 0, label);
+        this.drawLogo(frame, 54, 22, 1);
+      } else {
+        ["CHURCH", "OF", "THE", "WORD"].forEach((line, index) => {
+          const width = line.length * 6;
+          this.drawTextToFrame(frame, Math.max(0, Math.floor((128 - width) / 2)), index + 1, line);
+        });
+      }
+      return rotateFrame180(frame);
     }
     const centeredTitle = page.id === "meeting" || page.id === "system";
     const titleWidth = page.title.toUpperCase().slice(0, 18).length * 6;
@@ -145,7 +192,7 @@ export class RaspberryPiOledDisplay implements OledDisplay {
     if (page.id === "system") {
       this.drawLogo(frame, 54, 40);
     }
-    return frame;
+    return rotateFrame180(frame);
   }
 
   private drawTextToFrame(frame: number[][], x: number, page: number, text: string): void {
@@ -175,6 +222,18 @@ export class RaspberryPiOledDisplay implements OledDisplay {
             frame[page][pixelX] |= 1 << (pixelY % 8);
           }
         }
+      });
+    });
+  }
+
+  private drawWatchdog(frame: number[][], x: number, y: number): void {
+    WATCHDOG_BITMAP.forEach((row, rowIndex) => {
+      [...row].forEach((pixel, columnIndex) => {
+        if (pixel !== "#") return;
+        const pixelX = x + columnIndex;
+        const pixelY = y + rowIndex;
+        if (pixelX < 0 || pixelX >= 128 || pixelY < 0 || pixelY >= 64) return;
+        frame[Math.floor(pixelY / 8)][pixelX] |= 1 << (pixelY % 8);
       });
     });
   }
@@ -296,12 +355,31 @@ export class RaspberryPiOledDisplay implements OledDisplay {
   }
 }
 
+function wait(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
 function sleep(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
 function frameSignature(frame: number[][]): string {
   return frame.map((row) => Buffer.from(row).toString("base64")).join(".");
+}
+
+function rotateFrame180(frame: number[][]): number[][] {
+  const rotated = Array.from({ length: frame.length }, () => new Array(128).fill(0));
+  for (let page = 0; page < frame.length; page += 1) {
+    for (let column = 0; column < 128; column += 1) {
+      for (let bit = 0; bit < 8; bit += 1) {
+        if ((frame[page][column] & (1 << bit)) === 0) continue;
+        const pixelX = 127 - column;
+        const pixelY = 63 - (page * 8 + bit);
+        rotated[Math.floor(pixelY / 8)][pixelX] |= 1 << (pixelY % 8);
+      }
+    }
+  }
+  return rotated;
 }
 
 const PI_LOGO_BITMAP = [
@@ -325,6 +403,45 @@ const PI_LOGO_BITMAP = [
   "....##........###...",
   ".......######.......",
   "........####........"
+] as const;
+
+const WATCHDOG_BITMAP = [
+  "............................",
+  "....####............####....",
+  "...##...#..........######...",
+  "...#..#.##........#######...",
+  "..##.##..#........########..",
+  "..##.###..#......#########..",
+  "..##.###..#......#########..",
+  "..##.####.################..",
+  "..##.####....#############..",
+  "..##.####.....############..",
+  "..##.###......############..",
+  "...#.###......###########...",
+  "...##.#.......###########...",
+  "....##........##########....",
+  ".....##........########.....",
+  ".....#.###......#######.....",
+  "....##......####.######.....",
+  ".....#......####..#####.....",
+  "....##.......##....####.....",
+  ".....#......####.....##.....",
+  ".....##.############.##.....",
+  "......#..##......##..#......",
+  "......###..........###......",
+  "......#.############.#......",
+  ".....##...########...##.....",
+  ".....##..............##.....",
+  ".....##..............##.....",
+  "....##................##....",
+  "....#..#...#....#...#..#....",
+  "....#.##...######...##.#....",
+  "....##.##..######..##.##....",
+  "....#..##..##..##..##..#....",
+  "....####...######...####....",
+  ".....###...######...###.....",
+  ".......#####....#####.......",
+  "............................"
 ] as const;
 
 const pythonSsd1309Renderer = String.raw`

@@ -1,7 +1,7 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import type express from "express";
 import { projectPath } from "./paths.js";
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { AdminSession } from "@studybox/shared";
 
@@ -157,6 +157,7 @@ function saveSessions(): void {
     Array.from(sessions.entries()).filter(([, session]) => session.expiresAtMs > Date.now() && session.buildId === currentBuildId)
   );
   writeFileSync(sessionFilePath, JSON.stringify({ sessions: activeSessions }, null, 2));
+  chmodSync(sessionFilePath, 0o600);
 }
 
 function getCurrentBuildId(): string {

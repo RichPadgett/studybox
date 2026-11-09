@@ -45,6 +45,22 @@ export async function getTranscript(recordingId: string): Promise<{ document: Tr
   return request<{ document: TranscriptDocument; fullText?: string }>(`/api/library/${encodeURIComponent(recordingId)}`);
 }
 
+export async function saveLibraryTitle(recordingId: string, title: string): Promise<StudyBoxSnapshot> {
+  return request<StudyBoxSnapshot>(`/api/library/${encodeURIComponent(recordingId)}/title`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title })
+  });
+}
+
+export async function publishLibraryRecording(recordingId: string): Promise<{ status: "publishing" | "published"; recordingId: string }> {
+  return request<{ status: "publishing" | "published"; recordingId: string }>(`/api/library/${encodeURIComponent(recordingId)}/publish`, { method: "POST" });
+}
+
+export async function getLibraryPublicationStatus(recordingId: string): Promise<{ status: "idle" | "publishing" | "published" | "failed"; error?: string }> {
+  return request<{ status: "idle" | "publishing" | "published" | "failed"; error?: string }>(`/api/library/${encodeURIComponent(recordingId)}/publication-status`);
+}
+
 export async function createLibraryShare(recordingId: string): Promise<{ token: string; url: string }> {
   return request<{ token: string; url: string }>(`/api/library/${encodeURIComponent(recordingId)}/share`, { method: "POST" });
 }
@@ -136,27 +152,32 @@ export async function downloadRecording(recordingId: string): Promise<void> {
 }
 
 export async function downloadRecordingAsset(recordingId: string, assetKind: RecordingAssetKind): Promise<void> {
-  const response = await fetch(`/api/podcast/recordings/${encodeURIComponent(recordingId)}/assets/${encodeURIComponent(assetKind)}/download`, {
-    headers: authorizedHeaders()
-  });
-  return downloadRecordingResponse(response, `${recordingId}-${assetKind}`);
+  if (assetKind === "zoom") {
+    try {
+      const { url } = await request<{ url: string }>(`/api/podcast/recordings/${encodeURIComponent(recordingId)}/assets/zoom/url`);
+      triggerDownload(url, `${recordingId}-zoom.mp4`);
+      return;
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.status !== 404) throw error;
+      // Older/local Zoom assets fall through to the same-origin stream.
+    }
+  }
+  // Direct navigation lets the browser stream large local WAV/MP4 files to
+  // disk. Fetching a Blob first can exhaust memory before a download appears.
+  const extension = assetKind === "zoom" ? "mp4" : "wav";
+  triggerDownload(
+    `/api/library/public/${encodeURIComponent(recordingId)}/assets/${encodeURIComponent(assetKind)}/download`,
+    `${recordingId}-${assetKind}.${extension}`
+  );
 }
 
-async function downloadRecordingResponse(response: Response, fallbackName: string): Promise<void> {
-  if (!response.ok) {
-    throw await createApiError(response);
-  }
-
-  const blob = await response.blob();
-  const fileName = getDownloadFileName(response.headers.get("Content-Disposition")) ?? `${fallbackName}.wav`;
-  const url = URL.createObjectURL(blob);
+function triggerDownload(url: string, fileName: string): void {
   const link = document.createElement("a");
   link.href = url;
   link.download = fileName;
   document.body.append(link);
   link.click();
   link.remove();
-  URL.revokeObjectURL(url);
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -178,11 +199,6 @@ function authorizedHeaders(headersInit?: HeadersInit): Headers {
     headers.set("X-StudyBox-Viewer-Id", dashboardViewerId);
   }
   return headers;
-}
-
-function getDownloadFileName(contentDisposition: string | null): string | undefined {
-  const match = contentDisposition?.match(/filename="?(?<fileName>[^";]+)"?/);
-  return match?.groups?.fileName;
 }
 
 async function createApiError(response: Response): Promise<ApiError> {

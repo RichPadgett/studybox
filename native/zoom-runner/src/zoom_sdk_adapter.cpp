@@ -81,6 +81,28 @@ std::string authFailureMessage(const std::string& action, AuthResult result) {
   return output.str();
 }
 
+std::string meetingStatusName(MeetingStatus status) {
+  switch (status) {
+  case MEETING_STATUS_IDLE: return "idle";
+  case MEETING_STATUS_CONNECTING: return "connecting";
+  case MEETING_STATUS_WAITINGFORHOST: return "waiting-for-host";
+  case MEETING_STATUS_INMEETING: return "in-meeting";
+  case MEETING_STATUS_DISCONNECTING: return "disconnecting";
+  case MEETING_STATUS_RECONNECTING: return "reconnecting";
+  case MEETING_STATUS_FAILED: return "failed";
+  case MEETING_STATUS_ENDED: return "ended";
+  case MEETING_STATUS_UNKNOWN: return "unknown";
+  case MEETING_STATUS_LOCKED: return "locked";
+  case MEETING_STATUS_UNLOCKED: return "unlocked";
+  case MEETING_STATUS_IN_WAITING_ROOM: return "waiting-room";
+  case MEETING_STATUS_WEBINAR_PROMOTE: return "webinar-promote";
+  case MEETING_STATUS_WEBINAR_DEPROMOTE: return "webinar-demote";
+  case MEETING_STATUS_JOIN_BREAKOUT_ROOM: return "breakout-room";
+  case MEETING_STATUS_LEAVE_BREAKOUT_ROOM: return "leaving-breakout-room";
+  }
+  return "unknown";
+}
+
 UINT64 parseMeetingNumber(const std::string& meetingNumber) {
   std::string digits;
   for (const char ch : meetingNumber) {
@@ -345,6 +367,9 @@ public:
 
     MeetingState state = current;
     state.status = "starting";
+    state.reconnecting = false;
+    state.sdkStatus = "connecting";
+    state.sdkResult = 0;
     state.meetingId = request.meetingNumber;
     state.startedAt = nowIso8601();
     state.lastEvent = "Zoom SDK start meeting command accepted";
@@ -358,8 +383,21 @@ public:
       throw std::runtime_error(sdkErrorMessage("End meeting", error));
     }
 
+    // Leave() is asynchronous. Do not report idle to StudyBox until the SDK
+    // confirms that this client is no longer in the meeting.
+    for (int attempt = 0; attempt < 25; ++attempt) {
+      if (meetingService_->GetMeetingStatus() != MEETING_STATUS_INMEETING) break;
+      std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    }
+    if (meetingService_->GetMeetingStatus() == MEETING_STATUS_INMEETING) {
+      throw std::runtime_error("Zoom meeting is still active after leave request");
+    }
+
     MeetingState state = current;
     state.status = "idle";
+    state.reconnecting = false;
+    state.sdkStatus = "ended";
+    state.sdkResult = 0;
     state.meetingId.clear();
     state.startedAt.clear();
     state.lastEvent = "Zoom SDK end meeting command accepted";
@@ -433,25 +471,86 @@ public:
   }
 
   MeetingState allowScreenShare(const MeetingState& current) override {
-    ensureMeetingService();
-    auto* shareController = meetingService_->GetMeetingShareController();
-    if (!shareController) {
-      throw std::runtime_error("Zoom share controller is unavailable");
-    }
-
-    const SDKError error = shareController->SetMultiShareSettingOptions(Enable_All_Grab_Share);
-    if (error != SDKERR_SUCCESS) {
-      throw std::runtime_error(sdkErrorMessage("Enable participant screen sharing", error));
-    }
-
+    applyParticipantScreenSharePolicy();
     MeetingState state = current;
-    state.lastEvent = "Zoom participant screen sharing enabled";
+    state.screenSharePolicy = "all-participants";
+    state.lastEvent = "Zoom screen sharing enabled for all participants";
     return state;
   }
 
   MeetingState syncState(const MeetingState& current) override {
     if (!meetingService_) {
       return current;
+    }
+
+    MeetingState state = current;
+    const MeetingStatus sdkStatus = meetingService_->GetMeetingStatus();
+    state.sdkStatus = meetingStatusName(sdkStatus);
+    state.sdkResult = meetingEvents_.lastResult;
+    state.reconnecting = false;
+
+    switch (sdkStatus) {
+    case MEETING_STATUS_INMEETING:
+      state.status = "live";
+      state.lastEvent = "Zoom SDK meeting connected";
+      break;
+    case MEETING_STATUS_CONNECTING:
+    case MEETING_STATUS_WAITINGFORHOST:
+    case MEETING_STATUS_IN_WAITING_ROOM:
+      state.status = "starting";
+      state.lastEvent = "Zoom SDK is joining the meeting";
+      break;
+    case MEETING_STATUS_RECONNECTING:
+      state.status = "starting";
+      state.reconnecting = true;
+      state.lastEvent = "Zoom SDK is reconnecting to the meeting";
+      break;
+    case MEETING_STATUS_DISCONNECTING:
+      state.status = current.status == "ending" ? "ending" : "starting";
+      state.reconnecting = current.status != "ending";
+      state.lastEvent = current.status == "ending" ? "Zoom SDK is ending the meeting" : "Zoom SDK connection was interrupted";
+      break;
+    case MEETING_STATUS_FAILED: {
+      state.status = "error";
+      state.lastEvent = "Zoom SDK meeting connection failed with result " + std::to_string(state.sdkResult);
+      break;
+    }
+    case MEETING_STATUS_ENDED:
+      state.status = "idle";
+      state.meetingId.clear();
+      state.startedAt.clear();
+      state.lastEvent = "Zoom meeting ended";
+      break;
+    case MEETING_STATUS_IDLE:
+      if (current.status == "live" || current.status == "starting") {
+        state.status = "error";
+        state.lastEvent = "Zoom SDK became idle while the meeting was expected live";
+      } else {
+        state.status = "idle";
+      }
+      break;
+    case MEETING_STATUS_UNKNOWN:
+      state.status = "error";
+      state.lastEvent = "Zoom SDK returned an unknown meeting status";
+      break;
+    default:
+      break;
+    }
+
+    if (sdkStatus != MEETING_STATUS_INMEETING) {
+      state.participants.clear();
+      state.waitingRoom.clear();
+      state.raisedHands.clear();
+      return state;
+    }
+
+    try {
+      applyParticipantScreenSharePolicy();
+      state.screenSharePolicy = "all-participants";
+      state.lastEvent = "Zoom connected; all participants may share their screen";
+    } catch (const std::exception& error) {
+      state.screenSharePolicy = "error";
+      state.lastEvent = std::string("Zoom connected; attendee screen sharing policy failed: ") + error.what();
     }
 
     auto* waitingRoom = meetingService_->GetMeetingWaitingRoomController();
@@ -467,7 +566,6 @@ public:
       }
     }
 
-    MeetingState state = current;
     state.waitingRoom = waitingRoomParticipants();
     state.participants = meetingParticipants();
     state.raisedHands.clear();
@@ -476,7 +574,6 @@ public:
         state.raisedHands.push_back(participant);
       }
     }
-    state.lastEvent = "Zoom SDK state synced";
     return state;
   }
 
@@ -502,12 +599,36 @@ public:
       }
     }
 
+  }
+
+  void applyParticipantScreenSharePolicy() {
+    ensureMeetingService();
     auto* shareController = meetingService_->GetMeetingShareController();
-    if (shareController) {
-      const SDKError shareError = shareController->SetMultiShareSettingOptions(Enable_All_Grab_Share);
-      if (shareError != SDKERR_SUCCESS) {
-        throw std::runtime_error(sdkErrorMessage("Enable participant screen sharing", shareError));
+    if (!shareController) {
+      throw std::runtime_error("Zoom share controller is unavailable");
+    }
+
+    MultiShareOption current = Enable_Only_HOST_Start_Share;
+    const SDKError readError = shareController->GetMultiShareSettingOptions(current);
+    if (readError != SDKERR_SUCCESS || (current != Enable_Multi_Share && current != Enable_All_Grab_Share)) {
+      SDKError setError = shareController->SetMultiShareSettingOptions(Enable_Multi_Share);
+      if (setError != SDKERR_SUCCESS) {
+        // Some Zoom account policies disable simultaneous sharing while still
+        // allowing every attendee to initiate or replace the active share.
+        setError = shareController->SetMultiShareSettingOptions(Enable_All_Grab_Share);
+        if (setError != SDKERR_SUCCESS) {
+          throw std::runtime_error(sdkErrorMessage("Enable screen sharing for all participants", setError));
+        }
       }
+    }
+
+    MultiShareOption confirmed = Enable_Only_HOST_Start_Share;
+    const SDKError confirmError = shareController->GetMultiShareSettingOptions(confirmed);
+    if (confirmError != SDKERR_SUCCESS) {
+      throw std::runtime_error(sdkErrorMessage("Verify participant screen sharing", confirmError));
+    }
+    if (confirmed != Enable_Multi_Share && confirmed != Enable_All_Grab_Share) {
+      throw std::runtime_error("Zoom did not retain the all-participants screen sharing policy");
     }
   }
 

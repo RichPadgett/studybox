@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import type { PodcastService, PodcastState, Recording, RecordingAssetKind, RecordingDownload } from "@studybox/shared";
@@ -147,7 +147,13 @@ export class MockPodcastService implements PodcastService {
     return undefined;
   }
 
-  async setZoomRecordingAsset(_recordingId: string, _filePath: string): Promise<PodcastState> {
+  async setZoomRecordingAsset(_recordingId: string | string[], _filePath: string, _archive = true): Promise<PodcastState> {
+    return this.getState();
+  }
+
+  async setRecordingTitle(recordingId: string, title: string): Promise<PodcastState> {
+    const recording = this.state.recordings.find((candidate) => candidate.id === recordingId);
+    if (recording) recording.title = title;
     return this.getState();
   }
 
@@ -180,6 +186,19 @@ interface RecordingManifestEntry extends Recording {
   filePath: string;
 }
 
+interface ActiveRecordingRecovery {
+  version: 1;
+  phase: "recording" | "paused" | "finalizing";
+  recording: RecordingManifestEntry;
+  activeFilePath: string;
+  segmentDirPath: string;
+  segmentPaths: string[];
+  segmentStartedAts?: string[];
+  segmentPauseDurationsMs?: number[];
+  elapsedSeconds: number;
+  updatedAt: string;
+}
+
 export class LocalPodcastService implements PodcastService {
   private state: PodcastState = {
     status: "idle",
@@ -191,6 +210,16 @@ export class LocalPodcastService implements PodcastService {
   };
   private process?: ChildProcess;
   private activeFilePath?: string;
+  private activeSegmentPath?: string;
+  private segmentDirPath?: string;
+  private segmentPaths: string[] = [];
+  private segmentStartedAts: string[] = [];
+  private segmentPauseDurationsMs: number[] = [];
+  private segmentNumber = 0;
+  private pausedAtMs?: number;
+  private pendingPauseDurationMs = 0;
+  private pendingSegmentStartedAt?: string;
+  private expectedProcessExits = new Set<ChildProcess>();
   private activeRecording?: RecordingManifestEntry;
   private recordings: RecordingManifestEntry[] = [];
   private startedAtMs?: number;
@@ -202,6 +231,8 @@ export class LocalPodcastService implements PodcastService {
   private audioReadinessGeneration = 0;
   private audioReadinessRefresh?: Promise<void>;
   private audioProbeLastResult?: string;
+  private recoveredFinalization = false;
+  private recoveredRecordingIds: string[] = [];
 
   constructor(private readonly options: LocalPodcastServiceOptions) {}
 
@@ -223,6 +254,7 @@ export class LocalPodcastService implements PodcastService {
     } catch {
       await this.saveManifest();
     }
+    await this.recoverInterruptedFinalization();
     this.captureDevice = this.options.captureDeviceResolver?.() ?? this.options.device ?? "default";
     await this.refreshAudioReadiness();
     this.audioHealthTimer = setInterval(() => {
@@ -242,7 +274,9 @@ export class LocalPodcastService implements PodcastService {
       audioFailureCount: this.audioFailureCount,
       audioCaptureDevice: this.captureDevice,
       audioRecorderPid: this.process?.pid
-      ,audioProbeLastResult: this.audioProbeLastResult
+      ,audioProbeLastResult: this.audioProbeLastResult,
+      recoveredFinalization: this.recoveredFinalization,
+      recoveredRecordingIds: this.recoveredRecordingIds
     };
   }
 
@@ -278,6 +312,14 @@ export class LocalPodcastService implements PodcastService {
     this.activeRecording = recording;
     this.elapsedBeforePause = 0;
     this.activeFilePath = filePath;
+    this.segmentDirPath = join(this.options.recordingsDir, `.segments-${recording.id}`);
+    this.segmentPaths = [];
+    this.segmentStartedAts = [];
+    this.segmentPauseDurationsMs = [];
+    this.segmentNumber = 0;
+    this.pausedAtMs = undefined;
+    this.pendingPauseDurationMs = 0;
+    this.pendingSegmentStartedAt = startedAt;
     this.captureDevice = this.options.captureDeviceResolver?.() ?? this.options.device ?? "default";
     this.state = {
       ...this.state,
@@ -286,7 +328,8 @@ export class LocalPodcastService implements PodcastService {
       elapsedSeconds: 0,
       lastEvent: "Connecting DJI audio"
     };
-    await this.startCaptureProcess(fileName);
+    await this.startNextSegment();
+    await this.saveActiveRecovery("recording");
     if (this.state.status === "waitingForAudio" && this.activeRecording) {
       this.startAudioWaitLoop();
     }
@@ -300,28 +343,46 @@ export class LocalPodcastService implements PodcastService {
 
     this.elapsedBeforePause = this.currentElapsedSeconds();
     this.startedAtMs = undefined;
-    this.process.kill("SIGSTOP");
+    this.pausedAtMs = Date.now();
     this.state = {
       ...this.state,
       status: "paused",
       elapsedSeconds: this.elapsedBeforePause,
       lastEvent: "Recording paused"
     };
+    const process = this.process;
+    this.expectedProcessExits.add(process);
+    await stopProcess(process);
+    // The stop helper resolves from the child's exit event. Clear the process
+    // defensively here as well so an immediate resume cannot see the old
+    // recorder and silently skip creating the next segment.
+    if (this.process === process) {
+      this.process = undefined;
+    }
+    await this.saveActiveRecovery("paused");
     return this.getState();
   }
 
   async resumeRecording(): Promise<PodcastState> {
-    if (this.state.status !== "paused" || !this.process) {
+    if (this.state.status !== "paused") {
       return this.getState();
     }
 
-    this.startedAtMs = Date.now();
-    this.process.kill("SIGCONT");
-    this.state = {
-      ...this.state,
-      status: "recording",
-      lastEvent: "Recording resumed"
-    };
+    const resumedAtMs = Date.now();
+    this.pendingPauseDurationMs = this.pausedAtMs ? Math.max(0, resumedAtMs - this.pausedAtMs) : 0;
+    this.pendingSegmentStartedAt = new Date(resumedAtMs).toISOString();
+    this.pausedAtMs = undefined;
+    await this.startNextSegment();
+    // startCaptureProcess owns the transition to recording. If the microphone
+    // was not producing PCM yet it leaves us in waitingForAudio and schedules
+    // a retry; do not overwrite that state with a false "recording" status.
+    if (this.process) {
+      this.state = {
+        ...this.state,
+        lastEvent: "Recording resumed"
+      };
+      await this.saveActiveRecovery("recording");
+    }
     return this.getState();
   }
 
@@ -338,8 +399,20 @@ export class LocalPodcastService implements PodcastService {
       if (activeFilePath) {
         await unlink(activeFilePath).catch(() => undefined);
       }
+      if (this.segmentDirPath) {
+        await rm(this.segmentDirPath, { recursive: true, force: true });
+      }
       this.activeRecording = undefined;
       this.activeFilePath = undefined;
+      this.activeSegmentPath = undefined;
+      this.segmentDirPath = undefined;
+      this.segmentPaths = [];
+      this.segmentStartedAts = [];
+      this.segmentPauseDurationsMs = [];
+      this.segmentNumber = 0;
+      this.pausedAtMs = undefined;
+      this.pendingPauseDurationMs = 0;
+      this.pendingSegmentStartedAt = undefined;
       this.startedAtMs = undefined;
       this.elapsedBeforePause = 0;
       this.state = {
@@ -349,53 +422,54 @@ export class LocalPodcastService implements PodcastService {
         elapsedSeconds: 0,
         lastEvent: "Recording cancelled: DJI audio unavailable"
       };
+      await this.clearActiveRecovery();
       return this.getState();
     }
     if (process) {
-      if (this.state.status === "paused") {
-        process.kill("SIGCONT");
-      }
       this.state = {
         ...this.state,
         status: "stopping",
         lastEvent: "Recording stopping"
       };
+      this.expectedProcessExits.add(process);
       await stopProcess(process);
     }
 
     const durationSeconds = this.currentElapsedSeconds();
-    const sizeBytes = activeFilePath ? await fileSize(activeFilePath) : 0;
-    const completed: RecordingManifestEntry = {
-      ...activeRecording,
-      endedAt: new Date().toISOString(),
-      durationSeconds,
-      sizeBytes,
-      assets: createRecordingAssets({
-        startedAt: activeRecording.startedAt,
-        fileName: activeRecording.downloadFileName ?? formatRecordingFileName(activeRecording.startedAt),
-        mimeType: activeRecording.downloadMimeType ?? "audio/wav",
-        filePath: activeRecording.filePath,
-        sizeBytes,
-        retentionDays: this.options.retentionDays ?? 35,
-        zoomAsset: activeRecording.assets?.find((asset) => asset.kind === "zoom")
-      })
-    };
+    this.elapsedBeforePause = durationSeconds;
+    this.startedAtMs = undefined;
+    await this.saveActiveRecovery("finalizing");
 
-    this.recordings = [completed, ...this.recordings];
+    const completed = await this.finalizeSegmentRecordings(activeRecording, activeFilePath, new Date().toISOString());
+    this.recordings = [...completed, ...this.recordings];
     this.activeRecording = undefined;
     this.activeFilePath = undefined;
+    this.activeSegmentPath = undefined;
+    const segmentDirPath = this.segmentDirPath;
+    this.segmentDirPath = undefined;
+    this.segmentPaths = [];
+    this.segmentStartedAts = [];
+    this.segmentPauseDurationsMs = [];
+    this.segmentNumber = 0;
     this.process = undefined;
     this.startedAtMs = undefined;
     this.elapsedBeforePause = 0;
+    this.pausedAtMs = undefined;
+    this.pendingPauseDurationMs = 0;
+    this.pendingSegmentStartedAt = undefined;
     await this.saveManifest();
+    await this.clearActiveRecovery();
     this.state = {
       ...this.state,
       status: "idle",
       activeRecording: undefined,
       elapsedSeconds: 0,
       recordings: this.recordings,
-      lastEvent: `Recording stopped: ${completed.downloadFileName ?? completed.id}`
+      lastEvent: completed.length > 1
+        ? `Recording stopped: ${completed.length} parts created after long pause`
+        : `Recording stopped: ${completed[0]?.downloadFileName ?? activeRecording.id}`
     };
+    if (segmentDirPath) await rm(segmentDirPath, { recursive: true, force: true });
     return this.getState();
   }
 
@@ -428,7 +502,7 @@ export class LocalPodcastService implements PodcastService {
       return;
     }
     this.stopAudioWaitLoop();
-    await this.startCaptureProcess(this.activeRecording.downloadFileName ?? formatRecordingFileName(this.activeRecording.startedAt));
+    await this.startNextSegment();
     if (this.state.status === "waitingForAudio" && this.activeRecording) {
       this.startAudioWaitLoop();
     }
@@ -550,11 +624,28 @@ export class LocalPodcastService implements PodcastService {
     }
   }
 
+  private async startNextSegment(): Promise<void> {
+    if (!this.activeRecording || this.process || !this.segmentDirPath) return;
+    await mkdir(this.segmentDirPath, { recursive: true });
+    this.segmentNumber += 1;
+    const segmentPath = join(this.segmentDirPath, `segment-${String(this.segmentNumber).padStart(3, "0")}.wav`);
+    this.segmentPaths.push(segmentPath);
+    this.segmentStartedAts.push(this.pendingSegmentStartedAt ?? new Date().toISOString());
+    this.segmentPauseDurationsMs.push(this.segmentPaths.length === 1 ? 0 : this.pendingPauseDurationMs);
+    this.activeSegmentPath = segmentPath;
+    await this.saveActiveRecovery(this.state.status === "paused" ? "paused" : "recording");
+    await this.startCaptureProcess(segmentPath.split("/").at(-1) ?? segmentPath);
+    if (this.process && this.activeSegmentPath === segmentPath) {
+      this.pendingPauseDurationMs = 0;
+      this.pendingSegmentStartedAt = undefined;
+    }
+  }
+
   private async startCaptureProcess(fileName: string): Promise<void> {
     if (!this.activeRecording || this.process) {
       return;
     }
-    const filePath = this.activeFilePath;
+    const filePath = this.activeSegmentPath;
     if (!filePath) {
       return;
     }
@@ -591,9 +682,14 @@ export class LocalPodcastService implements PodcastService {
 
     recorderProcess.once("exit", async (code, signal) => {
       try {
+        const expectedExit = this.expectedProcessExits.delete(recorderProcess);
+        if (expectedExit) {
+          this.process = undefined;
+          return;
+        }
         if (this.state.status === "recording" || this.state.status === "paused") {
           const elapsedSeconds = this.currentElapsedSeconds();
-          const partialSizeBytes = this.activeFilePath ? await fileSize(this.activeFilePath) : 0;
+          const partialSizeBytes = this.activeSegmentPath ? await fileSize(this.activeSegmentPath) : 0;
           this.startedAtMs = undefined;
           this.elapsedBeforePause = elapsedSeconds;
           const preservedPartial = partialSizeBytes > 44;
@@ -641,7 +737,21 @@ export class LocalPodcastService implements PodcastService {
     // startup. Do not advertise a recording until the WAV contains audio.
     await sleep(1000);
     if (await fileSize(filePath) <= 44) {
+      this.expectedProcessExits.add(recorderProcess);
       await stopProcess(recorderProcess);
+      const failedIndex = this.segmentPaths.indexOf(filePath);
+      if (failedIndex >= 0) {
+        this.segmentPaths.splice(failedIndex, 1);
+        this.segmentStartedAts.splice(failedIndex, 1);
+        this.segmentPauseDurationsMs.splice(failedIndex, 1);
+      }
+      this.activeSegmentPath = undefined;
+      this.state = {
+        ...this.state,
+        status: "waitingForAudio",
+        lastEvent: "Waiting for DJI audio"
+      };
+      this.startAudioWaitLoop();
       return;
     }
 
@@ -692,36 +802,56 @@ export class LocalPodcastService implements PodcastService {
     };
   }
 
-  async setZoomRecordingAsset(recordingId: string, filePath: string): Promise<PodcastState> {
-    const recording = this.recordings.find((candidate) => candidate.id === recordingId);
-    if (!recording) {
+  async setZoomRecordingAsset(recordingId: string | string[], filePath: string, archive = true): Promise<PodcastState> {
+    const recordingIds = Array.isArray(recordingId) ? recordingId : [recordingId];
+    const recordings = recordingIds
+      .map((id) => this.recordings.find((candidate) => candidate.id === id))
+      .filter((candidate): candidate is RecordingManifestEntry => Boolean(candidate));
+    if (!recordings.length) {
       return this.getState();
     }
     const info = await stat(filePath);
-    const archive = this.options.s3Archive ? await this.options.s3Archive.upload(recording, filePath).catch((error: unknown) => {
+    const archiveMetadata = archive && this.options.s3Archive ? await this.options.s3Archive.upload(recordings[0], filePath).catch((error: unknown) => {
       console.error(`S3 Zoom archive upload failed: ${error instanceof Error ? error.message : String(error)}`);
       return undefined;
     }) : undefined;
+    const removeLocalAfterArchive = Boolean(archiveMetadata) && process.env.STUDYBOX_S3_KEEP_LOCAL_ZOOM !== "true";
     const zoomAsset = {
       kind: "zoom" as const,
       label: "Zoom recording",
       status: "available" as const,
-      fileName: filePath.split("/").at(-1) ?? `${recording.id}.mp4`,
+      fileName: filePath.split("/").at(-1) ?? `${recordings[0].id}.mp4`,
       mimeType: "video/mp4",
-      filePath,
+      filePath: removeLocalAfterArchive ? undefined : filePath,
       sizeBytes: info.size,
       availableUntil: undefined,
-      ...archive
+      ...archiveMetadata
     };
-    recording.assets = createRecordingAssets({
-      startedAt: recording.startedAt,
-      fileName: recording.downloadFileName ?? formatRecordingFileName(recording.startedAt),
-      mimeType: recording.downloadMimeType ?? "audio/wav",
-      filePath: recording.filePath,
-      sizeBytes: recording.sizeBytes,
-      retentionDays: this.options.retentionDays ?? 35,
-      zoomAsset
-    });
+    for (const recording of recordings) {
+      const audioLabel = recording.assets?.find((asset) => asset.kind === "audio")?.label;
+      recording.assets = createRecordingAssets({
+        startedAt: recording.startedAt,
+        fileName: recording.downloadFileName ?? formatRecordingFileName(recording.startedAt),
+        mimeType: recording.downloadMimeType ?? "audio/wav",
+        filePath: recording.filePath,
+        sizeBytes: recording.sizeBytes,
+        retentionDays: this.options.retentionDays ?? 35,
+        zoomAsset: { ...zoomAsset, label: recordings.length > 1 ? "Zoom recording - complete session" : zoomAsset.label }
+      });
+      const audioAsset = recording.assets.find((asset) => asset.kind === "audio");
+      if (audioAsset && audioLabel) audioAsset.label = audioLabel;
+    }
+    await this.saveManifest();
+    if (removeLocalAfterArchive) {
+      await unlink(filePath).catch(() => undefined);
+    }
+    return this.getState();
+  }
+
+  async setRecordingTitle(recordingId: string, title: string): Promise<PodcastState> {
+    const recording = this.recordings.find((candidate) => candidate.id === recordingId);
+    if (!recording) return this.getState();
+    recording.title = title;
     await this.saveManifest();
     return this.getState();
   }
@@ -729,8 +859,8 @@ export class LocalPodcastService implements PodcastService {
   async getRecordingAssetUrl(recordingId: string, assetKind: RecordingAssetKind): Promise<string | undefined> {
     const recording = this.recordings.find((candidate) => candidate.id === recordingId);
     const asset = recording?.assets?.find((candidate) => candidate.kind === assetKind);
-    if (!asset?.archiveBucket || !asset.archiveKey || !this.options.s3Archive) return undefined;
-    return this.options.s3Archive.signedUrl(asset.archiveBucket, asset.archiveKey);
+    if (!recording || !asset?.archiveBucket || !asset.archiveKey || !this.options.s3Archive) return undefined;
+    return this.options.s3Archive.signedUrl(asset.archiveBucket, asset.archiveKey, titleDownloadFileName(recording.title, assetKind, asset.fileName));
   }
 
   private currentElapsedSeconds(): number {
@@ -743,8 +873,267 @@ export class LocalPodcastService implements PodcastService {
 
   private async saveManifest(): Promise<void> {
     await mkdir(dirname(this.options.manifestPath), { recursive: true });
-    await writeFile(this.options.manifestPath, JSON.stringify({ recordings: this.recordings }, null, 2));
+    const temporaryPath = `${this.options.manifestPath}.tmp-${process.pid}`;
+    await writeFile(temporaryPath, JSON.stringify({ recordings: this.recordings }, null, 2));
+    await rename(temporaryPath, this.options.manifestPath);
   }
+
+  private recoveryPath(): string {
+    return join(this.options.recordingsDir, ".active-recording.json");
+  }
+
+  private async saveActiveRecovery(phase: ActiveRecordingRecovery["phase"]): Promise<void> {
+    if (!this.activeRecording || !this.activeFilePath || !this.segmentDirPath) return;
+    const recovery: ActiveRecordingRecovery = {
+      version: 1,
+      phase,
+      recording: this.activeRecording,
+      activeFilePath: this.activeFilePath,
+      segmentDirPath: this.segmentDirPath,
+      segmentPaths: [...this.segmentPaths],
+      segmentStartedAts: [...this.segmentStartedAts],
+      segmentPauseDurationsMs: [...this.segmentPauseDurationsMs],
+      elapsedSeconds: this.currentElapsedSeconds(),
+      updatedAt: new Date().toISOString()
+    };
+    const recoveryPath = this.recoveryPath();
+    const temporaryPath = `${recoveryPath}.tmp-${process.pid}`;
+    await writeFile(temporaryPath, JSON.stringify(recovery, null, 2));
+    await rename(temporaryPath, recoveryPath);
+  }
+
+  private async clearActiveRecovery(): Promise<void> {
+    await unlink(this.recoveryPath()).catch(() => undefined);
+  }
+
+  private async recoverInterruptedFinalization(): Promise<void> {
+    let recovery: ActiveRecordingRecovery;
+    try {
+      recovery = JSON.parse(await readFile(this.recoveryPath(), "utf8")) as ActiveRecordingRecovery;
+    } catch {
+      return;
+    }
+    if (recovery.version !== 1 || recovery.phase !== "finalizing" || !recovery.recording?.id) return;
+    const segmentPaths = recovery.segmentPaths.filter(Boolean);
+    if (!segmentPaths.length) return;
+    this.segmentPaths = segmentPaths;
+    this.segmentStartedAts = recovery.segmentStartedAts?.length === segmentPaths.length
+      ? [...recovery.segmentStartedAts]
+      : segmentPaths.map((_path, index) => index === 0 ? recovery.recording.startedAt : recovery.updatedAt);
+    this.segmentPauseDurationsMs = recovery.segmentPauseDurationsMs?.length === segmentPaths.length
+      ? [...recovery.segmentPauseDurationsMs]
+      : segmentPaths.map(() => 0);
+    const completed = await this.finalizeSegmentRecordings(recovery.recording, recovery.activeFilePath, recovery.updatedAt);
+    const completedIds = new Set(completed.map((recording) => recording.id));
+    this.recordings = [...completed, ...this.recordings.filter((recording) => !completedIds.has(recording.id) && recording.id !== recovery.recording.id)];
+    await this.saveManifest();
+    await this.clearActiveRecovery();
+    await rm(recovery.segmentDirPath, { recursive: true, force: true });
+    this.recoveredFinalization = true;
+    this.recoveredRecordingIds = completed.map((recording) => recording.id);
+    this.state = {
+      ...this.state,
+      recordings: this.recordings,
+      lastEvent: `Recovered interrupted recording: ${completed.length} recording${completed.length === 1 ? "" : "s"}`
+    };
+  }
+
+  private async finalizeSegmentRecordings(
+    activeRecording: RecordingManifestEntry,
+    activeFilePath: string | undefined,
+    stoppedAt: string
+  ): Promise<RecordingManifestEntry[]> {
+    if (!this.segmentPaths.length) return [];
+    const thresholdSeconds = Math.max(60, Number(process.env.STUDYBOX_RECORDING_PART_PAUSE_SECONDS ?? 300));
+    const groups = groupRecordingSegments(this.segmentPaths, this.segmentPauseDurationsMs, thresholdSeconds);
+    if (groups.length === 1) {
+      if (!activeFilePath) throw new Error("Recording output path is unavailable");
+      await mergeWavSegments(this.segmentPaths, activeFilePath);
+      const sizeBytes = await fileSize(activeFilePath);
+      const durationSeconds = await wavDurationSeconds(activeFilePath);
+      return [{
+        ...activeRecording,
+        endedAt: stoppedAt,
+        durationSeconds: Math.round(durationSeconds),
+        sizeBytes,
+        assets: createRecordingAssets({
+          startedAt: activeRecording.startedAt,
+          fileName: activeRecording.downloadFileName ?? formatRecordingFileName(activeRecording.startedAt),
+          mimeType: activeRecording.downloadMimeType ?? "audio/wav",
+          filePath: activeFilePath,
+          sizeBytes,
+          retentionDays: this.options.retentionDays ?? 35,
+          zoomAsset: activeRecording.assets?.find((asset) => asset.kind === "zoom")
+        })
+      }];
+    }
+
+    const completed: RecordingManifestEntry[] = [];
+    for (let index = 0; index < groups.length; index += 1) {
+      const partNumber = index + 1;
+      const group = groups[index];
+      const startedAt = this.segmentStartedAts[group.firstIndex] ?? activeRecording.startedAt;
+      const fileName = formatPartRecordingFileName(startedAt, partNumber);
+      const filePath = join(this.options.recordingsDir, fileName);
+      await mergeWavSegments(group.paths, filePath);
+      const sizeBytes = await fileSize(filePath);
+      const durationSeconds = await wavDurationSeconds(filePath);
+      const assets = createRecordingAssets({
+        startedAt,
+        fileName,
+        mimeType: "audio/wav",
+        filePath,
+        sizeBytes,
+        retentionDays: this.options.retentionDays ?? 35,
+        zoomAsset: activeRecording.assets?.find((asset) => asset.kind === "zoom")
+      });
+      const audioAsset = assets.find((asset) => asset.kind === "audio");
+      if (audioAsset) audioAsset.label = `Room audio - Part ${partNumber} of ${groups.length}`;
+      const zoomAsset = assets.find((asset) => asset.kind === "zoom");
+      if (zoomAsset) zoomAsset.label = "Zoom recording - complete session";
+      completed.push({
+        ...activeRecording,
+        id: `${activeRecording.id}-part-${partNumber}`,
+        title: `${formatRecordingTitle(startedAt)} (Part ${partNumber})`,
+        startedAt,
+        endedAt: new Date(Date.parse(startedAt) + durationSeconds * 1000).toISOString(),
+        durationSeconds: Math.round(durationSeconds),
+        sizeBytes,
+        downloadFileName: fileName,
+        downloadMimeType: "audio/wav",
+        filePath,
+        expiresAt: retentionDate(startedAt, this.options.retentionDays ?? 35),
+        assets
+      });
+    }
+    return completed;
+  }
+}
+
+export function groupRecordingSegments(
+  segmentPaths: string[],
+  pauseDurationsMs: number[],
+  thresholdSeconds = 300
+): Array<{ paths: string[]; firstIndex: number }> {
+  const thresholdMs = Math.max(1, thresholdSeconds) * 1000;
+  const groups: Array<{ paths: string[]; firstIndex: number }> = [];
+  for (let index = 0; index < segmentPaths.length; index += 1) {
+    if (index === 0 || (pauseDurationsMs[index] ?? 0) >= thresholdMs) {
+      groups.push({ paths: [], firstIndex: index });
+    }
+    groups.at(-1)!.paths.push(segmentPaths[index]);
+  }
+  return groups;
+}
+
+function titleDownloadFileName(title: string, assetKind: RecordingAssetKind, originalFileName?: string): string {
+  const extension = originalFileName?.split(".").at(-1)?.toLowerCase() ?? (assetKind === "zoom" ? "mp4" : "wav");
+  const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 120) || "bible-study";
+  return `${slug}-${assetKind}.${extension}`;
+}
+
+async function mergeWavSegments(segmentPaths: string[], outputPath: string): Promise<void> {
+  if (segmentPaths.length === 0) return;
+  const chunks = await Promise.all(segmentPaths.map(inspectWavDataChunk));
+  const first = await open(segmentPaths[0], "r");
+  const header = Buffer.alloc(chunks[0].dataStart);
+  try {
+    await first.read(header, 0, header.length, 0);
+  } finally {
+    await first.close();
+  }
+  const dataSize = chunks.reduce((total, chunk) => total + chunk.dataSize, 0);
+  if (dataSize > 0xffffffff - header.length) throw new Error("Merged WAV exceeds the RIFF size limit");
+  header.writeUInt32LE(header.length + dataSize - 8, 4);
+  header.writeUInt32LE(dataSize, chunks[0].dataStart - 4);
+
+  const temporaryPath = `${outputPath}.merging-${process.pid}`;
+  const output = await open(temporaryPath, "w");
+  const buffer = Buffer.alloc(1024 * 1024);
+  try {
+    await output.write(header);
+    for (let index = 0; index < segmentPaths.length; index += 1) {
+      const input = await open(segmentPaths[index], "r");
+      let position = chunks[index].dataStart;
+      let remaining = chunks[index].dataSize;
+      try {
+        while (remaining > 0) {
+          const length = Math.min(buffer.length, remaining);
+          const { bytesRead } = await input.read(buffer, 0, length, position);
+          if (!bytesRead) throw new Error(`Unexpected end of WAV segment: ${segmentPaths[index]}`);
+          await output.write(buffer, 0, bytesRead);
+          position += bytesRead;
+          remaining -= bytesRead;
+        }
+      } finally {
+        await input.close();
+      }
+    }
+    await output.sync();
+  } catch (error) {
+    await output.close().catch(() => undefined);
+    await unlink(temporaryPath).catch(() => undefined);
+    throw error;
+  }
+  await output.close();
+  await rename(temporaryPath, outputPath);
+}
+
+async function inspectWavDataChunk(path: string): Promise<{ dataStart: number; dataSize: number; byteRate: number }> {
+  const input = await open(path, "r");
+  try {
+    const info = await input.stat();
+    const riff = Buffer.alloc(12);
+    if ((await input.read(riff, 0, riff.length, 0)).bytesRead !== riff.length
+      || riff.toString("ascii", 0, 4) !== "RIFF"
+      || riff.toString("ascii", 8, 12) !== "WAVE") {
+      throw new Error("Audio segment is not a RIFF/WAVE file");
+    }
+    let offset = 12;
+    let byteRate = 0;
+    const chunkHeader = Buffer.alloc(8);
+    while (offset + 8 <= info.size) {
+      if ((await input.read(chunkHeader, 0, 8, offset)).bytesRead !== 8) break;
+      const chunkSize = chunkHeader.readUInt32LE(4);
+      const dataStart = offset + 8;
+      if (chunkHeader.toString("ascii", 0, 4) === "fmt " && chunkSize >= 12) {
+        const format = Buffer.alloc(Math.min(chunkSize, 16));
+        if ((await input.read(format, 0, format.length, dataStart)).bytesRead === format.length) {
+          byteRate = format.readUInt32LE(8);
+        }
+      }
+      if (chunkHeader.toString("ascii", 0, 4) === "data") {
+        if (!byteRate) throw new Error("Audio segment WAV format has no byte rate");
+        return { dataStart, dataSize: Math.min(chunkSize, info.size - dataStart), byteRate };
+      }
+      offset = dataStart + chunkSize + (chunkSize % 2);
+    }
+  } finally {
+    await input.close();
+  }
+  throw new Error("Audio segment has no data chunk");
+}
+
+async function wavDurationSeconds(path: string): Promise<number> {
+  const chunk = await inspectWavDataChunk(path);
+  return chunk.dataSize / chunk.byteRate;
+}
+
+function findWavDataChunk(buffer: Buffer): { dataStart: number; dataEnd: number } {
+  if (buffer.toString("ascii", 0, 4) !== "RIFF" || buffer.toString("ascii", 8, 12) !== "WAVE") {
+    throw new Error("Audio segment is not a RIFF/WAVE file");
+  }
+  let offset = 12;
+  while (offset + 8 <= buffer.length) {
+    const chunkSize = buffer.readUInt32LE(offset + 4);
+    const dataStart = offset + 8;
+    const dataEnd = dataStart + chunkSize;
+    if (buffer.toString("ascii", offset, offset + 4) === "data") {
+      return { dataStart, dataEnd: Math.min(dataEnd, buffer.length) };
+    }
+    offset = dataEnd + (chunkSize % 2);
+  }
+  throw new Error("Audio segment has no data chunk");
 }
 
 function formatRecordingTitle(startedAt: string): string {
@@ -769,6 +1158,14 @@ function formatRecordingFileName(startedAt: string): string {
   const hour = String(date.getHours()).padStart(2, "0");
   const minute = String(date.getMinutes()).padStart(2, "0");
   return `bible-study-${year}-${month}-${day}-${hour}-${minute}.wav`;
+}
+
+function formatPartRecordingFileName(startedAt: string, partNumber: number): string {
+  const date = new Date(startedAt);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `bible-study-${year}-${month}-${day}-part-${partNumber}.wav`;
 }
 
 function retentionDate(startedAt: string, retentionDays: number): string | undefined {

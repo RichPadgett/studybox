@@ -1,14 +1,21 @@
-import type { BackupSyncState, MeetingState, OledDisplay, OledPage, OledPageId, PodcastState, SystemMetrics } from "@studybox/shared";
+import type { BackupSyncState, MeetingState, OledDisplay, OledPage, OledPageId, PodcastState, SystemMetrics, WatchdogStatus, ZoomCloudRecordingStatus, ZoomRuntimeStatus } from "@studybox/shared";
 
 export class MockOledDisplay implements OledDisplay {
   private pageIndex = 0;
   private renderedPage?: OledPage;
+  private backupOverlaySignature?: string;
+  private backupOverlayDismissed = false;
+  private cloudOverlaySignature?: string;
+  private cloudOverlayDismissed = false;
 
   constructor(
     private readonly getMeeting: () => MeetingState,
     private readonly getPodcast: () => PodcastState,
     private readonly getMetrics: () => SystemMetrics,
-    private readonly getBackup?: () => BackupSyncState
+    private readonly getBackup?: () => BackupSyncState,
+    private readonly getZoom?: () => ZoomRuntimeStatus,
+    private readonly getCloud?: () => ZoomCloudRecordingStatus,
+    private readonly getWatchdog?: () => WatchdogStatus
   ) {}
 
   getPages(): OledPage[] {
@@ -16,82 +23,73 @@ export class MockOledDisplay implements OledDisplay {
     const podcast = this.getPodcast();
     const metrics = this.getMetrics();
     const backup = this.getBackup?.();
+    const zoom = this.getZoom?.();
+    const cloud = this.getCloud?.();
+    const watchdog = this.getWatchdog?.() ?? { live: true, issues: [] };
     const activeBackupPage = backup ? getActiveBackupPage(backup) : undefined;
+    const overlaySignature = activeBackupPage ? JSON.stringify(activeBackupPage) : undefined;
+    if (overlaySignature !== this.backupOverlaySignature) {
+      this.backupOverlaySignature = overlaySignature;
+      this.backupOverlayDismissed = false;
+    }
 
-    if (activeBackupPage) {
+    if (activeBackupPage && !this.backupOverlayDismissed) {
       return [activeBackupPage];
     }
 
-    const homeCondition = meeting.status === "live"
-      ? "MEETING LIVE"
-      : podcast.status !== "idle"
-      ? podcast.status === "waitingForAudio" ? "WAITING FOR AUDIO" : "RECORDING ACTIVE"
-      : !metrics.wifiConnected
+    const cloudPage = cloud ? getCloudPage(cloud) : undefined;
+    const cloudSignature = cloudPage ? JSON.stringify(cloudPage) : undefined;
+    if (cloudSignature !== this.cloudOverlaySignature) {
+      this.cloudOverlaySignature = cloudSignature;
+      this.cloudOverlayDismissed = false;
+    }
+    if (cloudPage && !this.cloudOverlayDismissed) return [cloudPage];
+
+    if (!metrics.wifiConnected) {
+      return [{
+        id: "wifiSetup",
+        title: "WIFI SETUP",
+        lines: [
+          `SSID ${process.env.STUDYBOX_SETUP_SSID ?? "StudyBox-Setup"}`,
+          `PASS ${process.env.STUDYBOX_SETUP_PASSWORD ?? "StudyBoxSetup!26"}`,
+          `OPEN ${(process.env.STUDYBOX_SETUP_ADDRESS ?? "10.42.0.1/24").split("/")[0]}:5173`,
+          "ADD WIFI NETWORK"
+        ]
+      }];
+    }
+
+    const meetingStatus = formatMeetingStatus(meeting);
+    const recordingStatus = formatRecordingStatus(podcast);
+    const zoomAuthRequired = Boolean(zoom?.configured && !zoom.oauth.authorized);
+    const homeCondition = !metrics.wifiConnected
       ? "WIFI OFF"
-      : podcast.audioReady !== true
-      ? "AUDIO NOT READY"
+      : zoomAuthRequired
+      ? "ZOOM AUTH REQUIRED"
+      : meeting.status === "error" || podcast.status === "error"
+      ? "SYSTEM ATTENTION"
       : "SYSTEM READY";
 
     const pages: OledPage[] = [
       {
         id: "home",
         title: "Church of the Word",
-        lines: meeting.waitingRoom[0]
-          ? ["WAITING ROOM", meeting.waitingRoom[0].displayName, "ACTION: Admit"]
-          : meeting.lobbyRequests[0]
-          ? ["LOBBY", meeting.lobbyRequests[0].displayName, "OPENING ZOOM"]
-          : meeting.raisedHands[0]
-          ? ["HAND RAISED", meeting.raisedHands[0].displayName, "ACTION: Allow"]
-          : meeting.activeSpeaker
-            ? [`${meeting.activeSpeaker.displayName} LIVE`, "Remote speaker", "ACTION: Mute"]
-            : meeting.status === "live" && (podcast.status === "recording" || podcast.status === "paused" || podcast.status === "waitingForAudio")
-              ? ["LIVE + RECORDING", `${meeting.participants.length} Participants`, "Use Finish Rec"]
-            : meeting.status === "live"
-              ? ["MEETING LIVE", `${meeting.participants.length} Participants`, "Awaiting recording"]
-            : podcast.status === "recording" || podcast.status === "paused" || podcast.status === "waitingForAudio"
-              ? ["RECORDING", formatDuration(podcast.elapsedSeconds), "Use Finish Rec"]
-            : ["STUDYBOX", "NEXT MEETING", "SATURDAY 11:00", "", homeCondition],
-        actionLabel: meeting.waitingRoom[0] ? "Admit Participant" : meeting.raisedHands[0] ? "Allow to Speak" : meeting.activeSpeaker ? "Mute Speaker" : undefined
+        lines: ["STUDYBOX", "NEXT MEETING", "SATURDAY 11:00", "", homeCondition]
       },
       {
         id: "meeting",
-        title: "Zoom Meeting",
-        lines: meeting.status !== "live" && podcast.audioReady !== true
-          ? ["MIC NOT READY", "Connect DJI Mic", "Start recording"]
-          : [`${meeting.participants.length} Participants`, `Lobby: ${meeting.lobbyRequests.length}`, `Waiting: ${meeting.waitingRoom.length}`],
-        actionLabel: meeting.status === "live" ? "End Meeting" : "Start Meeting"
-      },
-      {
-        id: "podcast",
-        title: "Spotify Recording",
-        lines: podcast.status === "idle"
-          ? ["IDLE", "Press to start"]
-          : podcast.status === "waitingForAudio"
-          ? ["WAITING FOR AUDIO", "Connect DJI Mic"]
-          : podcast.status === "error" && podcast.activeRecording
-          ? ["AUDIO ERROR", "Partial audio saved"]
-          : [podcast.status.toUpperCase(), formatDuration(podcast.elapsedSeconds)],
-        actionLabel: podcast.status === "idle" ? "Start Record" : podcast.status === "recording" ? "Pause Recording" : podcast.status === "paused" ? "Resume Recording" : podcast.status === "waitingForAudio" ? "Finish Recording" : podcast.status === "error" && podcast.activeRecording ? "Save Partial Recording" : podcast.status === "error" ? "Retry Recording" : "Start Record"
+        title: "Study Status",
+        lines: [
+          zoomAuthRequired ? "ZOOM AUTH REQUIRED" : meetingStatus,
+          recordingStatus,
+          podcast.activeRecording ? `TIME ${formatDuration(podcast.elapsedSeconds)}` : podcast.audioReady === true ? "MIC READY" : "MIC NOT READY",
+          meeting.screenSharePolicy === "error"
+            ? "SHARE SETTING ERROR"
+            : meeting.screenSharePolicy === "all-participants"
+              ? `SHARE ALL  ${meeting.participants.length} JOINED`
+              : `${meeting.participants.length} PARTICIPANTS`
+        ]
       }
     ];
-
-    if (meeting.status === "live") {
-      pages.push({
-        id: "screenShare",
-        title: "Share Screen",
-        lines: ["ADMIN CONTROL", "Enable participant sharing", "Then share from Zoom"],
-        actionLabel: "Allow Share"
-      });
-    }
-
-    if (podcast.status === "recording" || podcast.status === "paused" || podcast.status === "error" && podcast.activeRecording) {
-      pages.push({
-        id: "recordingStop",
-        title: "Finish Rec",
-        lines: [podcast.status === "error" ? "PARTIAL AUDIO" : podcast.status.toUpperCase(), formatDuration(podcast.elapsedSeconds), "Save recording"],
-        actionLabel: podcast.status === "error" ? "Save Partial" : "Finish Recording"
-      });
-    }
 
     pages.push(
       {
@@ -107,11 +105,23 @@ export class MockOledDisplay implements OledDisplay {
       }
     );
 
+    pages.push({
+      id: "system",
+      title: "WATCHDOG",
+      lines: watchdog.live && watchdog.issues.length === 0
+        ? ["SYSTEMS GOOD"]
+        : ["SYSTEM ISSUE", ...(watchdog.live ? watchdog.issues.slice(0, 4) : ["WATCHDOG OFF"])]
+    });
+
     return pages;
   }
 
   getCurrentPage(): OledPage {
     return this.getPages()[this.pageIndex] ?? this.getPages()[0];
+  }
+
+  async showWatchdogStatus(): Promise<void> {
+    await this.render({ id: "system", title: "WATCHDOG LIVE", lines: ["WATCHDOG", "LIVE"] });
   }
 
   async showPage(pageId: OledPageId): Promise<OledPage> {
@@ -125,7 +135,16 @@ export class MockOledDisplay implements OledDisplay {
   }
 
   async nextPage(): Promise<OledPage> {
-    this.pageIndex = (this.pageIndex + 1) % this.getPages().length;
+    const pages = this.getPages();
+    if (pages.length === 1 && pages[0]?.id === "system" && this.backupOverlaySignature) {
+      this.backupOverlayDismissed = true;
+      this.pageIndex = 0;
+    } else if (pages.length === 1 && pages[0]?.id === "system" && this.cloudOverlaySignature) {
+      this.cloudOverlayDismissed = true;
+      this.pageIndex = 0;
+    } else {
+      this.pageIndex = (this.pageIndex + 1) % pages.length;
+    }
     const page = this.getCurrentPage();
     await this.render(page);
     return page;
@@ -138,6 +157,16 @@ export class MockOledDisplay implements OledDisplay {
   getRenderedPage(): OledPage | undefined {
     return this.renderedPage;
   }
+}
+
+function getCloudPage(status: ZoomCloudRecordingStatus): OledPage | undefined {
+  if (status.failed > 0 && status.lastError) {
+    return { id: "system", title: "CLOUD ERROR", lines: ["ZOOM VIDEO", "ARCHIVE FAILED", status.lastError ?? "RETRY NEEDED", "PRESS PAGE"] };
+  }
+  if (status.pending > 0 || status.processing > 0) {
+    return { id: "system", title: "CLOUD VIDEO", lines: ["ZOOM RECORDING", "PROCESSING", `${status.pending + status.processing} JOB(S)`, "PRESS PAGE"] };
+  }
+  return undefined;
 }
 
 function getActiveBackupPage(backup: BackupSyncState): OledPage | undefined {
@@ -181,4 +210,22 @@ function formatDuration(seconds: number): string {
   const minutes = Math.floor((seconds % 3600) / 60).toString().padStart(2, "0");
   const remainingSeconds = Math.floor(seconds % 60).toString().padStart(2, "0");
   return `${hours}:${minutes}:${remainingSeconds}`;
+}
+
+function formatMeetingStatus(meeting: MeetingState): string {
+  if (meeting.reconnecting) return `ZOOM REJOINING${meeting.reconnectAttempt ? ` ${meeting.reconnectAttempt}` : ""}`;
+  if (meeting.status === "live") return "MEETING LIVE";
+  if (meeting.status === "starting") return "MEETING STARTING";
+  if (meeting.status === "ending") return "MEETING ENDING";
+  if (meeting.status === "error") return "MEETING ERROR";
+  return "MEETING READY";
+}
+
+function formatRecordingStatus(podcast: PodcastState): string {
+  if (podcast.status === "recording") return "RECORDING LIVE";
+  if (podcast.status === "paused") return "RECORDING PAUSED";
+  if (podcast.status === "waitingForAudio") return "WAITING FOR AUDIO";
+  if (podcast.status === "stopping") return "SAVING RECORDING";
+  if (podcast.status === "error") return "RECORDING ERROR";
+  return podcast.audioReady === true ? "RECORDING READY" : "AUDIO NOT READY";
 }

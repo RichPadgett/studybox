@@ -5,8 +5,10 @@ import type { ZoomConfig } from "./zoomConfig.js";
 export interface ZoomWebhookBody {
   event?: string;
   event_ts?: number;
+  download_token?: string;
   payload?: {
     plainToken?: string;
+    download_token?: string;
     object?: Record<string, unknown>;
   };
 }

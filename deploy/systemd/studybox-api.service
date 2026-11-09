@@ -10,6 +10,8 @@ Group=studybox
 WorkingDirectory=/opt/studybox
 Environment=NODE_ENV=production
 Environment=PORT=4000
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+Environment=PULSE_SERVER=unix:/run/user/1000/pulse/native
 EnvironmentFile=-/etc/studybox/studybox.env
 ExecStart=/usr/bin/npm run start -w @studybox/api
 Restart=always

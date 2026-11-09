@@ -3,7 +3,7 @@ import type { MeetingModerationMode, MeetingService, MeetingState, Participant, 
 export class MockMeetingService implements MeetingService {
   private state: MeetingState = {
     status: "idle",
-    title: "Weekly Bible Study",
+    title: "Weekly & Appointed Assembly's",
     moderationMode: "moderated",
     participants: [],
     lobbyRequests: [],
@@ -48,6 +48,20 @@ export class MockMeetingService implements MeetingService {
       meetingId: "studybox-local-session",
       startedAt: new Date().toISOString(),
       lastEvent: "Meeting marked live; Zoom moderation sync is not connected yet"
+    };
+    return this.state;
+  }
+
+  async recoverMeeting(): Promise<MeetingState> {
+    return this.startMeeting();
+  }
+
+  markTerminalError(message: string): MeetingState {
+    this.state = {
+      ...this.state,
+      status: "error",
+      reconnecting: false,
+      lastEvent: message
     };
     return this.state;
   }
@@ -190,6 +204,7 @@ export class MockMeetingService implements MeetingService {
 
 export interface ZoomMeetingRunnerClient {
   startMeeting(payload?: ZoomRunnerStartMeetingPayload): Promise<void>;
+  reset(): Promise<void>;
   endMeeting(): Promise<void>;
   admitParticipant(participantId: string): Promise<void>;
   dismissRaisedHand(participantId: string): Promise<void>;
@@ -208,7 +223,7 @@ export interface ZoomMeetingRunnerClient {
 export class ZoomMeetingService implements MeetingService {
   private state: MeetingState = {
     status: "idle",
-    title: "Weekly Bible Study",
+    title: "Weekly & Appointed Assembly's",
     moderationMode: "moderated",
     participants: [],
     lobbyRequests: [],
@@ -216,18 +231,41 @@ export class ZoomMeetingService implements MeetingService {
     raisedHands: [],
     lastEvent: "Zoom runner adapter initialized"
   };
+  private consecutiveIdleSyncFailures = 0;
+  private readonly idleSyncFailureLimit: number;
 
   constructor(
     private readonly runner: ZoomMeetingRunnerClient,
-    private readonly getStartPayload?: () => Promise<ZoomRunnerStartMeetingPayload>
-  ) {}
+    private readonly getStartPayload?: () => Promise<ZoomRunnerStartMeetingPayload>,
+    options: { idleSyncFailureLimit?: number } = {}
+  ) {
+    this.idleSyncFailureLimit = Math.max(2, options.idleSyncFailureLimit
+      ?? Number(process.env.STUDYBOX_ZOOM_SYNC_FAILURES_BEFORE_ERROR ?? 4));
+  }
 
   getState(): MeetingState {
     return this.state;
   }
 
   async syncState(): Promise<MeetingState> {
-    return this.refreshState();
+    try {
+      return await this.refreshState();
+    } catch (error) {
+      const wasIdle = this.state.status === "idle";
+      this.consecutiveIdleSyncFailures = wasIdle ? this.consecutiveIdleSyncFailures + 1 : 0;
+      const terminal = wasIdle && this.consecutiveIdleSyncFailures >= this.idleSyncFailureLimit;
+      this.state = {
+        ...this.state,
+        status: terminal ? "error" : wasIdle ? "idle" : "starting",
+        reconnecting: terminal || wasIdle ? false : true,
+        lastEvent: terminal
+          ? `Zoom runner is unavailable after ${this.consecutiveIdleSyncFailures} checks: ${errorMessage(error)}`
+          : wasIdle
+            ? `Zoom runner check delayed; retrying (${this.consecutiveIdleSyncFailures}/${this.idleSyncFailureLimit})`
+            : `Zoom connection check delayed; reconnecting: ${errorMessage(error)}`
+      };
+      return this.state;
+    }
   }
 
   async requestParticipantJoin(displayName: string): Promise<Participant> {
@@ -255,16 +293,69 @@ export class ZoomMeetingService implements MeetingService {
     this.state = {
       ...this.state,
       status: "starting",
+      reconnecting: false,
+      reconnectAttempt: undefined,
       lastEvent: "Starting Zoom meeting through runner"
     };
-    await this.runner.startMeeting(this.getStartPayload ? await this.getStartPayload() : undefined);
-    return this.refreshState();
+    try {
+      await this.runner.startMeeting(this.getStartPayload ? await this.getStartPayload() : undefined);
+      return await this.refreshState();
+    } catch (error) {
+      this.state = {
+        ...this.state,
+        status: "starting",
+        reconnecting: true,
+        lastEvent: `Zoom start attempt failed; retrying: ${errorMessage(error)}`
+      };
+      throw error;
+    }
+  }
+
+  async recoverMeeting(): Promise<MeetingState> {
+    const reconnectAttempt = (this.state.reconnectAttempt ?? 0) + 1;
+    this.state = {
+      ...this.state,
+      status: "starting",
+      reconnecting: true,
+      reconnectAttempt,
+      lastEvent: "Restarting Zoom agent to rejoin the active meeting"
+    };
+    try {
+      await this.runner.reset();
+      await this.runner.startMeeting(this.getStartPayload ? await this.getStartPayload() : undefined);
+      const state = await this.refreshState();
+      this.state = {
+        ...state,
+        reconnecting: state.status !== "live",
+        reconnectAttempt
+      };
+      return this.state;
+    } catch (error) {
+      this.state = {
+        ...this.state,
+        status: "starting",
+        reconnecting: true,
+        lastEvent: `Zoom rejoin attempt failed; retrying: ${errorMessage(error)}`
+      };
+      throw error;
+    }
+  }
+
+  markTerminalError(message: string): MeetingState {
+    this.state = {
+      ...this.state,
+      status: "error",
+      reconnecting: false,
+      lastEvent: message
+    };
+    return this.state;
   }
 
   async endMeeting(): Promise<MeetingState> {
     this.state = {
       ...this.state,
       status: "ending",
+      reconnecting: false,
       lastEvent: "Ending Zoom meeting through runner"
     };
     await this.runner.endMeeting();
@@ -333,8 +424,10 @@ export class ZoomMeetingService implements MeetingService {
     const runnerState = await this.runner.getState();
     this.state = {
       ...runnerState,
+      reconnectAttempt: runnerState.status === "live" ? undefined : this.state.reconnectAttempt,
       lobbyRequests: currentLobbyRequests
     };
+    this.consecutiveIdleSyncFailures = 0;
     return this.state;
   }
 }
@@ -343,6 +436,8 @@ export class MissingZoomRunnerClient implements ZoomMeetingRunnerClient {
   async startMeeting(_payload?: ZoomRunnerStartMeetingPayload): Promise<void> {
     throw new Error("Zoom runner is not available. Build and configure the ARM64 Meeting SDK runner first.");
   }
+
+  async reset(): Promise<void> {}
 
   async endMeeting(): Promise<void> {
     throw new Error("Zoom runner is not available. Build and configure the ARM64 Meeting SDK runner first.");
@@ -395,7 +490,7 @@ export class MissingZoomRunnerClient implements ZoomMeetingRunnerClient {
   async getState(): Promise<MeetingState> {
     return {
       status: "error",
-      title: "Weekly Bible Study",
+      title: "Weekly & Appointed Assembly's",
       moderationMode: "moderated",
       participants: [],
       lobbyRequests: [],
@@ -404,4 +499,8 @@ export class MissingZoomRunnerClient implements ZoomMeetingRunnerClient {
       lastEvent: "Zoom runner missing"
     };
   }
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

@@ -124,9 +124,32 @@ export class TranscriptLibraryService {
       enabled: Boolean(this.options.apiKey),
       rootDir: this.options.rootDir,
       jobs: this.state.jobs.slice(0, 25),
-      documents: this.state.documents.slice(0, 50),
+      // Dashboard refreshes only need the list metadata. Full chunk text and
+      // analysis data are loaded by the document detail endpoints.
+      documents: this.state.documents.slice(0, 50).map((document) => ({
+        recordingId: document.recordingId,
+        recordingUuid: document.recordingUuid,
+        sourceFileUuid: document.sourceFileUuid,
+        sourceFileSha256: document.sourceFileSha256,
+        sourceFileName: document.sourceFileName,
+        title: document.title,
+        description: document.description,
+        fullTextPath: document.fullTextPath,
+        chunks: [],
+        chunkCount: document.chunks.length,
+        markers: [],
+        status: document.status,
+        recordedAt: document.recordedAt,
+        createdAt: document.createdAt,
+        updatedAt: document.updatedAt,
+        error: document.error
+      })),
       lastEvent: this.state.jobs[0]?.error ?? this.state.jobs[0]?.status
     };
+  }
+
+  getAllDocuments(): TranscriptDocument[] {
+    return this.state.documents;
   }
 
   getJob(recordingId: string): TranscriptJob | undefined {
@@ -166,6 +189,7 @@ export class TranscriptLibraryService {
       occurrences: [],
       relationships: [],
       status: "completed",
+      recordedAt: recording.startedAt,
       createdAt: now,
       updatedAt: now
     };
@@ -241,7 +265,9 @@ export class TranscriptLibraryService {
   }
 
   async processPending(recordings: Recording[], resolveFile: (recording: Recording) => string | undefined): Promise<void> {
-    for (const job of this.state.jobs.filter((candidate) => candidate.status !== "completed")) {
+    // Failed jobs require an explicit retry. Automatically retrying them on
+    // every boot can monopolize memory and delay recovery of newer sessions.
+    for (const job of this.state.jobs.filter((candidate) => candidate.status !== "completed" && candidate.status !== "failed")) {
       const recording = recordings.find((candidate) => candidate.id === job.recordingId);
       if (!recording) continue;
       const filePath = resolveFile(recording);
@@ -289,6 +315,17 @@ export class TranscriptLibraryService {
     return this.state.documents.find((document) => document.recordingId === recordingId);
   }
 
+  async setTitle(recordingId: string, title: string): Promise<TranscriptDocument | undefined> {
+    const document = this.getDocument(recordingId);
+    if (!document) return undefined;
+    document.title = title;
+    document.updatedAt = new Date().toISOString();
+    const job = this.getJob(recordingId);
+    if (job) job.recordingTitle = title;
+    await this.save();
+    return document;
+  }
+
   async readFullText(recordingId: string): Promise<string | undefined> {
     const document = this.getDocument(recordingId);
     if (!document) return undefined;
@@ -332,23 +369,36 @@ export class TranscriptLibraryService {
       const sourceFileSha256 = await hashFile(sourcePath);
       const recordingUuid = randomUUID();
       const chunkFiles = await this.chunkAudio(sourcePath, workDir);
-      const chunks: TranscriptChunk[] = chunkFiles.map((fileName, index) => ({
-        id: `${recording.id}-chunk-${index}`,
-        fileUuid: randomUUID(),
-        index,
-        startSeconds: index * (this.options.chunkSeconds ?? 600),
-        audioFileName: fileName,
-        status: "pending"
+      const chunks: TranscriptChunk[] = await Promise.all(chunkFiles.map(async (fileName, index) => {
+        const id = `${recording.id}-chunk-${index}`;
+        try {
+          const recovered = JSON.parse(await readFile(join(workDir, `${id}.json`), "utf8")) as TranscriptChunk;
+          if (recovered.status === "transcribed") {
+            return { ...recovered, id, index, audioFileName: fileName };
+          }
+        } catch {
+          // This chunk has not completed transcription yet.
+        }
+        return {
+          id,
+          fileUuid: randomUUID(),
+          index,
+          startSeconds: index * (this.options.chunkSeconds ?? 600),
+          audioFileName: fileName,
+          status: "pending"
+        };
       }));
       job.chunkCount = chunks.length;
       await this.updateJob(job, { status: "transcribing", progressPercent: 5, chunkCount: chunks.length });
       const transcriptParts: string[] = [];
       for (const chunk of chunks) {
         try {
-          chunk.text = await this.transcribe(join(workDir, chunk.audioFileName));
-          chunk.status = "transcribed";
-          transcriptParts.push(`[${formatTimestamp(chunk.startSeconds)}]\n${chunk.text}`);
-          await writeFile(join(workDir, `${chunk.id}.json`), JSON.stringify(chunk, null, 2));
+          if (chunk.status !== "transcribed") {
+            chunk.text = await this.transcribe(join(workDir, chunk.audioFileName));
+            chunk.status = "transcribed";
+            await writeFile(join(workDir, `${chunk.id}.json`), JSON.stringify(chunk, null, 2));
+          }
+          transcriptParts.push(`[${formatTimestamp(chunk.startSeconds)}]\n${chunk.text ?? ""}`);
           await this.updateJob(job, {
             currentChunk: chunk.index + 1,
             progressPercent: 5 + Math.round(((chunk.index + 1) / chunks.length) * 75)
@@ -389,6 +439,7 @@ export class TranscriptLibraryService {
         occurrences,
         relationships,
         status: "completed",
+        recordedAt: recording.startedAt,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       };
@@ -420,8 +471,8 @@ export class TranscriptLibraryService {
       body
     });
     const payload = await response.json() as { text?: string; error?: { message?: string } };
-    if (!response.ok || !payload.text) throw new Error(payload.error?.message ?? `Transcription failed (${response.status})`);
-    return payload.text.trim();
+    if (!response.ok) throw new Error(payload.error?.message ?? `Transcription failed (${response.status})`);
+    return payload.text?.trim() ?? "";
   }
 
   private async analyze(recording: Recording, fullText: string): Promise<{ title?: string; description?: string; markers: TranscriptMarker[]; entities: TranscriptEntity[]; occurrences: TranscriptEntityOccurrence[]; relationships: TranscriptEntityRelationship[] }> {
@@ -559,7 +610,8 @@ function namespaceAnalysis(recordingId: string, analysis: Awaited<ReturnType<Tra
 }
 
 function recoverJob(job: TranscriptJob): TranscriptJob {
-  return job.status === "completed" ? job : { ...job, status: "queued", error: undefined };
+  if (job.status === "completed" || job.status === "failed") return job;
+  return { ...job, status: "queued", error: undefined };
 }
 
 function runProcess(command: string, args: string[]): Promise<void> {

@@ -1,8 +1,9 @@
 import cors from "cors";
 import express from "express";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { createReadStream } from "node:fs";
-import { stat } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { promisify } from "node:util";
 import { createAdminSession, getAdminSession, requireAdmin } from "./adminAuth.js";
 import { StudyBoxAppliance } from "./appliance.js";
@@ -31,12 +32,22 @@ const zoomCloudRecordings = new ZoomCloudRecordingService(
   process.env.STUDYBOX_ZOOM_CLOUD_DOWNLOAD_DIR ?? "/var/lib/studybox/zoom-cloud/downloads",
   {
     attach: (startedAt, filePath) => appliance.attachZoomCloudRecording(startedAt, filePath),
+    hasLocalRecording: async (startedAt, durationSeconds) => appliance.hasPotentialZoomCloudRecording(startedAt, durationSeconds),
+    enabled: () => !appliance.getSettings().testMode,
     audit: async (action, result, message, details) => {
       await appliance.recordAudit({ source: "zoom-webhook", level: result === "success" ? "info" : "error", action, result, message, details });
     }
   }
 );
+appliance.setCloudRecordingStatusProvider(() => zoomCloudRecordings.getStatus());
 let backupRetryInProgress = false;
+const publicationInFlight = new Set<string>();
+
+async function getPublicationState(recordingId: string): Promise<{ status?: string; title?: string; error?: string } | undefined> {
+  const statePath = join(process.env.STUDYBOX_CLOUD_SYNC_DIR ?? "/var/lib/studybox/cloud-sync", "state.json");
+  const state = JSON.parse(await readFile(statePath, "utf8").catch(() => "{}")) as { publications?: Record<string, { status?: string; title?: string; error?: string }> };
+  return state.publications?.[recordingId];
+}
 
 app.use(cors());
 app.use(express.json({
@@ -125,8 +136,16 @@ app.post("/api/zoom/webhooks", async (request, response, next) => {
       result: "success",
       message: log.message
     });
-    if (body.event === "recording.completed") {
+    if (body.event === "recording.completed" && !appliance.getSettings().testMode) {
       await zoomCloudRecordings.enqueue(body);
+    } else if (body.event === "recording.completed") {
+      await appliance.recordAudit({
+        source: "zoom-webhook",
+        level: "info",
+        action: "zoom.cloudRecording.testModeSkipped",
+        result: "success",
+        message: "Zoom cloud recording ignored while test mode is enabled"
+      });
     }
     response.json({ ok: true });
   } catch (error) {
@@ -230,10 +249,7 @@ app.post("/api/zoom/sdk-jwt", requireAdmin, (_request, response, next) => {
 
 app.post("/api/buttons/page", requireAdmin, async (_request, response, next) => {
   try {
-    void appliance.pressPage().catch((error: unknown) => {
-      console.error("StudyBox web page action failed", error);
-    });
-    response.json(appliance.snapshot());
+    response.json(await appliance.pressPage());
   } catch (error) {
     next(error);
   }
@@ -464,6 +480,24 @@ app.get("/api/podcast/recordings/:recordingId/assets/:assetKind/download", requi
   }
 });
 
+app.get("/api/podcast/recordings/:recordingId/assets/:assetKind/url", requireAdmin, async (request, response, next) => {
+  try {
+    const assetKind = request.params.assetKind === "zoom" ? "zoom" : request.params.assetKind === "audio" ? "audio" : undefined;
+    if (!assetKind) {
+      response.status(400).json({ error: "Recording asset must be audio or zoom" });
+      return;
+    }
+    const url = await appliance.getRecordingAssetUrl(request.params.recordingId, assetKind, webAdminContext);
+    if (!url) {
+      response.status(404).json({ error: "Archived recording URL not found" });
+      return;
+    }
+    response.json({ url });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.post("/api/backup/sync", requireAdmin, async (_request, response, next) => {
   try {
     response.json(await appliance.syncBackups(webAdminContext));
@@ -587,6 +621,88 @@ app.put("/api/library/:recordingId/title", requireAdmin, async (request, respons
   }
 });
 
+app.post("/api/library/:recordingId/process", requireAdmin, async (request, response, next) => {
+  try {
+    response.json(await appliance.processLibraryRecording(request.params.recordingId, webAdminContext));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/library/:recordingId/publish", requireAdmin, async (request, response, next) => {
+  try {
+    const recordingId = request.params.recordingId;
+    const document = appliance.library.getDocument(recordingId);
+    if (!document) {
+      response.status(404).json({ error: "Library recording not found" });
+      return;
+    }
+    if (document.status !== "completed") {
+      response.status(409).json({ error: "Transcript processing must finish before publishing" });
+      return;
+    }
+    if (!document.title?.trim() || /^bible study recording(?: -|$)/i.test(document.title.trim())) {
+      response.status(409).json({ error: "Set the teaching title before publishing" });
+      return;
+    }
+
+    const existing = await getPublicationState(recordingId);
+    if (publicationInFlight.has(recordingId) || existing?.status === "publishing") {
+      response.json({ status: "publishing", recordingId });
+      return;
+    }
+    if (existing?.status === "published" && existing.title === document.title) {
+      response.json({ status: "published", recordingId });
+      return;
+    }
+
+    const workRoot = process.env.STUDYBOX_CLOUD_SYNC_DIR ?? "/var/lib/studybox/cloud-sync";
+    await mkdir(join(workRoot, "publish-requests"), { recursive: true });
+    await writeFile(join(workRoot, "publish-requests", `${recordingId}.json`), JSON.stringify({
+      recordingId,
+      title: document.title,
+      requestedAt: new Date().toISOString()
+    }, null, 2));
+
+    const scriptPath = process.env.STUDYBOX_CLOUD_SYNC_SCRIPT ?? "/opt/studybox/scripts/sync-cloud-library.mjs";
+    publicationInFlight.add(recordingId);
+    const child = spawn(process.execPath, [scriptPath, "--recording-id", recordingId], {
+      cwd: process.env.STUDYBOX_PROJECT_ROOT ?? "/opt/studybox",
+      detached: true,
+      stdio: "ignore",
+      env: process.env
+    });
+    child.on("error", () => publicationInFlight.delete(recordingId));
+    child.on("exit", () => publicationInFlight.delete(recordingId));
+    child.unref();
+    await appliance.recordAudit({
+      ...webAdminContext,
+      level: "info",
+      action: "library.publish.queued",
+      result: "success",
+      message: `Public library publication queued: ${document.title}`,
+      details: { recordingId }
+    });
+    response.json({ status: "publishing", recordingId });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/library/:recordingId/publication-status", requireAdmin, async (request, response, next) => {
+  try {
+    const recordingId = request.params.recordingId;
+    if (!appliance.library.getDocument(recordingId)) {
+      response.status(404).json({ error: "Library recording not found" });
+      return;
+    }
+    const state = await getPublicationState(recordingId);
+    response.json({ status: publicationInFlight.has(recordingId) ? "publishing" : state?.status ?? "idle", error: state?.error });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.get("/api/library/:recordingId/audio/:chunkIndex", requireAdmin, async (request, response, next) => {
   try {
     const chunkIndex = Number(request.params.chunkIndex);
@@ -630,6 +746,31 @@ app.get("/api/library/share/:token", async (request, response, next) => {
       return;
     }
     response.json({ document, fullText: await appliance.library.readFullText(share.recordingId) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/library/share/:token/assets/audio/download", async (request, response, next) => {
+  try {
+    const share = libraryShares.get(request.params.token);
+    if (!share || !appliance.library.getDocument(share.recordingId)) {
+      response.status(404).json({ error: "Shared transcript not found" });
+      return;
+    }
+
+    const recordingFile = await appliance.getRecordingFile(share.recordingId, { source: "web" }, "audio");
+    if (!recordingFile) {
+      response.status(404).json({ error: "Shared recording audio not found" });
+      return;
+    }
+
+    const fileStats = await stat(recordingFile.filePath);
+    response
+      .setHeader("Content-Type", recordingFile.mimeType)
+      .setHeader("Content-Length", fileStats.size.toString())
+      .setHeader("Content-Disposition", `attachment; filename="${recordingFile.fileName}"`);
+    createReadStream(recordingFile.filePath).pipe(response);
   } catch (error) {
     next(error);
   }
@@ -717,6 +858,9 @@ function getDashboardViewerId(request: express.Request): string | undefined {
 }
 
 function startBackupRetryLoop(): void {
+  if (process.env.STUDYBOX_AUTO_BACKUP_SYNC !== "true") {
+    return;
+  }
   const retrySeconds = Number(process.env.STUDYBOX_BACKUP_RETRY_SECONDS ?? 300);
   if (!Number.isFinite(retrySeconds) || retrySeconds <= 0) {
     return;

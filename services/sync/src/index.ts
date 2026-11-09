@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import type { BackupBundle, BackupSyncService, BackupSyncState, LogEntry, Recording, RecordingDownload } from "@studybox/shared";
+import type { BackupBundle, BackupFileSource, BackupSyncService, BackupSyncState, LogEntry, Recording } from "@studybox/shared";
 
 export interface MockBackupSyncServiceOptions {
   queuePath: string;
@@ -47,25 +47,25 @@ export class MockBackupSyncService implements BackupSyncService {
 
   async createBundle(input: {
     recording: Recording;
-    download: RecordingDownload;
+    source: BackupFileSource;
     logs: LogEntry[];
     meetingEndedAt: string;
   }): Promise<BackupBundle> {
     const existing = this.state.bundles.find((bundle) => bundle.recordingId === input.recording.id);
-    if (existing) {
+    if (existing && existing.status !== "zipping") {
       return existing;
     }
 
     const createdAt = new Date().toISOString();
     const bundle: BackupBundle = {
-      id: `bundle-${input.recording.id}-${Date.now()}`,
+      id: existing?.id ?? `bundle-${input.recording.id}-${Date.now()}`,
       recordingId: input.recording.id,
       recordingTitle: input.recording.title,
-      fileName: input.download.fileName,
+      fileName: input.source.fileName,
       meetingEndedAt: input.meetingEndedAt,
       recordingStartedAt: input.recording.startedAt,
       recordingEndedAt: input.recording.endedAt ?? createdAt,
-      createdAt,
+      createdAt: existing?.createdAt ?? createdAt,
       status: "zipping",
       target: this.options.target,
       logEntryCount: input.logs.length,
@@ -75,12 +75,12 @@ export class MockBackupSyncService implements BackupSyncService {
 
     this.state = recalculate({
       ...this.state,
-      bundles: [bundle, ...this.state.bundles],
-      lastEvent: `Zipping meeting: ${input.download.fileName}`
+      bundles: existing ? replaceBundle(this.state.bundles, bundle) : [bundle, ...this.state.bundles],
+      lastEvent: `Packaging meeting: ${input.source.fileName}`
     });
     await this.save();
     this.notifyStateChange();
-    await this.writeBundleFiles(bundle, input.download, input.logs);
+    await this.writeBundleFiles(bundle, input.source, input.logs);
     const pendingBundle = {
       ...bundle,
       status: "pending" as const,
@@ -90,7 +90,7 @@ export class MockBackupSyncService implements BackupSyncService {
     this.state = recalculate({
       ...this.state,
       bundles: replaceBundle(this.state.bundles, pendingBundle),
-      lastEvent: `Backup bundle queued: ${input.download.fileName}`
+      lastEvent: `Backup bundle queued: ${input.source.fileName}`
     });
     await this.save();
     this.notifyStateChange();
@@ -132,12 +132,16 @@ export class MockBackupSyncService implements BackupSyncService {
     return this.getState();
   }
 
-  private async writeBundleFiles(bundle: BackupBundle, download: RecordingDownload, logs: LogEntry[]): Promise<void> {
+  private async writeBundleFiles(bundle: BackupBundle, source: BackupFileSource, logs: LogEntry[]): Promise<void> {
     const bundlePath = join(this.options.bundleDir, bundle.id);
     await mkdir(bundlePath, { recursive: true });
     await this.writeBundleManifest(bundle);
     await writeFile(join(bundlePath, "audit-log.json"), JSON.stringify(logs, null, 2));
-    await writeFile(join(bundlePath, download.fileName), Buffer.from(download.contentBase64, "base64"));
+    const destinationPath = join(bundlePath, source.fileName);
+    const partialPath = `${destinationPath}.partial`;
+    await unlink(partialPath).catch(() => undefined);
+    await copyFile(source.filePath, partialPath);
+    await rename(partialPath, destinationPath);
   }
 
   private async writeBundleManifest(bundle: BackupBundle): Promise<void> {
@@ -229,10 +233,13 @@ async function runRsync(input: RsyncInput, onProgress?: (progress: RsyncProgress
 
   await runSshCommand(input, `mkdir -p ${shellQuote(remoteBaseDir)}`);
 
+  // WAV files are already uncompressed. Avoid rsync compression here because
+  // it adds CPU and can turn a stalled media transfer into a broken SSH pipe.
   const args = [
-    "-az",
+    "-a",
     "--partial",
     "--delete",
+    "--timeout=" + (process.env.STUDYBOX_RSYNC_TIMEOUT_SECONDS ?? "90"),
     "--info=progress2",
     "-e",
     sshArgs.join(" "),
@@ -295,7 +302,14 @@ async function runRsync(input: RsyncInput, onProgress?: (progress: RsyncProgress
 }
 
 function buildSshArgs(input: Pick<RsyncInput, "sshKeyPath" | "port">): string[] {
-  const sshArgs = ["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new"];
+  const sshArgs = [
+    "ssh",
+    "-o", "BatchMode=yes",
+    "-o", "StrictHostKeyChecking=accept-new",
+    "-o", "ConnectTimeout=15",
+    "-o", "ServerAliveInterval=15",
+    "-o", "ServerAliveCountMax=3"
+  ];
   if (input.sshKeyPath) {
     sshArgs.push("-i", input.sshKeyPath);
   }
@@ -375,7 +389,11 @@ function normalizeState(state: BackupSyncState, target: string, mode: BackupSync
     ...state,
       mode,
       target,
-      bundles: state.bundles ?? []
+      bundles: (state.bundles ?? []).map((bundle) =>
+        bundle.status === "uploading" || bundle.status === "promoting"
+          ? { ...bundle, status: "pending", stage: "Retry queued", error: undefined }
+          : bundle
+      )
   });
 }
 

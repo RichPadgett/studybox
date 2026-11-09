@@ -7,7 +7,7 @@ const initialWaitingRoom: Participant[] = [];
 
 let state: MeetingState = {
   status: "idle",
-  title: "Weekly Bible Study",
+  title: "Weekly & Appointed Assembly's",
   moderationMode: "moderated",
   participants: [],
   lobbyRequests: [],
