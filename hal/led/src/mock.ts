@@ -25,9 +25,9 @@ export class MockLedController implements LedController {
     this.zoomConnectionState = state === "live" ? "solid" : state === "ready" || state === "attention" ? "slowBlink" : state === "error" ? "fastBlink" : "off";
   }
 
-  wifiSetup: "waiting" | "connecting" | "off" = "off";
+  wifiSetup: "searching" | "waiting" | "connecting" | "off" = "off";
 
-  async setWifiSetup(mode: "waiting" | "connecting" | "off"): Promise<void> {
+  async setWifiSetup(mode: "searching" | "waiting" | "connecting" | "off"): Promise<void> {
     this.wifiSetup = mode;
   }
 

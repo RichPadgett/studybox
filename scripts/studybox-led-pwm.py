@@ -10,12 +10,13 @@ balanced colors, and it runs the blink patterns too.
 Reads one JSON command per line on stdin:
   {"button": "zoom" | "rec", "color": [r, g, b], "pattern": "solid", "alt": [r, g, b]}
 Levels are 0-100 (% brightness). Patterns: solid, slowBlink, fastBlink, pulse,
-breathe, flash3 (three quick blinks, then `alt`). During the "off" half of a blink the button shows `alt` (default off).
+breathe, fade (smooth breathing), flash3 (three quick blinks, then `alt`). During the "off" half of a blink the button shows `alt` (default off).
 Exits and turns the lights off when stdin closes.
 """
 from __future__ import annotations
 
 import json
+import math
 import os
 import sys
 import threading
@@ -71,7 +72,11 @@ def render() -> None:
             current = state[name]
             shown = current["color"]
             elapsed = now - current["since"]
-            if current["pattern"] == "flash3":
+            if current["pattern"] == "fade":
+                # Smooth breathe: 3 s cycle between a faint glow and full color.
+                k = 0.08 + 0.92 * (0.5 - 0.5 * math.cos(2 * math.pi * (elapsed % 3.0) / 3.0))
+                shown = tuple(round(level * k) for level in current["color"])
+            elif current["pattern"] == "flash3":
                 # Three quick blinks, then hold `alt` until the next command.
                 phase = int(elapsed / 0.3)
                 if phase >= 6 or phase % 2 == 1:

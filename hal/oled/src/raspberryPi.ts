@@ -174,6 +174,13 @@ export class RaspberryPiOledDisplay implements OledDisplay {
       if (page.lines[2]) this.drawTextToFrame(frame, 66, 6, page.lines[2]);
       return rotateFrame180(frame);
     }
+    if (page.id === "wifiSetup" && page.title === "WIFI SEARCHING") {
+      const center = (text: string, row: number) => this.drawTextToFrame(frame, Math.max(0, Math.floor((128 - Math.min(text.length, 18) * 6) / 2)), row, text);
+      center("SEARCHING FOR WIFI", 1);
+      center(page.lines[0] ? "TRYING" : "LOOKING FOR", 3);
+      center(page.lines[0] || "SAVED NETWORKS", 5);
+      return rotateFrame180(frame);
+    }
     if (page.id === "wifiSetup" && (page.title === "WIFI CONNECTING" || page.title === "WIFI DONE")) {
       const center = (text: string, row: number) => this.drawTextToFrame(frame, Math.max(0, Math.floor((128 - Math.min(text.length, 18) * 6) / 2)), row, text);
       center(page.title === "WIFI DONE" ? "WIFI CONNECTED" : "CONNECTING TO", 2);

@@ -56,8 +56,14 @@ export class RaspberryPiLedController implements LedController {
   }
 
   /** Both buttons pink while Wi-Fi setup runs: slow blink waiting for a phone, fast blink while connecting. */
-  async setWifiSetup(mode: "waiting" | "connecting" | "off"): Promise<void> {
+  async setWifiSetup(mode: "searching" | "waiting" | "connecting" | "off"): Promise<void> {
     if (mode === "off") return;
+    if (mode === "searching") {
+      // Startup: both buttons fade in and out in purple while saved networks are tried.
+      this.zoomButton.set("purple", "fade");
+      this.recordingButton.set("purple", "fade");
+      return;
+    }
     const pattern = mode === "connecting" ? "fastBlink" : "slowBlink";
     this.zoomButton.set("pink", pattern);
     this.recordingButton.set("pink", pattern);
@@ -137,7 +143,7 @@ class PwmLedHelper {
 }
 
 let sharedPwmHelper: PwmLedHelper | undefined;
-type RgbPattern = "solid" | "breathe" | "pulse" | "slowBlink" | "fastBlink" | "flash3";
+type RgbPattern = "solid" | "breathe" | "pulse" | "slowBlink" | "fastBlink" | "flash3" | "fade";
 
 class RgbButtonOutput {
   private readonly red: GpioLedOutput;
@@ -163,7 +169,7 @@ class RgbButtonOutput {
       clearInterval(this.timer);
       this.timer = undefined;
     }
-    const interval = pattern === "fastBlink" ? 250 : pattern === "slowBlink" ? 1000 : pattern === "pulse" ? 650 : pattern === "flash3" ? 300 : 1400;
+    const interval = pattern === "fastBlink" ? 250 : pattern === "slowBlink" ? 1000 : pattern === "pulse" ? 650 : pattern === "flash3" ? 300 : pattern === "fade" ? 1500 : 1400;
     const show = (shown: RgbColor) => {
       const [red, green, blue] = COLOR_LEVELS[shown];
       this.red.setSolid(red > 0);

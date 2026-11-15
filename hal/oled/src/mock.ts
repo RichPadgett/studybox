@@ -38,6 +38,9 @@ export class MockOledDisplay implements OledDisplay {
       // The current step comes first; the Page button flips to the other QR code.
       return metrics.wifiSetupPhoneJoined ? [step2, step1] : [step1, step2];
     }
+    if (metrics.wifiMode === "searching") {
+      return [{ id: "wifiSetup", title: "WIFI SEARCHING", lines: [metrics.wifiSsid ?? ""] }];
+    }
     if (metrics.wifiMode === "trying") {
       return [{ id: "wifiSetup", title: "WIFI CONNECTING", lines: [metrics.wifiSsid ?? ""] }];
     }

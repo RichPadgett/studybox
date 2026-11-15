@@ -115,7 +115,7 @@ export async function connectWifi(ssid: string, password: string): Promise<WifiC
 }
 
 export interface WifiSupervisorStatus {
-  mode: "setup" | "trying" | "connected" | "unknown";
+  mode: "searching" | "setup" | "trying" | "connected" | "unknown";
   ssid?: string;
   error?: string;
   updatedAt?: string;

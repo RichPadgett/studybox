@@ -32,7 +32,7 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 log() { logger -t studybox-wifi-fallback "$*"; echo "$*"; }
 
 write_status() {
-  # mode: connected | setup | trying ; ssid/error are optional
+  # mode: searching | connected | setup | trying ; ssid/error are optional
   mkdir -p "$status_dir"
   chmod 755 "$status_dir"
   python3 - "$status_file" "$1" "${2:-}" "${3:-}" <<'PY'
@@ -111,13 +111,36 @@ start_normal_wifi() {
   networkctl reconfigure "$interface" 2>/dev/null || true
 }
 
+# Network wpa_supplicant is working on right now (associating, handshaking, ...).
+attempting_ssid() {
+  wpa_cli -i "$interface" status 2>/dev/null | awk -F= '$1 == "ssid" { print $2 }'
+}
+
+# With a second argument "searching", keeps the status file showing which saved
+# network is being tried, so the screen can follow along at startup.
 wait_for_connection() {
-  local seconds="$1"
+  local seconds="$1" show="${2:-}" shown="" current
   for ((second = 0; second < seconds; second += 3)); do
     if is_connected; then return 0; fi
+    if [[ "$show" == "searching" ]]; then
+      current="$(attempting_ssid)"
+      if [[ "$current" != "$shown" ]]; then
+        shown="$current"
+        write_status searching "$current"
+      fi
+    fi
     sleep 3
   done
   is_connected
+}
+
+# Startup failed: name a saved network that rejected its password, if any
+# (usually a host who changed their Wi-Fi password).
+boot_failure_reason() {
+  local since="$1" ssid
+  ssid="$(journalctl -u "netplan-wpa-$interface.service" --since "@$since" --no-pager 2>/dev/null \
+    | grep "WRONG_KEY" | grep -o 'ssid="[^"]*"' | tail -1 | sed 's/^ssid="//; s/"$//')"
+  [[ -n "$ssid" ]] && echo "StudyBox found \"$ssid\" but its saved password was rejected. If the password changed, enter the new one."
 }
 
 # Best-effort reason a just-saved network failed, read from wpa_supplicant's log.
@@ -297,12 +320,16 @@ case "${1:-start}" in
       start_ap
       exit 0
     fi
+    boot_since="$(date +%s)"
+    write_status searching
     systemctl start "netplan-wpa-$interface.service" 2>/dev/null || true
-    if wait_for_connection "$boot_wait"; then
+    if wait_for_connection "$boot_wait" searching; then
       write_status connected "$(connected_ssid)"
+      log "Connected to $(connected_ssid) at startup"
       refresh_scan_cache
       exit 0
     fi
-    start_ap
+    log "No saved network connected at startup; opening $setup_ssid"
+    start_ap "$(boot_failure_reason "$boot_since")"
     ;;
 esac

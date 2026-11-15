@@ -1,7 +1,7 @@
 import { readFileSync, statfsSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { readdir, stat, writeFile } from "node:fs/promises";
-import { availableParallelism, loadavg } from "node:os";
+import { availableParallelism, loadavg, uptime as osUptime } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { promisify } from "node:util";
@@ -120,7 +120,8 @@ export class StudyBoxAppliance {
   private debugHeartbeatTimer?: NodeJS.Timeout;
   private oledScreensaverTimer?: NodeJS.Timeout;
   private oledScreensaverActive = false;
-  private oledWifiSignature = "normal";
+  /** "startup" until the first Wi-Fi check, so a connection made during boot still gets its success signal. */
+  private oledWifiSignature = "startup";
   private oledWifiDoneUntil?: number;
   private ledFlashUntil = 0;
   private oledWifiTimer?: NodeJS.Timeout;
@@ -1520,7 +1521,7 @@ export class StudyBoxAppliance {
    */
   private async refreshWifiOled(): Promise<void> {
     const wifi = getWifiSetupState();
-    const active = wifi.wifiMode === "setup" || wifi.wifiMode === "trying";
+    const active = wifi.wifiMode === "searching" || wifi.wifiMode === "setup" || wifi.wifiMode === "trying";
     const signature = active
       ? [wifi.wifiMode, wifi.wifiSsid, wifi.wifiSetupError, wifi.wifiSetupPhoneJoined, wifi.wifiSetupPageOpened].join("|")
       : "normal";
@@ -1538,7 +1539,7 @@ export class StudyBoxAppliance {
     if (active) {
       this.oledWifiDoneUntil = undefined;
       await this.oled.showPage("wifiSetup");
-    } else if (previous !== "normal" && wifi.wifiMode === "connected") {
+    } else if (wifi.wifiMode === "connected" && (previous !== "normal" && previous !== "startup" || (previous === "startup" && osUptime() < 240))) {
       // Leaving setup: three purple blinks on the buttons, and confirm on screen
       // for a minute, then return to the home page.
       this.ledFlashUntil = Date.now() + 2_200;
@@ -1604,7 +1605,7 @@ export class StudyBoxAppliance {
     const recordingIdle = this.podcast.getState().status === "idle";
     const backupIdle = !this.backup.getState().bundles.some((bundle) => bundle.status === "zipping" || bundle.status === "uploading" || bundle.status === "promoting");
     return meetingIdle
-      && !["setup", "trying"].includes(getWifiSetupState().wifiMode ?? "")
+      && !["searching", "setup", "trying"].includes(getWifiSetupState().wifiMode ?? "")
       && !this.oledWifiDoneUntil
       && recordingIdle
       && backupIdle
@@ -1667,8 +1668,8 @@ export class StudyBoxAppliance {
     // Wi-Fi setup takes over both buttons (purple) so it is obvious the box is in
     // a different mode; normal colors come back once it is connected.
     const wifiMode = getWifiSetupState().wifiMode;
-    if (this.leds.setWifiSetup && (wifiMode === "setup" || wifiMode === "trying")) {
-      await this.leds.setWifiSetup(wifiMode === "setup" ? "waiting" : "connecting");
+    if (this.leds.setWifiSetup && (wifiMode === "searching" || wifiMode === "setup" || wifiMode === "trying")) {
+      await this.leds.setWifiSetup(wifiMode === "searching" ? "searching" : wifiMode === "setup" ? "waiting" : "connecting");
       return;
     }
     await this.leds.setWifiSetup?.("off");
@@ -1901,7 +1902,7 @@ function getWifiSetupState(): Pick<SystemMetrics, "wifiMode" | "wifiSetupMode" |
   } catch {
     return { wifiMode: "unknown", wifiSetupMode: false };
   }
-  const mode = status.mode === "setup" || status.mode === "trying" || status.mode === "connected" ? status.mode : "unknown";
+  const mode = status.mode === "searching" || status.mode === "setup" || status.mode === "trying" || status.mode === "connected" ? status.mode : "unknown";
   if (mode !== "setup") return { wifiMode: mode, wifiSetupMode: false, wifiSsid: status.ssid || undefined };
 
   // Phones on the hotspot show up in the ARP table (readable without root).
