@@ -36,4 +36,10 @@ export class MockLedController implements LedController {
   async flashWifiConnected(): Promise<void> {
     this.wifiConnectedFlashes += 1;
   }
+
+  wrappingUp = false;
+
+  async setWrappingUp(on: boolean): Promise<void> {
+    this.wrappingUp = on;
+  }
 }

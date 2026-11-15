@@ -69,6 +69,13 @@ export class RaspberryPiLedController implements LedController {
     this.recordingButton.set("pink", pattern);
   }
 
+  /** Recording wrap-up (joining audio, backing up): both buttons fade in and out in purple. */
+  async setWrappingUp(on: boolean): Promise<void> {
+    if (!on) return;
+    this.zoomButton.set("purple", "fade");
+    this.recordingButton.set("purple", "fade");
+  }
+
   /** Wi-Fi joined after setup: three purple blinks on both buttons. */
   async flashWifiConnected(): Promise<void> {
     this.zoomButton.set("purple", "flash3");
