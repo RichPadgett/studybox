@@ -1,4 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import type { LedColor, LedController, RecLedState, RecorderButtonState, ZoomButtonState, ZoomLedState } from "@studybox/shared";
 
 export class RaspberryPiLedController implements LedController {
@@ -36,36 +38,35 @@ export class RaspberryPiLedController implements LedController {
   }
 
   async setRecorderState(state: RecorderButtonState): Promise<void> {
-    // These buttons only show pure red, green or blue reliably: any mix that
-    // includes red (yellow, purple, white) shows as red, and cyan looks green
-    // (tested 2026-11-15). So paused is a slow red blink, not yellow.
-    if (state === "ready") this.recordingButton.set("green", "solid");
+    if (state === "ready") this.recordingButton.set("dimGreen", "solid");
     else if (state === "recording") this.recordingButton.set("red", "solid");
-    else if (state === "paused") this.recordingButton.set("red", "slowBlink");
+    else if (state === "paused") this.recordingButton.set("yellow", "solid");
     else if (state === "error") this.recordingButton.set("red", "fastBlink");
     else this.recordingButton.set("off", "solid");
   }
 
   async setZoomState(state: ZoomButtonState): Promise<void> {
-    // Pure red/green/blue only (see setRecorderState). Ready is a slow blue
-    // blink so it differs from the green Record button and from solid blue (live).
-    if (state === "ready") this.zoomButton.set("blue", "slowBlink");
+    // Not live (ready to start) is a dim white glow: distinct from the dim green
+    // Record button beside it and from the bright blue of a live meeting.
+    if (state === "ready") this.zoomButton.set("dimWhite", "solid");
     else if (state === "live") this.zoomButton.set("blue", "solid");
-    else if (state === "attention") this.zoomButton.set("green", "pulse");
+    else if (state === "attention") this.zoomButton.set("yellow", "pulse");
     else if (state === "error") this.zoomButton.set("red", "fastBlink");
     else this.zoomButton.set("off", "solid");
   }
 
-  /**
-   * Wi-Fi setup indicator on both buttons: alternating blue/green, a pattern no
-   * other state uses (purple would show as red on this hardware). Slow while
-   * waiting for a phone, fast while connecting.
-   */
+  /** Both buttons pink while Wi-Fi setup runs: slow blink waiting for a phone, fast blink while connecting. */
   async setWifiSetup(mode: "waiting" | "connecting" | "off"): Promise<void> {
     if (mode === "off") return;
     const pattern = mode === "connecting" ? "fastBlink" : "slowBlink";
-    this.zoomButton.set("blue", pattern, "green");
-    this.recordingButton.set("green", pattern, "blue");
+    this.zoomButton.set("pink", pattern);
+    this.recordingButton.set("pink", pattern);
+  }
+
+  /** Wi-Fi joined after setup: three purple blinks on both buttons. */
+  async flashWifiConnected(): Promise<void> {
+    this.zoomButton.set("purple", "flash3");
+    this.recordingButton.set("purple", "flash3");
   }
 
   close(): void {
@@ -74,8 +75,69 @@ export class RaspberryPiLedController implements LedController {
   }
 }
 
-type RgbColor = "red" | "green" | "blue" | "yellow" | "orange" | "purple" | "cyan" | "white" | "off";
-type RgbPattern = "solid" | "breathe" | "pulse" | "slowBlink" | "fastBlink";
+type RgbColor = "red" | "green" | "blue" | "yellow" | "orange" | "purple" | "pink" | "cyan" | "white" | "dimWhite" | "dimGreen" | "off";
+
+/**
+ * Brightness (0-100) of red, green and blue for each color. These buttons are
+ * 6V common-anode RGB LEDs run from 3.3V, where red is far brighter than green
+ * and blue, so mixes dim red to balance. Tuned by eye on the StudyBox 2026-11-15.
+ */
+const COLOR_LEVELS: Record<RgbColor, [number, number, number]> = {
+  off: [0, 0, 0],
+  red: [100, 0, 0],
+  green: [0, 100, 0],
+  blue: [0, 0, 100],
+  white: [25, 70, 100],
+  // Idle "ready" glows: quiet next to the bright live/recording colors.
+  dimWhite: [6, 17, 25],
+  dimGreen: [0, 12, 0],
+  purple: [12, 0, 100],
+  pink: [25, 0, 100],
+  yellow: [35, 60, 0],
+  orange: [70, 15, 0],
+  cyan: [0, 60, 100]
+};
+
+/**
+ * One long-running scripts/studybox-led-pwm.py process dims all six color pins
+ * (software PWM via lgpio). If it cannot start (python3-lgpio missing), the
+ * buttons fall back to plain on/off pins, where only red, green and blue look right.
+ */
+class PwmLedHelper {
+  private process?: ChildProcess;
+  private failed = false;
+
+  constructor() {
+    const script = process.env.STUDYBOX_LED_PWM_SCRIPT ?? fileURLToPath(new URL("../../../scripts/studybox-led-pwm.py", import.meta.url));
+    if (process.env.STUDYBOX_LED_PWM === "false" || !existsSync(script)) {
+      this.failed = true;
+      return;
+    }
+    const child = spawn("python3", [script], { stdio: ["pipe", "ignore", "pipe"] });
+    this.process = child;
+    child.stderr?.on("data", (chunk: Buffer) => console.error(`StudyBox LED dimmer: ${chunk.toString("utf8").trim()}`));
+    child.once("error", (error) => { console.error(`StudyBox LED dimmer failed to start: ${error.message}`); this.failed = true; });
+    child.once("exit", (code) => { if (code !== 0) console.error(`StudyBox LED dimmer exited (${code ?? "signal"}); using plain on/off colors`); this.failed = true; this.process = undefined; });
+  }
+
+  get available(): boolean {
+    return !this.failed && Boolean(this.process?.stdin?.writable);
+  }
+
+  send(button: "rec" | "zoom", color: RgbColor, pattern: RgbPattern, alternate?: RgbColor): boolean {
+    if (!this.available) return false;
+    this.process!.stdin!.write(JSON.stringify({ button, color: COLOR_LEVELS[color], pattern, alt: COLOR_LEVELS[alternate ?? "off"] }) + "\n");
+    return true;
+  }
+
+  close(): void {
+    this.process?.stdin?.end();
+    this.process = undefined;
+  }
+}
+
+let sharedPwmHelper: PwmLedHelper | undefined;
+type RgbPattern = "solid" | "breathe" | "pulse" | "slowBlink" | "fastBlink" | "flash3";
 
 class RgbButtonOutput {
   private readonly red: GpioLedOutput;
@@ -95,15 +157,18 @@ class RgbButtonOutput {
     // Re-applying the same look would restart its blink mid-cycle; skip it.
     if (this.current === `${color}:${pattern}:${alternate ?? ""}`) return;
     this.current = `${color}:${pattern}:${alternate ?? ""}`;
+    sharedPwmHelper ??= new PwmLedHelper();
+    if (sharedPwmHelper.send(this.name === "REC" ? "rec" : "zoom", color, pattern, alternate)) return;
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = undefined;
     }
-    const interval = pattern === "fastBlink" ? 250 : pattern === "slowBlink" ? 1000 : pattern === "pulse" ? 650 : 1400;
+    const interval = pattern === "fastBlink" ? 250 : pattern === "slowBlink" ? 1000 : pattern === "pulse" ? 650 : pattern === "flash3" ? 300 : 1400;
     const show = (shown: RgbColor) => {
-      this.red.setSolid(shown === "red" || shown === "yellow" || shown === "orange" || shown === "purple" || shown === "white");
-      this.green.setSolid(shown === "green" || shown === "yellow" || shown === "orange" || shown === "cyan" || shown === "white");
-      this.blue.setSolid(shown === "blue" || shown === "purple" || shown === "cyan" || shown === "white");
+      const [red, green, blue] = COLOR_LEVELS[shown];
+      this.red.setSolid(red > 0);
+      this.green.setSolid(green > 0);
+      this.blue.setSolid(blue > 0);
     };
     const apply = (on: boolean) => show(on ? color : alternate ?? "off");
     if (pattern === "solid") {
@@ -120,6 +185,8 @@ class RgbButtonOutput {
   close(): void {
     if (this.timer) clearInterval(this.timer);
     this.red.close(); this.green.close(); this.blue.close();
+    sharedPwmHelper?.close();
+    sharedPwmHelper = undefined;
   }
 
   private timer?: NodeJS.Timeout;

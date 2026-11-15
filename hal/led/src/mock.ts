@@ -30,4 +30,10 @@ export class MockLedController implements LedController {
   async setWifiSetup(mode: "waiting" | "connecting" | "off"): Promise<void> {
     this.wifiSetup = mode;
   }
+
+  wifiConnectedFlashes = 0;
+
+  async flashWifiConnected(): Promise<void> {
+    this.wifiConnectedFlashes += 1;
+  }
 }
