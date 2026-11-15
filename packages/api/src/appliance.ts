@@ -415,6 +415,9 @@ export class StudyBoxAppliance {
     } else if (stateChanged) {
       await this.renderCurrentOledPage();
     }
+    // Lights follow Zoom too (joining -> live turned the button blue only once
+    // something else, like starting the recording, happened to re-sync them).
+    if (stateChanged) await this.syncLeds();
     return current;
   }
 

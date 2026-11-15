@@ -572,6 +572,7 @@ public:
       }
       hostPoliciesApplied_ = true;
     }
+    ensureSelfAudioLive();
 
     try {
       applyParticipantScreenSharePolicy();
@@ -650,6 +651,26 @@ public:
     return false;
   }
 
+  /**
+   * StudyBox's microphone is the room audio for everyone in Zoom: keep it
+   * connected (VoIP) and unmuted. Checked on every sync, so a mute from any
+   * source (host policy, another device on the account) is undone.
+   */
+  void ensureSelfAudioLive() {
+    auto* participants = meetingService_->GetMeetingParticipantsController();
+    auto* audio = meetingService_->GetMeetingAudioController();
+    if (!participants || !audio) return;
+    IUserInfo* self = participants->GetMySelfUser();
+    if (!self) return;
+    if (self->GetAudioJoinType() == AUDIOTYPE_NONE) {
+      audio->JoinVoip();
+      return;
+    }
+    if (self->IsAudioMuted()) {
+      audio->UnMuteAudio(self->GetUserID());
+    }
+  }
+
   void applyAutomaticMeetingPolicies() {
     auto* waitingRoom = meetingService_->GetMeetingWaitingRoomController();
     if (waitingRoom && waitingRoom->IsSupportWaitingRoom()) {
@@ -666,10 +687,9 @@ public:
         throw std::runtime_error(sdkErrorMessage("Enable mute on entry", muteOnEntryError));
       }
 
-      const SDKError muteAllError = audio->MuteAudio(0, false);
-      if (muteAllError != SDKERR_SUCCESS) {
-        throw std::runtime_error(sdkErrorMessage("Mute all participants", muteAllError));
-      }
+      // No "mute all" here: MuteAudio(0) also silenced StudyBox itself (its mic is
+      // the room audio for Zoom) and, after a mid-meeting host reclaim, would cut
+      // off whoever is talking. Mute-on-entry above covers latecomers.
     }
 
   }
