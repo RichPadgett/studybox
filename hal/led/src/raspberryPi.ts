@@ -36,22 +36,31 @@ export class RaspberryPiLedController implements LedController {
   }
 
   async setRecorderState(state: RecorderButtonState): Promise<void> {
-    if (state === "ready") this.recordingButton.set("green", "breathe");
+    // Steady colors for normal states; blinking is reserved for problems.
+    if (state === "ready") this.recordingButton.set("green", "solid");
     else if (state === "recording") this.recordingButton.set("red", "solid");
-    else if (state === "paused") this.recordingButton.set("red", "slowBlink");
+    else if (state === "paused") this.recordingButton.set("yellow", "solid");
     else if (state === "error") this.recordingButton.set("red", "fastBlink");
     else this.recordingButton.set("off", "solid");
   }
 
   async setZoomState(state: ZoomButtonState): Promise<void> {
-    // Ready means the meeting is idle but Zoom can be started. Keep this
-    // visibly distinct from a live meeting while matching the appliance
-    // behavior: blinking blue after a meeting ends.
-    if (state === "ready") this.zoomButton.set("blue", "slowBlink");
+    // Ready (not live, can be started) is steady white: distinct from the green
+    // Record button beside it and from the solid blue of a live meeting.
+    // (Cyan was tried and read too green next to Record.)
+    if (state === "ready") this.zoomButton.set("white", "solid");
     else if (state === "live") this.zoomButton.set("blue", "solid");
     else if (state === "attention") this.zoomButton.set("yellow", "pulse");
     else if (state === "error") this.zoomButton.set("orange", "fastBlink");
     else this.zoomButton.set("off", "solid");
+  }
+
+  /** Both buttons purple while Wi-Fi setup runs: breathing while waiting for a phone, fast blink while connecting. */
+  async setWifiSetup(mode: "waiting" | "connecting" | "off"): Promise<void> {
+    if (mode === "off") return;
+    const pattern = mode === "connecting" ? "fastBlink" : "breathe";
+    this.zoomButton.set("purple", pattern);
+    this.recordingButton.set("purple", pattern);
   }
 
   close(): void {
@@ -60,7 +69,7 @@ export class RaspberryPiLedController implements LedController {
   }
 }
 
-type RgbColor = "red" | "green" | "blue" | "yellow" | "orange" | "off";
+type RgbColor = "red" | "green" | "blue" | "yellow" | "orange" | "purple" | "cyan" | "white" | "off";
 type RgbPattern = "solid" | "breathe" | "pulse" | "slowBlink" | "fastBlink";
 
 class RgbButtonOutput {
@@ -77,15 +86,18 @@ class RgbButtonOutput {
   }
 
   set(color: RgbColor, pattern: RgbPattern): void {
+    // Re-applying the same look would restart its blink mid-cycle; skip it.
+    if (this.current === `${color}:${pattern}`) return;
+    this.current = `${color}:${pattern}`;
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = undefined;
     }
     const interval = pattern === "fastBlink" ? 250 : pattern === "slowBlink" ? 1000 : pattern === "pulse" ? 650 : 1400;
     const apply = (on: boolean) => {
-      this.red.setSolid(on && (color === "red" || color === "yellow" || color === "orange"));
-      this.green.setSolid(on && (color === "green" || color === "yellow" || color === "orange"));
-      this.blue.setSolid(on && (color === "blue"));
+      this.red.setSolid(on && (color === "red" || color === "yellow" || color === "orange" || color === "purple" || color === "white"));
+      this.green.setSolid(on && (color === "green" || color === "yellow" || color === "orange" || color === "cyan" || color === "white"));
+      this.blue.setSolid(on && (color === "blue" || color === "purple" || color === "cyan" || color === "white"));
     };
     if (pattern === "solid") {
       apply(true);
@@ -104,6 +116,7 @@ class RgbButtonOutput {
   }
 
   private timer?: NodeJS.Timeout;
+  private current?: string;
 }
 
 class GpioLedOutput {
