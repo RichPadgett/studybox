@@ -36,31 +36,36 @@ export class RaspberryPiLedController implements LedController {
   }
 
   async setRecorderState(state: RecorderButtonState): Promise<void> {
-    // Steady colors for normal states; blinking is reserved for problems.
+    // These buttons only show pure red, green or blue reliably: any mix that
+    // includes red (yellow, purple, white) shows as red, and cyan looks green
+    // (tested 2026-11-15). So paused is a slow red blink, not yellow.
     if (state === "ready") this.recordingButton.set("green", "solid");
     else if (state === "recording") this.recordingButton.set("red", "solid");
-    else if (state === "paused") this.recordingButton.set("yellow", "solid");
+    else if (state === "paused") this.recordingButton.set("red", "slowBlink");
     else if (state === "error") this.recordingButton.set("red", "fastBlink");
     else this.recordingButton.set("off", "solid");
   }
 
   async setZoomState(state: ZoomButtonState): Promise<void> {
-    // Ready (not live, can be started) is steady white: distinct from the green
-    // Record button beside it and from the solid blue of a live meeting.
-    // (Cyan was tried and read too green next to Record.)
-    if (state === "ready") this.zoomButton.set("white", "solid");
+    // Pure red/green/blue only (see setRecorderState). Ready is a slow blue
+    // blink so it differs from the green Record button and from solid blue (live).
+    if (state === "ready") this.zoomButton.set("blue", "slowBlink");
     else if (state === "live") this.zoomButton.set("blue", "solid");
-    else if (state === "attention") this.zoomButton.set("yellow", "pulse");
-    else if (state === "error") this.zoomButton.set("orange", "fastBlink");
+    else if (state === "attention") this.zoomButton.set("green", "pulse");
+    else if (state === "error") this.zoomButton.set("red", "fastBlink");
     else this.zoomButton.set("off", "solid");
   }
 
-  /** Both buttons purple while Wi-Fi setup runs: breathing while waiting for a phone, fast blink while connecting. */
+  /**
+   * Wi-Fi setup indicator on both buttons: alternating blue/green, a pattern no
+   * other state uses (purple would show as red on this hardware). Slow while
+   * waiting for a phone, fast while connecting.
+   */
   async setWifiSetup(mode: "waiting" | "connecting" | "off"): Promise<void> {
     if (mode === "off") return;
-    const pattern = mode === "connecting" ? "fastBlink" : "breathe";
-    this.zoomButton.set("purple", pattern);
-    this.recordingButton.set("purple", pattern);
+    const pattern = mode === "connecting" ? "fastBlink" : "slowBlink";
+    this.zoomButton.set("blue", pattern, "green");
+    this.recordingButton.set("green", pattern, "blue");
   }
 
   close(): void {
@@ -85,20 +90,22 @@ class RgbButtonOutput {
     this.blue = new GpioLedOutput(gpioChip, Number(process.env[`${prefix}_B_GPIO`] ?? (name === "REC" ? 16 : 21)), activeLow);
   }
 
-  set(color: RgbColor, pattern: RgbPattern): void {
+  /** With `alternate`, blinking switches between the two colors instead of on/off. */
+  set(color: RgbColor, pattern: RgbPattern, alternate?: RgbColor): void {
     // Re-applying the same look would restart its blink mid-cycle; skip it.
-    if (this.current === `${color}:${pattern}`) return;
-    this.current = `${color}:${pattern}`;
+    if (this.current === `${color}:${pattern}:${alternate ?? ""}`) return;
+    this.current = `${color}:${pattern}:${alternate ?? ""}`;
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = undefined;
     }
     const interval = pattern === "fastBlink" ? 250 : pattern === "slowBlink" ? 1000 : pattern === "pulse" ? 650 : 1400;
-    const apply = (on: boolean) => {
-      this.red.setSolid(on && (color === "red" || color === "yellow" || color === "orange" || color === "purple" || color === "white"));
-      this.green.setSolid(on && (color === "green" || color === "yellow" || color === "orange" || color === "cyan" || color === "white"));
-      this.blue.setSolid(on && (color === "blue" || color === "purple" || color === "cyan" || color === "white"));
+    const show = (shown: RgbColor) => {
+      this.red.setSolid(shown === "red" || shown === "yellow" || shown === "orange" || shown === "purple" || shown === "white");
+      this.green.setSolid(shown === "green" || shown === "yellow" || shown === "orange" || shown === "cyan" || shown === "white");
+      this.blue.setSolid(shown === "blue" || shown === "purple" || shown === "cyan" || shown === "white");
     };
+    const apply = (on: boolean) => show(on ? color : alternate ?? "off");
     if (pattern === "solid") {
       apply(true);
       return;
