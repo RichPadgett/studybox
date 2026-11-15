@@ -811,7 +811,32 @@ app.put("/api/settings", requireAdmin, async (request, response, next) => {
   }
 });
 
-app.get("/api/network/wifi", requireAdmin, async (_request, response, next) => {
+// While the StudyBox-Setup hotspot is open, the person standing at the box (a phone
+// joined to that hotspot) may scan and add Wi-Fi without the admin PIN. Requests reach
+// the API through the Vite proxy, which appends the phone's address to
+// X-Forwarded-For; the last hop is the one Vite saw, so it cannot be spoofed.
+async function requireAdminOrSetupHotspot(request: express.Request, response: express.Response, next: express.NextFunction): Promise<void> {
+  try {
+    const status = JSON.parse(await readFile("/run/studybox-wifi/status.json", "utf8")) as { mode?: string };
+    if (status.mode === "setup" && isSetupHotspotClient(request)) {
+      next();
+      return;
+    }
+  } catch { /* no supervisor status: fall through to the PIN */ }
+  requireAdmin(request, response, next);
+}
+
+function isSetupHotspotClient(request: express.Request): boolean {
+  const normalize = (address: string) => address.trim().replace(/^::ffff:/, "");
+  const peer = normalize(request.socket.remoteAddress ?? "");
+  const loopback = peer === "127.0.0.1" || peer === "::1";
+  const forwarded = request.header("x-forwarded-for")?.split(",").map(normalize).filter(Boolean) ?? [];
+  const client = loopback ? forwarded.at(-1) ?? peer : peer;
+  const subnet = (process.env.STUDYBOX_SETUP_IP ?? "10.42.0.1").split(".").slice(0, 3).join(".") + ".";
+  return client.startsWith(subnet);
+}
+
+app.get("/api/network/wifi", requireAdminOrSetupHotspot, async (_request, response, next) => {
   try {
     const { stdout } = await execFileAsync("sudo", ["-n", "/opt/studybox/scripts/studybox-wifi-scan.py"], { timeout: 12_000 });
     response.json(JSON.parse(stdout));
@@ -820,7 +845,17 @@ app.get("/api/network/wifi", requireAdmin, async (_request, response, next) => {
   }
 });
 
-app.post("/api/network/wifi", requireAdmin, async (request, response, next) => {
+// Wi-Fi supervisor status: open setup hotspot, switching, or connected, plus the last
+// failure reason. No secrets; readable without the PIN so the setup page can show it.
+app.get("/api/network/wifi/status", async (_request, response) => {
+  try {
+    response.json(JSON.parse(await readFile("/run/studybox-wifi/status.json", "utf8")));
+  } catch {
+    response.json({ mode: "unknown" });
+  }
+});
+
+app.post("/api/network/wifi", requireAdminOrSetupHotspot, async (request, response, next) => {
   try {
     const ssid = String(request.body?.ssid ?? "").trim();
     const password = String(request.body?.password ?? "");
@@ -828,12 +863,21 @@ app.post("/api/network/wifi", requireAdmin, async (request, response, next) => {
       response.status(400).json({ error: "A network name and a valid password are required" });
       return;
     }
-    await execFileAsync("sudo", ["-n", "/opt/studybox/scripts/studybox-wifi-connect.py", ssid, password], { timeout: 20_000 });
+    const { stdout } = await execFileAsync("sudo", ["-n", "/opt/studybox/scripts/studybox-wifi-connect.py", ssid, password], { timeout: 30_000 });
+    const result = JSON.parse(stdout.trim().split("\n").at(-1) || "{}") as { ssid?: string; mode?: "switching" | "applied" };
+    const savedSsid = result.ssid || ssid;
     const saved = await appliance.updateSettings({
       ...appliance.getSettings(),
-      wifi: { ssid, configured: true }
+      wifi: { ssid: savedSsid, configured: true }
     }, webAdminContext);
-    response.json({ settings: saved, message: `Saved ${ssid} for automatic connection` });
+    response.json({
+      settings: saved,
+      mode: result.mode ?? "applied",
+      ssid: savedSsid,
+      message: result.mode === "switching"
+        ? `Saved ${savedSsid}. StudyBox is switching to it now, so this setup network will disconnect. Watch the StudyBox screen: it shows Connected, or the problem if it cannot join.`
+        : `Saved ${savedSsid} for automatic connection`
+    });
   } catch (error) {
     next(error);
   }

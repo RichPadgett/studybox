@@ -25,6 +25,7 @@ import { ZoomRunnerProcessClient } from "./zoomRunnerProcessClient.js";
 import { createZoomSdkJwt } from "./zoomSdkJwt.js";
 import { ZoomZakService } from "./zoomZakService.js";
 import { matchZoomRecording } from "./zoomRecordingMatcher.js";
+import { AutoStartStore, decideAutoStart, findScheduledOccurrence } from "./meetingAutoStart.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -119,6 +120,10 @@ export class StudyBoxAppliance {
   private debugHeartbeatTimer?: NodeJS.Timeout;
   private oledScreensaverTimer?: NodeJS.Timeout;
   private oledScreensaverActive = false;
+  private oledWifiSignature = "normal";
+  private oledWifiDoneUntil?: number;
+  private ledFlashUntil = 0;
+  private oledWifiTimer?: NodeJS.Timeout;
   private oledScreensaverPosition = 0;
   private lastOledActivityAt = Date.now();
   private zoomEndInFlight?: Promise<StudyBoxSnapshot>;
@@ -134,6 +139,13 @@ export class StudyBoxAppliance {
   private meetingDesiredLive = false;
   private meetingIntentRequestedAt?: string;
   private meetingSupervisorTimer?: NodeJS.Timeout;
+  private autoStartTimer?: NodeJS.Timeout;
+  private autoStartTickInFlight = false;
+  private readonly autoStartStore = new AutoStartStore();
+  private readonly autoStartLeadMinutes = Number(process.env.STUDYBOX_AUTO_START_LEAD_MINUTES ?? 10);
+  private readonly autoStartGraceMinutes = Number(process.env.STUDYBOX_AUTO_START_GRACE_MINUTES ?? 180);
+  private readonly autoStartMeetingRetryMs = Number(process.env.STUDYBOX_AUTO_START_RETRY_MS ?? 2 * 60_000);
+  private readonly autoStartRecordingFallbackMinutes = Number(process.env.STUDYBOX_AUTO_START_RECORDING_FALLBACK_MINUTES ?? 5);
   private meetingRecoveryInFlight?: Promise<MeetingState>;
   private meetingRecoveryAttempt = 0;
   private meetingRecoveryActive = false;
@@ -229,12 +241,20 @@ export class StudyBoxAppliance {
     await this.oled.showPage("home");
     await this.syncLeds();
     this.startMeetingSupervisor();
+    await this.autoStartStore.load();
+    this.startAutoStart();
     this.oledScreensaverTimer = setInterval(() => {
       void this.updateOledScreensaver().catch((error: unknown) => {
         console.error("StudyBox OLED screensaver update failed", error);
       });
     }, 30_000);
     this.oledScreensaverTimer.unref();
+    this.oledWifiTimer = setInterval(() => {
+      void this.refreshWifiOled().catch((error: unknown) => {
+        console.error("StudyBox OLED Wi-Fi setup update failed", error);
+      });
+    }, 2_000);
+    this.oledWifiTimer.unref();
     const debugIntervalMs = process.env.STUDYBOX_DEBUG_HEARTBEAT_MS
       ? Number(process.env.STUDYBOX_DEBUG_HEARTBEAT_MS)
       : 0;
@@ -446,6 +466,114 @@ export class StudyBoxAppliance {
         console.error(`Initial Zoom meeting recovery failed: ${error instanceof Error ? error.message : String(error)}`);
       });
     }
+  }
+
+  private startAutoStart(): void {
+    if (this.autoStartTimer) return;
+    const tick = () => void this.runAutoStartTick().catch((error: unknown) => {
+      console.error(`Scheduled auto-start failed: ${error instanceof Error ? error.message : String(error)}`);
+    });
+    this.autoStartTimer = setInterval(tick, 30_000);
+    this.autoStartTimer.unref();
+    // Give the Zoom runner and audio a moment to settle after boot before the first check.
+    setTimeout(tick, 20_000).unref();
+  }
+
+  private async runAutoStartTick(): Promise<void> {
+    if (this.autoStartTickInFlight) return;
+    this.autoStartTickInFlight = true;
+    try {
+      const schedule = this.settingsStore.get().schedule;
+      if (!schedule.autoStartMeeting && !schedule.autoStartRecording) return;
+      const now = new Date();
+      const occurrence = findScheduledOccurrence(now, schedule, {
+        leadMinutes: this.autoStartLeadMinutes,
+        graceMinutes: this.autoStartGraceMinutes
+      });
+      if (!occurrence) return;
+
+      let record = this.autoStartStore.get(occurrence.key);
+      const meeting = this.meeting.getState();
+      const podcast = this.podcast.getState();
+      // Remember what already happened this occurrence, however it was started, so a later
+      // manual stop or a remote meeting end is never undone by auto-start.
+      if (meeting.status === "live" && !record.meetingLiveAt) {
+        record = await this.autoStartStore.update(occurrence.key, { meetingLiveAt: now.toISOString() });
+      }
+      if (podcast.status !== "idle" && !record.recordingStartedAt) {
+        record = await this.autoStartStore.update(occurrence.key, { recordingStartedAt: now.toISOString() });
+      }
+
+      const action = decideAutoStart({
+        schedule,
+        occurrence,
+        record,
+        meetingStatus: meeting.status,
+        meetingDesiredLive: this.meetingDesiredLive,
+        podcastStatus: podcast.status,
+        nowMs: now.getTime(),
+        meetingRetryMs: this.autoStartMeetingRetryMs,
+        recordingFallbackMinutes: this.autoStartRecordingFallbackMinutes
+      });
+      const context: ActionContext = { source: "scheduler", actor: "auto-start" };
+
+      if (action === "start-meeting") {
+        const firstAttempt = !record.meetingRequestedAt;
+        await this.autoStartStore.update(occurrence.key, {
+          meetingRequestedAt: record.meetingRequestedAt ?? now.toISOString(),
+          lastMeetingAttemptAt: now.toISOString()
+        });
+        await this.log({
+          source: "scheduler",
+          actor: "auto-start",
+          level: firstAttempt ? "info" : "warn",
+          action: "schedule.autoStart.meeting",
+          result: "success",
+          message: firstAttempt
+            ? `Scheduled ${schedule.dayOfWeek} ${schedule.time} study: starting Zoom`
+            : "Scheduled study: Zoom is not live yet; trying again",
+          details: { occurrence: occurrence.key, minutesFromStart: occurrence.minutesFromStart }
+        });
+        try {
+          await this.startMeeting(context);
+        } catch (error) {
+          await this.log({
+            source: "scheduler",
+            actor: "auto-start",
+            level: "error",
+            action: "schedule.autoStart.meeting",
+            result: "failure",
+            message: `Scheduled Zoom start failed; retrying in ${Math.round(this.autoStartMeetingRetryMs / 60_000)} min: ${error instanceof Error ? error.message : String(error)}`,
+            details: { occurrence: occurrence.key }
+          });
+        }
+      } else if (action === "start-recording") {
+        await this.autoStartStore.update(occurrence.key, { recordingStartedAt: now.toISOString() });
+        await this.log({
+          source: "scheduler",
+          actor: "auto-start",
+          level: "info",
+          action: "schedule.autoStart.recording",
+          result: "success",
+          message: meeting.status === "live" ? "Scheduled study: starting the room recording" : "Scheduled study: Zoom is not live yet; starting the room recording anyway",
+          details: { occurrence: occurrence.key, minutesFromStart: occurrence.minutesFromStart }
+        });
+        await this.startRecording(context);
+      }
+    } finally {
+      this.autoStartTickInFlight = false;
+    }
+  }
+
+  /** A person stopped something during a scheduled study; auto-start must not restart it. */
+  private async suppressAutoStart(kind: "meeting" | "recording", context: ActionContext): Promise<void> {
+    if (context.source === "scheduler" || context.source === "system") return;
+    const occurrence = findScheduledOccurrence(new Date(), this.settingsStore.get().schedule, {
+      leadMinutes: this.autoStartLeadMinutes,
+      graceMinutes: this.autoStartGraceMinutes
+    });
+    if (!occurrence) return;
+    await this.autoStartStore.update(occurrence.key, kind === "meeting" ? { meetingSuppressed: true } : { recordingSuppressed: true });
   }
 
   private async superviseMeeting(): Promise<void> {
@@ -745,6 +873,7 @@ export class StudyBoxAppliance {
 
   private async endMeetingOnce(context: ActionContext): Promise<StudyBoxSnapshot> {
     await this.wakeOled();
+    await this.suppressAutoStart("meeting", context);
     // Clear intent first so a concurrent health check cannot undo an
     // intentional long-press stop by rejoining the meeting.
     await this.setMeetingDesiredLive(false);
@@ -893,6 +1022,7 @@ export class StudyBoxAppliance {
 
   async stopRecording(context: ActionContext = {}): Promise<StudyBoxSnapshot> {
     await this.wakeOled();
+    await this.suppressAutoStart("recording", context);
     const activeRecordingStartedAt = this.podcast.getState().activeRecording?.startedAt;
     const recordingIdsBeforeStop = new Set(this.podcast.getState().recordings.map((recording) => recording.id));
     const zoomRecordingDirectory = this.zoomLocalRecordingEnabled && this.meeting.getState().status === "live"
@@ -1239,6 +1369,7 @@ export class StudyBoxAppliance {
       cpuPercent: getCpuPercent(),
       ssdPercent: getRootDiskPercent(),
       wifiConnected: getWifiConnected(),
+      ...getWifiSetupState(),
       temperatureC: getTemperatureC()
     };
   }
@@ -1381,6 +1512,48 @@ export class StudyBoxAppliance {
     await this.oled.showPage(renderedPage.id);
   }
 
+  /**
+   * Walks the screen through Wi-Fi setup as it happens: step 1 (QR to join the
+   * hotspot) -> step 2 as soon as a phone joins (QR to open the setup page) ->
+   * step 3 once the page is open -> connecting -> connected, or back to the steps
+   * with the reason it failed.
+   */
+  private async refreshWifiOled(): Promise<void> {
+    const wifi = getWifiSetupState();
+    const active = wifi.wifiMode === "setup" || wifi.wifiMode === "trying";
+    const signature = active
+      ? [wifi.wifiMode, wifi.wifiSsid, wifi.wifiSetupError, wifi.wifiSetupPhoneJoined, wifi.wifiSetupPageOpened].join("|")
+      : "normal";
+    const previous = this.oledWifiSignature;
+    if (signature === previous) {
+      if (this.oledWifiDoneUntil && Date.now() >= this.oledWifiDoneUntil) {
+        this.oledWifiDoneUntil = undefined;
+        await this.oled.showPage("home");
+      }
+      return;
+    }
+    this.oledWifiSignature = signature;
+    if (active) await this.syncLeds();
+    await this.wakeOled();
+    if (active) {
+      this.oledWifiDoneUntil = undefined;
+      await this.oled.showPage("wifiSetup");
+    } else if (previous !== "normal" && wifi.wifiMode === "connected") {
+      // Leaving setup: three purple blinks on the buttons, and confirm on screen
+      // for a minute, then return to the home page.
+      this.ledFlashUntil = Date.now() + 2_200;
+      await this.leds.flashWifiConnected?.();
+      setTimeout(() => {
+        this.ledFlashUntil = 0;
+        void this.syncLeds().catch((error: unknown) => console.error("StudyBox LED sync after Wi-Fi flash failed", error));
+      }, 2_300).unref();
+      this.oledWifiDoneUntil = Date.now() + 60_000;
+      await this.oled.render({ id: "wifiSetup", title: "WIFI DONE", lines: [wifi.wifiSsid ?? ""] });
+    } else {
+      await this.oled.showPage("home");
+    }
+  }
+
   private async updateOledScreensaver(): Promise<void> {
     const idleLongEnough = Date.now() - this.lastOledActivityAt >= this.oledScreensaverIdleMs;
     if (!idleLongEnough || !this.canUseOledScreensaver()) {
@@ -1404,6 +1577,19 @@ export class StudyBoxAppliance {
       return;
     }
 
+    // Holding Page again while setup is open is the way out: leave the hotspot and
+    // go back to the saved networks (no reboot needed).
+    const wifiMode = getWifiSetupState().wifiMode;
+    if (wifiMode === "setup" || wifiMode === "trying") {
+      await this.logAction("wifi.setup.leave", "Leaving Wi-Fi setup; trying saved networks", { source: "button", actor: "wifi-setup-chord" });
+      try {
+        await execFileAsync("sudo", ["-n", "systemd-run", "--no-block", "--collect", `--unit=studybox-wifi-leave-${Date.now()}`, "/opt/studybox/scripts/studybox-wifi-fallback.sh", "leave"], { timeout: 15_000 });
+      } catch (error) {
+        console.error(`StudyBox Wi-Fi setup leave failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      return;
+    }
+
     await this.logAction("wifi.setup.request", "Wi-Fi setup mode requested", { source: "button", actor: "wifi-setup-chord" });
     try {
       await writeFile("/tmp/studybox-force-wifi-setup", `${Date.now()}\n`);
@@ -1418,6 +1604,8 @@ export class StudyBoxAppliance {
     const recordingIdle = this.podcast.getState().status === "idle";
     const backupIdle = !this.backup.getState().bundles.some((bundle) => bundle.status === "zipping" || bundle.status === "uploading" || bundle.status === "promoting");
     return meetingIdle
+      && !["setup", "trying"].includes(getWifiSetupState().wifiMode ?? "")
+      && !this.oledWifiDoneUntil
       && recordingIdle
       && backupIdle
       && !isNearScheduledMeeting(new Date(), this.settingsStore.get().schedule, this.oledScheduleGuardMinutes);
@@ -1475,6 +1663,15 @@ export class StudyBoxAppliance {
   }
 
   private async syncLeds(): Promise<void> {
+    if (Date.now() < this.ledFlashUntil) return;
+    // Wi-Fi setup takes over both buttons (purple) so it is obvious the box is in
+    // a different mode; normal colors come back once it is connected.
+    const wifiMode = getWifiSetupState().wifiMode;
+    if (this.leds.setWifiSetup && (wifiMode === "setup" || wifiMode === "trying")) {
+      await this.leds.setWifiSetup(wifiMode === "setup" ? "waiting" : "connecting");
+      return;
+    }
+    await this.leds.setWifiSetup?.("off");
     const status = this.getSystemStatus();
     await this.leds.setSystem(status === "ready" ? "green" : status === "meeting-live" ? "blue" : status === "attention" ? "yellow" : "red");
 
@@ -1694,6 +1891,40 @@ function getRootDiskPercent(): number {
   } catch {
     return 0;
   }
+}
+
+/** Reads the Wi-Fi supervisor's status (scripts/studybox-wifi-fallback.sh) and setup progress. */
+function getWifiSetupState(): Pick<SystemMetrics, "wifiMode" | "wifiSetupMode" | "wifiSsid" | "wifiSetupError" | "wifiSetupPhoneJoined" | "wifiSetupPageOpened"> {
+  let status: { mode?: string; ssid?: string; error?: string } = {};
+  try {
+    status = JSON.parse(readFileSync(process.env.STUDYBOX_WIFI_STATUS_PATH ?? "/run/studybox-wifi/status.json", "utf8"));
+  } catch {
+    return { wifiMode: "unknown", wifiSetupMode: false };
+  }
+  const mode = status.mode === "setup" || status.mode === "trying" || status.mode === "connected" ? status.mode : "unknown";
+  if (mode !== "setup") return { wifiMode: mode, wifiSetupMode: false, wifiSsid: status.ssid || undefined };
+
+  // Phones on the hotspot show up in the ARP table (readable without root).
+  const subnet = (process.env.STUDYBOX_SETUP_IP ?? "10.42.0.1").split(".").slice(0, 3).join(".") + ".";
+  let phoneJoined = false;
+  try {
+    phoneJoined = readFileSync("/proc/net/arp", "utf8").split("\n").slice(1).some((line) => {
+      const [ip, , flags, , , device] = line.trim().split(/\s+/);
+      return Boolean(ip?.startsWith(subnet) && flags === "0x2" && device === (process.env.STUDYBOX_WIFI_INTERFACE ?? "wlan0"));
+    });
+  } catch { /* no ARP table: stay on step 1 */ }
+  let pageOpened = false;
+  try {
+    pageOpened = (JSON.parse(readFileSync("/run/studybox-wifi/captive-released.json", "utf8")) as unknown[]).length > 0;
+  } catch { /* nobody has opened the setup page yet */ }
+
+  return {
+    wifiMode: mode,
+    wifiSetupMode: true,
+    wifiSetupError: status.error || undefined,
+    wifiSetupPhoneJoined: phoneJoined || pageOpened,
+    wifiSetupPageOpened: pageOpened
+  };
 }
 
 function getWifiConnected(): boolean {

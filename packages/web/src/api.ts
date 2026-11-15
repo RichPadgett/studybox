@@ -99,12 +99,30 @@ export async function scanWifiNetworks(): Promise<WifiNetwork[]> {
   return request<WifiNetwork[]>("/api/network/wifi");
 }
 
-export async function connectWifi(ssid: string, password: string): Promise<void> {
-  await request<{ settings: StudyBoxSettings; message: string }>("/api/network/wifi", {
+export interface WifiConnectResult {
+  settings: StudyBoxSettings;
+  message: string;
+  mode: "switching" | "applied";
+  ssid: string;
+}
+
+export async function connectWifi(ssid: string, password: string): Promise<WifiConnectResult> {
+  return request<WifiConnectResult>("/api/network/wifi", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ ssid, password })
   });
+}
+
+export interface WifiSupervisorStatus {
+  mode: "setup" | "trying" | "connected" | "unknown";
+  ssid?: string;
+  error?: string;
+  updatedAt?: string;
+}
+
+export async function getWifiStatus(): Promise<WifiSupervisorStatus> {
+  return request<WifiSupervisorStatus>("/api/network/wifi/status");
 }
 
 export async function postAction(path: string, body?: unknown): Promise<StudyBoxSnapshot> {

@@ -1763,3 +1763,15 @@ input, select {
   .wifiConnectControls { width: 100%; }
   .wifiConnectControls input { min-width: 0; flex: 1; }
 }
+
+/* ── Wi-Fi setup page (phone on the StudyBox-Setup hotspot) ── */
+.setupPage { max-width: 480px; margin: 0 auto; padding: 24px 16px 48px; font-size: 18px; line-height: 1.45; }
+.setupPage h1 { font-size: 28px; margin: 0 0 4px; }
+.setupLead { margin: 0 0 20px; opacity: 0.8; }
+.setupLabel { display: block; font-weight: 600; margin: 20px 0 8px; }
+.setupInput { display: block; width: 100%; box-sizing: border-box; font-size: 18px; padding: 14px 12px; border-radius: 10px; border: 1px solid currentColor; background: transparent; color: inherit; margin-bottom: 8px; }
+.setupTip, .setupNote { font-size: 15px; opacity: 0.85; margin: 0 0 8px; }
+.setupCheck { display: flex; gap: 8px; align-items: center; font-size: 15px; margin: 4px 0 16px; }
+.setupProblem { background: #b42318; color: #fff; padding: 12px; border-radius: 10px; margin: 12px 0; font-size: 16px; }
+.setupButton { display: block; width: 100%; font-size: 20px; font-weight: 700; padding: 16px; border-radius: 12px; border: 0; background: #2563eb; color: #fff; margin-top: 8px; }
+.setupButton:disabled { opacity: 0.5; }

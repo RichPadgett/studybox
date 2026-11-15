@@ -19,6 +19,8 @@ export class RaspberryPiButtonController implements ButtonController {
   private zoomRunning = false;
   private recordingRunning = false;
   private setupChordTimer?: NodeJS.Timeout;
+  /** The setup button was held at some point; Zoom/Record releases meanwhile do nothing. */
+  private chordAttempted = false;
   private setupTriggered = false;
 
   constructor(
@@ -103,7 +105,25 @@ export class RaspberryPiButtonController implements ButtonController {
     const normalizedEvent = event?.toLowerCase() ?? "";
     const isPress = normalizedEvent === "0" || normalizedEvent.includes("falling");
     if (gpio === this.pageGpio) {
-      if (isPress && this.shouldAcceptPress(gpio)) void this.invokePage().catch((error: unknown) => console.error("StudyBox page button action failed", error));
+      // Page acts on press, and is also tracked while held: holding it for
+      // 5 seconds starts Wi-Fi setup.
+      if (isPress) {
+        if (this.shouldAcceptPress(gpio)) {
+          this.pressedAt.set(gpio, Date.now());
+          void this.invokePage().catch((error: unknown) => console.error("StudyBox page button action failed", error));
+        }
+        this.updateSetupChord();
+      } else {
+        this.pressedAt.delete(gpio);
+        // Released before 5 s: cancel the pending chord. Keep setupTriggered set
+        // until every button is up so Zoom/Record releases stay silent after setup.
+        if (this.setupChordTimer) clearTimeout(this.setupChordTimer);
+        this.setupChordTimer = undefined;
+        if (this.pressedAt.size === 0) {
+          this.setupTriggered = false;
+          this.chordAttempted = false;
+        }
+      }
       return;
     }
     if (isPress) {
@@ -115,15 +135,16 @@ export class RaspberryPiButtonController implements ButtonController {
       return;
     }
     const startedAt = this.pressedAt.get(gpio);
-    const setupWasTriggered = this.setupTriggered;
+    const setupWasTriggered = this.setupTriggered || this.chordAttempted;
     const longPressTimer = this.longPressTimers.get(gpio);
     if (longPressTimer) clearTimeout(longPressTimer);
     this.longPressTimers.delete(gpio);
     this.pressedAt.delete(gpio);
     if (this.pressedAt.size === 0) {
       this.setupTriggered = false;
-      this.updateSetupChord();
+      this.chordAttempted = false;
     }
+    this.updateSetupChord();
     if (setupWasTriggered) return;
     if (!startedAt || !this.shouldAcceptPress(`${gpio}:release`)) return;
     if (this.longPressTriggered.delete(gpio)) return;
@@ -136,8 +157,8 @@ export class RaspberryPiButtonController implements ButtonController {
     if (gpio !== this.zoomGpio && gpio !== this.recordingGpio) return;
     const timer = setTimeout(() => {
       this.longPressTimers.delete(gpio);
-      // Holding all three buttons is reserved for Wi-Fi setup mode.
-      if (!this.pressedAt.has(gpio) || this.pressedAt.has(this.pageGpio) || this.setupTriggered) return;
+      // Holding Page is reserved for Wi-Fi setup mode.
+      if (!this.pressedAt.has(gpio) || this.pressedAt.has(this.pageGpio) || this.chordAttempted || this.setupTriggered) return;
       this.longPressTriggered.add(gpio);
       if (gpio === this.zoomGpio) void this.invokeZoom(true).catch((error: unknown) => console.error("StudyBox Zoom long-press action failed", error));
       if (gpio === this.recordingGpio) void this.invokeRecording(true).catch((error: unknown) => console.error("StudyBox recording long-press action failed", error));
@@ -146,8 +167,17 @@ export class RaspberryPiButtonController implements ButtonController {
     this.longPressTimers.set(gpio, timer);
   }
 
+  /**
+   * Wi-Fi setup: hold Page for 5 seconds. Page never touches the meeting or the
+   * recording, so this cannot end a study by accident.
+   */
+  private setupChordGpios(): string[] {
+    return [this.pageGpio];
+  }
+
   private updateSetupChord(): void {
-    const chordHeld = [this.pageGpio, this.zoomGpio, this.recordingGpio].every((gpio) => this.pressedAt.has(gpio));
+    const chordHeld = this.setupChordGpios().every((gpio) => this.pressedAt.has(gpio));
+    if (chordHeld) this.chordAttempted = true;
     if (!chordHeld) {
       if (this.setupChordTimer) clearTimeout(this.setupChordTimer);
       this.setupChordTimer = undefined;
@@ -157,7 +187,7 @@ export class RaspberryPiButtonController implements ButtonController {
     if (this.setupChordTimer || this.setupTriggered) return;
     this.setupChordTimer = setTimeout(() => {
       this.setupChordTimer = undefined;
-      if (!this.setupTriggered && [this.pageGpio, this.zoomGpio, this.recordingGpio].every((gpio) => this.pressedAt.has(gpio))) {
+      if (!this.setupTriggered && this.setupChordGpios().every((gpio) => this.pressedAt.has(gpio))) {
         this.setupTriggered = true;
         void this.onSetup().catch((error: unknown) => console.error(`StudyBox Wi-Fi setup chord failed: ${error instanceof Error ? error.message : String(error)}`));
       }

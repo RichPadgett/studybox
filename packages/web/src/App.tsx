@@ -28,7 +28,7 @@ import {
   Users
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { ApiError, connectWifi, createLibraryShare, downloadRecordingAsset, getLibraryPublicationStatus, getPublicLibraryAudio, getPublicLibraryDocument, getPublicLibraryShare, getPublicLibraryShareAudio, getSnapshot, getTranscript, getTranscriptAudio, loginAdmin, pollZoomDeviceToken, postAction, publishLibraryRecording, refreshZoomToken, requestMeetingJoin, saveLibraryTitle, saveSettings, scanWifiNetworks, searchPublicLibrary, searchTranscriptLibrary, setAdminToken, setDashboardViewerId, startZoomDeviceAuthorization, validateAdminSession } from "./api.js";
+import { ApiError, connectWifi, getWifiStatus, createLibraryShare, downloadRecordingAsset, getLibraryPublicationStatus, getPublicLibraryAudio, getPublicLibraryDocument, getPublicLibraryShare, getPublicLibraryShareAudio, getSnapshot, getTranscript, getTranscriptAudio, loginAdmin, pollZoomDeviceToken, postAction, publishLibraryRecording, refreshZoomToken, requestMeetingJoin, saveLibraryTitle, saveSettings, scanWifiNetworks, searchPublicLibrary, searchTranscriptLibrary, setAdminToken, setDashboardViewerId, startZoomDeviceAuthorization, validateAdminSession } from "./api.js";
 
 const primaryNavItems = [
   { id: "dashboard", label: "Dashboard", icon: Gauge },
@@ -57,7 +57,7 @@ const dashboardViewerStorageKey = "studybox.dashboardViewerId";
 
 export function App() {
   const [snapshot, setSnapshot]     = useState<StudyBoxSnapshot>();
-  const [activeNav, setActiveNav]   = useState<NavId>("dashboard");
+  const [activeNav, setActiveNav]   = useState<NavId>(() => "dashboard");
   const [systemOpen, setSystemOpen] = useState(false);
   const [error, setError]           = useState<string>();
   const [saving, setSaving]         = useState(false);
@@ -67,6 +67,7 @@ export function App() {
   const isAdminRoute = window.location.pathname === "/admin" || window.location.pathname.startsWith("/admin/");
   const shareToken = getLibraryShareToken();
   const publicLibraryRoute = window.location.pathname === "/library" || window.location.pathname.startsWith("/library/");
+  const setupRoute = window.location.pathname === "/setup";
 
   function navigate(id: NavId) {
     setActiveNav(id);
@@ -132,13 +133,15 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (shareToken) return;
+    if (shareToken || setupRoute) return;
     void refresh();
     const timer = window.setInterval(() => void refresh(), 1000);
     return () => window.clearInterval(timer);
   }, [shareToken]);
 
   if (shareToken) return <PublicLibraryShare token={shareToken} />;
+
+  if (setupRoute) return <WifiSetupPage />;
 
   if (!snapshot) {
     return (
@@ -258,6 +261,14 @@ function PublicJoinPage({ snapshot, error }: { snapshot: StudyBoxSnapshot; error
   const [participant, setParticipant] = useState<Participant | undefined>(() => readStoredPublicParticipant());
   const [joining, setJoining]         = useState(false);
   const [joinError, setJoinError]     = useState<string>();
+
+  // While the StudyBox-Setup hotspot is open there is no meeting to join; anyone
+  // landing here (bare IP, captive sheet) is setting up Wi-Fi, so take them there.
+  useEffect(() => {
+    getWifiStatus()
+      .then((status) => { if (status.mode === "setup") window.location.replace("/setup"); })
+      .catch(() => { /* status unavailable: stay on the join page */ });
+  }, []);
 
   const syncedLobbyParticipant = participant ? snapshot.meeting.lobbyRequests.find((i) => i.id === participant.id) : undefined;
   const zoomWaitingParticipant = participant ? snapshot.meeting.waitingRoom.find((i) => i.id === participant.id) : undefined;
@@ -1322,10 +1333,28 @@ function NetworkView({ snapshot, adminUnlocked, setError, lockAdmin }: { snapsho
   const [passwords, setPasswords] = useState<Record<string, string>>({});
   const [scanning, setScanning] = useState(false);
   const [connecting, setConnecting] = useState<string>();
+  const [notice, setNotice] = useState<string>();
+  const [manualSsid, setManualSsid] = useState("");
+  const [manualPassword, setManualPassword] = useState("");
+  const [wifiStatus, setWifiStatus] = useState<Awaited<ReturnType<typeof getWifiStatus>>>();
   const host = window.location.host || "localhost:5173";
   const hostname = window.location.hostname;
   const publicAccess = window.location.protocol === "https:" && !["localhost", "127.0.0.1"].includes(hostname);
   const tunnelHostname = snapshot.settings.cloudflare.hostname || (publicAccess ? hostname : "");
+  const setupHotspot = wifiStatus?.mode === "setup";
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = () => void getWifiStatus().then((status) => { if (!cancelled) setWifiStatus(status); }).catch(() => undefined);
+    load();
+    const timer = window.setInterval(load, 5_000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, []);
+
+  useEffect(() => {
+    if (adminUnlocked && networks.length === 0) void scan();
+    // Scan once when the page is unlocked; later scans are manual.
+  }, [adminUnlocked]);
 
   async function scan() {
     if (!adminUnlocked) { setError("Enter the admin PIN before scanning for Wi-Fi networks."); return; }
@@ -1335,10 +1364,16 @@ function NetworkView({ snapshot, adminUnlocked, setError, lockAdmin }: { snapsho
     finally { setScanning(false); }
   }
 
-  async function connect(ssid: string) {
+  async function connect(ssid: string, password: string) {
     if (!adminUnlocked) { setError("Enter the admin PIN before adding a Wi-Fi network."); return; }
+    if (!ssid.trim()) { setError("Enter the Wi-Fi network name."); return; }
+    if (password.length > 0 && password.length < 8) { setError("Wi-Fi passwords are at least 8 characters."); return; }
     setConnecting(ssid);
-    try { await connectWifi(ssid, passwords[ssid] ?? ""); setError(undefined); }
+    try {
+      const result = await connectWifi(ssid, password);
+      setNotice(result.message);
+      setError(undefined);
+    }
     catch (caught) { if (isAdminAuthError(caught)) lockAdmin(); setError(caught instanceof Error ? caught.message : "Wi-Fi connection failed"); }
     finally { setConnecting(undefined); }
   }
@@ -1346,24 +1381,127 @@ function NetworkView({ snapshot, adminUnlocked, setError, lockAdmin }: { snapsho
   return (
     <div className="stack">
       <div className="metricGrid">
-        <Metric label="WiFi"   value={snapshot.settings.wifi.configured ? snapshot.settings.wifi.ssid : "Not configured"} detail={snapshot.metrics.wifiConnected ? "Connected" : "Offline"} green={snapshot.metrics.wifiConnected} />
+        <Metric label="WiFi"   value={wifiStatus?.mode === "connected" && wifiStatus.ssid ? wifiStatus.ssid : setupHotspot ? "Setup hotspot" : snapshot.settings.wifi.configured ? snapshot.settings.wifi.ssid : "Not configured"} detail={setupHotspot ? "Waiting for a network" : snapshot.metrics.wifiConnected ? "Connected" : "Offline"} green={snapshot.metrics.wifiConnected && !setupHotspot} />
         <Metric label="Tunnel" value={tunnelHostname ? "Available" : "Not configured"} detail={tunnelHostname || "No public hostname detected"} green={Boolean(tunnelHostname)} />
         <Metric label="Access" value={publicAccess ? "Public" : "Local"} detail={host} />
         <Metric label="API"    value="Online" detail={`${window.location.origin}/api`} green />
       </div>
+      {wifiStatus?.error && <div className="errorBanner" role="alert">{wifiStatus.error}</div>}
+      {notice && <div className="mutedText" role="status">{notice}</div>}
       <Panel title="Available Wi-Fi networks">
         <div className="wifiToolbar">
-          <span className="mutedText">Add a network to the Pi's saved connections. NetworkManager will reconnect to saved networks automatically.</span>
-          <button className="command" onClick={() => void scan()} disabled={scanning || !adminUnlocked}>{scanning ? "Scanning..." : "Scan"}</button>
+          <span className="mutedText">{setupHotspot
+            ? "StudyBox is in setup mode. Pick this location's Wi-Fi and enter its password. These networks were found just before setup mode started."
+            : "Add a network to StudyBox's saved connections. It reconnects to saved networks automatically."}</span>
+          <button className="command" onClick={() => void scan()} disabled={scanning || !adminUnlocked}>{scanning ? "Scanning..." : setupHotspot ? "Refresh list" : "Scan"}</button>
         </div>
         {networks.length === 0
-          ? <div className="mutedText">Scan to see nearby networks.</div>
+          ? <div className="mutedText">{adminUnlocked ? "No networks found yet. Scan, or type the network name below." : "Enter the admin PIN to see nearby networks."}</div>
           : <div className="wifiNetworkList">{networks.map((network) => <div className="wifiNetworkRow" key={network.ssid}>
             <div><strong>{network.ssid}</strong><small>{network.security} · {network.signalPercent}% signal{network.inUse ? " · connected" : ""}</small></div>
-            <div className="wifiConnectControls"><input type="password" aria-label={`Password for ${network.ssid}`} placeholder={network.security === "Open" ? "No password" : "Password"} value={passwords[network.ssid] ?? ""} onChange={(event) => setPasswords((current) => ({ ...current, [network.ssid]: event.target.value }))} /><button className="command" onClick={() => void connect(network.ssid)} disabled={connecting === network.ssid || !adminUnlocked}>{connecting === network.ssid ? "Connecting..." : "Add"}</button></div>
+            <div className="wifiConnectControls"><input type="password" aria-label={`Password for ${network.ssid}`} placeholder={network.security === "Open" ? "No password" : "Password"} value={passwords[network.ssid] ?? ""} onChange={(event) => setPasswords((current) => ({ ...current, [network.ssid]: event.target.value }))} /><button className="command" onClick={() => void connect(network.ssid, passwords[network.ssid] ?? "")} disabled={connecting === network.ssid || !adminUnlocked}>{connecting === network.ssid ? "Saving..." : "Add"}</button></div>
           </div>)}</div>}
+        <div className="wifiNetworkRow">
+          <div><strong>Other network</strong><small>Names are case-sensitive; StudyBox fixes the case if the network is nearby.</small></div>
+          <div className="wifiConnectControls">
+            <input aria-label="Wi-Fi network name" placeholder="Network name" autoCapitalize="none" autoCorrect="off" spellCheck={false} value={manualSsid} onChange={(event) => setManualSsid(event.target.value)} />
+            <input type="password" aria-label="Wi-Fi password" placeholder="Password" value={manualPassword} onChange={(event) => setManualPassword(event.target.value)} />
+            <button className="command" onClick={() => void connect(manualSsid.trim(), manualPassword)} disabled={!adminUnlocked || !manualSsid.trim() || connecting === manualSsid.trim()}>{connecting === manualSsid.trim() ? "Saving..." : "Add"}</button>
+          </div>
+        </div>
       </Panel>
     </div>
+  );
+}
+
+// ── Wi-Fi setup (phone on the StudyBox-Setup hotspot) ─────────────────────────
+// Reached from the step-2 QR code on the StudyBox screen or the phone's sign-in
+// pop-up. No PIN: only a phone standing at the box, on its hotspot, can open it.
+
+function WifiSetupPage() {
+  const [status, setStatus] = useState<Awaited<ReturnType<typeof getWifiStatus>>>();
+  const [networks, setNetworks] = useState<import("@studybox/shared").WifiNetwork[]>();
+  const [selected, setSelected] = useState("");
+  const [otherName, setOtherName] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [sent, setSent] = useState<string>();
+  const [problem, setProblem] = useState<string>();
+  const ssid = selected === "__other" ? otherName.trim() : selected;
+  const iPhone = /iPhone|iPad/.test(navigator.userAgent);
+
+  useEffect(() => {
+    // Tell the hotspot this phone has reached setup, so the phone keeps the
+    // connection (instead of treating it as an unfinished hotel sign-in).
+    void fetch(`http://${window.location.hostname}/studybox-release`, { mode: "no-cors", cache: "no-store" }).catch(() => undefined);
+    let cancelled = false;
+    const load = () => void getWifiStatus().then((value) => { if (!cancelled) setStatus(value); }).catch(() => undefined);
+    load();
+    const timer = window.setInterval(load, 4_000);
+    void scanWifiNetworks()
+      // Nothing pre-selected: the strongest network is not always this home's.
+      .then((list) => { if (!cancelled) setNetworks(list); })
+      .catch((caught) => { if (!cancelled) { setNetworks([]); setProblem(caught instanceof Error ? caught.message : "Could not list networks"); } });
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, []);
+
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!ssid) { setProblem("Pick the Wi-Fi network."); return; }
+    if (password.length > 0 && password.length < 8) { setProblem("Wi-Fi passwords are at least 8 characters."); return; }
+    setSending(true);
+    setProblem(undefined);
+    try {
+      const result = await connectWifi(ssid, password);
+      setSent(result.ssid);
+    } catch (caught) {
+      setProblem(caught instanceof Error ? caught.message : "StudyBox could not save that network");
+    } finally {
+      setSending(false);
+    }
+  }
+
+  if (sent) {
+    return (
+      <main className="setupPage">
+        <h1>Connecting to {sent}</h1>
+        <p className="setupLead">That's it. Watch the StudyBox screen.</p>
+        <ul>
+          <li><strong>WIFI CONNECTED</strong> and three purple blinks: you're done.</li>
+          <li>Back to <strong>STEP 1</strong> with a problem shown: scan the QR codes again and fix the password.</li>
+        </ul>
+        <p><strong>Closing this window:</strong> tap <strong>Done</strong> or <strong>✕</strong>. If your phone asks, choose <strong>Dismiss</strong>. Any choice is fine; StudyBox has already turned its setup network off, and your phone goes back to its usual Wi-Fi.</p>
+      </main>
+    );
+  }
+
+  return (
+    <main className="setupPage">
+      <h1>StudyBox Wi-Fi</h1>
+      <p className="setupLead">Connect StudyBox to this home's Wi-Fi.</p>
+      {status?.error && <div className="setupProblem" role="alert">{status.error}</div>}
+      {status && status.mode !== "setup" && <div className="setupNote">StudyBox is already {status.mode === "connected" ? `connected${status.ssid ? ` to ${status.ssid}` : ""}` : "connecting"}.</div>}
+      <form onSubmit={(event) => void submit(event)}>
+        <label className="setupLabel" htmlFor="setupNetwork">1. Wi-Fi network</label>
+        {networks === undefined
+          ? <p className="setupNote">Finding nearby networks…</p>
+          : <select id="setupNetwork" className="setupInput" value={selected} onChange={(event) => setSelected(event.target.value)}>
+              <option value="" disabled>Choose a network</option>
+              {networks.map((network) => <option key={network.ssid} value={network.ssid}>{network.ssid}{network.security === "Open" ? " (no password)" : ""}</option>)}
+              <option value="__other">Other (type the name)</option>
+            </select>}
+        {selected === "__other" && <input className="setupInput" aria-label="Wi-Fi network name" placeholder="Network name (capitals matter)" autoCapitalize="none" autoCorrect="off" spellCheck={false} value={otherName} onChange={(event) => setOtherName(event.target.value)} />}
+
+        <label className="setupLabel" htmlFor="setupPassword">2. Wi-Fi password</label>
+        {iPhone && <p className="setupTip">Tip: if this phone is already on the home's Wi-Fi, copy it from <strong>Settings → Wi-Fi → ⓘ → Password</strong> and paste it here.</p>}
+        <input id="setupPassword" className="setupInput" type={showPassword ? "text" : "password"} autoCapitalize="none" autoCorrect="off" spellCheck={false} placeholder="Password (capitals matter)" value={password} onChange={(event) => setPassword(event.target.value)} />
+        <label className="setupCheck"><input type="checkbox" checked={showPassword} onChange={(event) => setShowPassword(event.target.checked)} /> Show password</label>
+
+        {problem && <div className="setupProblem" role="alert">{problem}</div>}
+        <button className="setupButton" disabled={sending || !ssid}>{sending ? "Sending…" : "3. Connect StudyBox"}</button>
+      </form>
+    </main>
   );
 }
 

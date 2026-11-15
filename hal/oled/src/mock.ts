@@ -26,6 +26,25 @@ export class MockOledDisplay implements OledDisplay {
     const zoom = this.getZoom?.();
     const cloud = this.getCloud?.();
     const watchdog = this.getWatchdog?.() ?? { live: true, issues: [] };
+    // Setup mode wins over every other page: the box is offline until someone joins
+    // the hotspot. The Pi renderer draws a Wi-Fi QR code beside these lines.
+    if (metrics.wifiMode === "setup") {
+      const error = shortWifiError(metrics.wifiSetupError);
+      const step1: OledPage = { id: "wifiSetup", title: "WIFI STEP 1", lines: ["SCAN TO", "JOIN WIFI", error] };
+      // Step 2 shows the setup-page QR as a backup; the phone's pop-up usually opens it.
+      const step2: OledPage = metrics.wifiSetupPageOpened
+        ? { id: "wifiSetup", title: "WIFI STEP 2", lines: ["PICK WIFI", "ON PHONE", error] }
+        : { id: "wifiSetup", title: "WIFI STEP 2", lines: ["SCAN TO", "OPEN SETUP", error] };
+      // The current step comes first; the Page button flips to the other QR code.
+      return metrics.wifiSetupPhoneJoined ? [step2, step1] : [step1, step2];
+    }
+    if (metrics.wifiMode === "trying") {
+      return [{ id: "wifiSetup", title: "WIFI CONNECTING", lines: [metrics.wifiSsid ?? ""] }];
+    }
+    if (!metrics.wifiConnected) {
+      return [{ id: "wifiSetup", title: "WIFI", lines: ["CONNECTING", "TO WIFI"] }];
+    }
+
     const activeBackupPage = backup ? getActiveBackupPage(backup) : undefined;
     const overlaySignature = activeBackupPage ? JSON.stringify(activeBackupPage) : undefined;
     if (overlaySignature !== this.backupOverlaySignature) {
@@ -44,19 +63,6 @@ export class MockOledDisplay implements OledDisplay {
       this.cloudOverlayDismissed = false;
     }
     if (cloudPage && !this.cloudOverlayDismissed) return [cloudPage];
-
-    if (!metrics.wifiConnected) {
-      return [{
-        id: "wifiSetup",
-        title: "WIFI SETUP",
-        lines: [
-          `SSID ${process.env.STUDYBOX_SETUP_SSID ?? "StudyBox-Setup"}`,
-          `PASS ${process.env.STUDYBOX_SETUP_PASSWORD ?? "StudyBoxSetup!26"}`,
-          `OPEN ${(process.env.STUDYBOX_SETUP_ADDRESS ?? "10.42.0.1/24").split("/")[0]}:5173`,
-          "ADD WIFI NETWORK"
-        ]
-      }];
-    }
 
     const meetingStatus = formatMeetingStatus(meeting);
     const recordingStatus = formatRecordingStatus(podcast);
@@ -228,4 +234,11 @@ function formatRecordingStatus(podcast: PodcastState): string {
   if (podcast.status === "stopping") return "SAVING RECORDING";
   if (podcast.status === "error") return "RECORDING ERROR";
   return podcast.audioReady === true ? "RECORDING READY" : "AUDIO NOT READY";
+}
+
+function shortWifiError(error: string | undefined): string {
+  if (!error) return "";
+  if (/rejected|case-sensitive/i.test(error)) return "PW WRONG";
+  if (/could not see|not nearby/i.test(error)) return "NOT FOUND";
+  return "NO CONNECT";
 }

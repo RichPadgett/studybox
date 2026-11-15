@@ -1,14 +1,15 @@
 [Unit]
-Description=StudyBox temporary Wi-Fi setup access point
-After=NetworkManager.service studybox-web.service
-Wants=NetworkManager.service
+Description=StudyBox Wi-Fi supervisor (opens the StudyBox-Setup hotspot when no saved network connects)
+After=systemd-networkd.service studybox-web.service
+Wants=systemd-networkd.service
 
 [Service]
 Type=oneshot
 EnvironmentFile=-/etc/studybox/studybox.env
-ExecStart=/opt/studybox/scripts/studybox-wifi-fallback.sh
+ExecStart=/opt/studybox/scripts/studybox-wifi-fallback.sh start
 ExecStop=/opt/studybox/scripts/studybox-wifi-fallback.sh stop
 RemainAfterExit=yes
+TimeoutStartSec=180
 
 [Install]
 WantedBy=multi-user.target

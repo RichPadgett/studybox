@@ -165,6 +165,22 @@ export class RaspberryPiOledDisplay implements OledDisplay {
       }
       return rotateFrame180(frame);
     }
+    if (page.id === "wifiSetup" && page.title.startsWith("WIFI STEP")) {
+      // Step 1: QR joins the hotspot. Steps 2-3: QR opens the setup page.
+      this.drawQr(frame, page.title === "WIFI STEP 1" ? WIFI_SETUP_QR : SETUP_PAGE_QR);
+      this.drawTextToFrame(frame, 66, 0, `STEP ${page.title.slice(-1)}`);
+      this.drawTextToFrame(frame, 66, 2, page.lines[0] ?? "");
+      this.drawTextToFrame(frame, 66, 3, page.lines[1] ?? "");
+      if (page.lines[2]) this.drawTextToFrame(frame, 66, 6, page.lines[2]);
+      return rotateFrame180(frame);
+    }
+    if (page.id === "wifiSetup" && (page.title === "WIFI CONNECTING" || page.title === "WIFI DONE")) {
+      const center = (text: string, row: number) => this.drawTextToFrame(frame, Math.max(0, Math.floor((128 - Math.min(text.length, 18) * 6) / 2)), row, text);
+      center(page.title === "WIFI DONE" ? "WIFI CONNECTED" : "CONNECTING TO", 2);
+      center(page.lines[0] ?? "", 4);
+      if (page.title === "WIFI CONNECTING") center("PLEASE WAIT", 6);
+      return rotateFrame180(frame);
+    }
     if (page.id === "screensaver") {
       if (page.lines[0] === "logo") {
         const label = "STUDYBOX";
@@ -224,6 +240,22 @@ export class RaspberryPiOledDisplay implements OledDisplay {
         }
       });
     });
+  }
+
+  /**
+   * Draws a QR code on the left 64x64 pixels: lit background
+   * (the quiet zone) with dark modules, 2 pixels per module.
+   */
+  private drawQr(frame: number[][], bitmap: readonly string[]): void {
+    const scale = 2;
+    const offset = Math.floor((64 - bitmap.length * scale) / 2);
+    for (let y = 0; y < 64; y += 1) {
+      for (let x = 0; x < 64; x += 1) {
+        const row = bitmap[Math.floor((y - offset) / scale)];
+        const dark = y >= offset && x >= offset && row?.[Math.floor((x - offset) / scale)] === "#";
+        if (!dark) frame[Math.floor(y / 8)][x] |= 1 << (y % 8);
+      }
+    }
   }
 
   private drawWatchdog(frame: number[][], x: number, y: number): void {
@@ -403,6 +435,72 @@ const PI_LOGO_BITMAP = [
   "....##........###...",
   ".......######.......",
   "........####........"
+] as const;
+
+// QR code for "WIFI:T:WPA;S:StudyBox-Setup;P:StudyBoxSetup!26;;" (version 3, error correction L).
+// Phone cameras join the setup hotspot from it. Regenerate it if
+// STUDYBOX_SETUP_SSID or STUDYBOX_SETUP_PASSWORD change, e.g. with the
+// "qrcode" npm package: QRCode.create(payload, { errorCorrectionLevel: "L" }).
+const WIFI_SETUP_QR = [
+  "#######.#....##....#..#######",
+  "#.....#.#..###.###.##.#.....#",
+  "#.###.#.##..#.#..####.#.###.#",
+  "#.###.#.###.##.#.##.#.#.###.#",
+  "#.###.#..##.##.##.#.#.#.###.#",
+  "#.....#.###....#.#.#..#.....#",
+  "#######.#.#.#.#.#.#.#.#######",
+  "..........##.....##.#........",
+  "##..###...#.##.....#...#.####",
+  "#..#.........#.#...#.##.#.###",
+  ".##.#.#####..####.##..#...#..",
+  "#.#....###..#.##.###.....#...",
+  ".##...#.#..###..#.####......#",
+  "..##...####.###...###.......#",
+  "#...#.####.#.##....##.#.#.#.#",
+  ".####..#.#.#..#...###..#.##.#",
+  "..##.###.##..#...###.#.#.#.#.",
+  "#..##......###..#....#..#.#.#",
+  "..#.######..########..#....##",
+  "..##...####...#..#####...#...",
+  "##..#.##.....##.#.########..#",
+  "........##.####.#.###...#..#.",
+  "#######..#..##.#...##.#.###.#",
+  "#.....#.###.......#.#...##..#",
+  "#.###.#.#...###..###########.",
+  "#.###.#..###.#..#.####.#.##..",
+  "#.###.#...####.#.###.####.###",
+  "#.....#.##....#..###..#.##.#.",
+  "#######.#.#.#.#.####.##.##..."
+] as const;
+
+// QR code for "http://10.42.0.1:5173/setup" (version 2, error correction M):
+// opens the setup page once the phone is on the hotspot.
+const SETUP_PAGE_QR = [
+  "#######.##.##.#...#######",
+  "#.....#.#.##.###..#.....#",
+  "#.###.#..#.#.#..#.#.###.#",
+  "#.###.#.#.....##..#.###.#",
+  "#.###.#.....#.##..#.###.#",
+  "#.....#....###.#..#.....#",
+  "#######.#.#.#.#.#.#######",
+  "........###...#..........",
+  "#.##.###...#.##.#.#..#.##",
+  ".#...#.#...##.###...#..#.",
+  "##.##.##..##.#...##.#....",
+  ".###.........##.#..#.##..",
+  "..#..###.#####.####...###",
+  ".##.#..###.##..##...#...#",
+  ".###.##.##.#..##..###.##.",
+  "#.#.....####....##...#..#",
+  "..#.####........#####.###",
+  "........##...##.#...#.#.#",
+  "#######.#...#####.#.##.##",
+  "#.....#.####...##...#.##.",
+  "#.###.#..#...###########.",
+  "#.###.#.#.#.#..######...#",
+  "#.###.#.#.####.##.##.###.",
+  "#.....#....####..#..##...",
+  "#######.#.#...##...#.####"
 ] as const;
 
 const WATCHDOG_BITMAP = [

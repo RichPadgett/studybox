@@ -121,6 +121,18 @@ export interface SystemMetrics {
   cpuPercent: number;
   ssdPercent: number;
   wifiConnected: boolean;
+  /** Wi-Fi supervisor state: "setup" while the StudyBox-Setup hotspot is open. */
+  wifiMode?: "setup" | "trying" | "connected" | "unknown";
+  /** True while the StudyBox-Setup hotspot is open. */
+  wifiSetupMode?: boolean;
+  /** Network being joined (trying) or joined (connected). */
+  wifiSsid?: string;
+  /** Why the last network failed to connect, from the Wi-Fi supervisor. */
+  wifiSetupError?: string;
+  /** A phone has joined the setup hotspot (screen moves to step 2). */
+  wifiSetupPhoneJoined?: boolean;
+  /** A phone has opened the setup page (screen moves to step 3). */
+  wifiSetupPageOpened?: boolean;
   temperatureC: number;
 }
 
@@ -570,6 +582,10 @@ export interface LedController {
   setZoomConnection(state: ZoomLedState): Promise<void>;
   setRecorderState(state: RecorderButtonState): Promise<void>;
   setZoomState(state: ZoomButtonState): Promise<void>;
+  /** Both buttons purple during Wi-Fi setup ("off" hands them back to normal states). */
+  setWifiSetup?(mode: "waiting" | "connecting" | "off"): Promise<void>;
+  /** Wi-Fi joined after setup: a short "it worked" flash on both buttons. */
+  flashWifiConnected?(): Promise<void>;
 }
 
 export interface AudioDevice {

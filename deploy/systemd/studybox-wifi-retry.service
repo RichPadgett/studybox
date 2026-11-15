@@ -1,0 +1,8 @@
+[Unit]
+Description=StudyBox Wi-Fi retry while the setup hotspot is idle
+After=studybox-wifi-fallback.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/studybox/studybox.env
+ExecStart=/opt/studybox/scripts/studybox-wifi-fallback.sh retry
