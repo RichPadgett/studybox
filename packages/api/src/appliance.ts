@@ -25,6 +25,7 @@ import { ZoomRunnerProcessClient } from "./zoomRunnerProcessClient.js";
 import { createZoomSdkJwt } from "./zoomSdkJwt.js";
 import { ZoomZakService } from "./zoomZakService.js";
 import { matchZoomRecording } from "./zoomRecordingMatcher.js";
+import { AttendanceStore, type AttendanceRecord } from "./attendance.js";
 import { AutoStartStore, decideAutoStart, findScheduledOccurrence } from "./meetingAutoStart.js";
 
 const execFileAsync = promisify(execFile);
@@ -123,7 +124,9 @@ export class StudyBoxAppliance {
   /** "startup" until the first Wi-Fi check, so a connection made during boot still gets its success signal. */
   private oledWifiSignature = "startup";
   private oledWifiDoneUntil?: number;
+  private readonly attendance = new AttendanceStore(() => this.settingsStore.get().schedule.timezone);
   private ledFlashUntil = 0;
+  private ledWrappingUp = false;
   private oledWifiTimer?: NodeJS.Timeout;
   private oledScreensaverPosition = 0;
   private lastOledActivityAt = Date.now();
@@ -156,7 +159,13 @@ export class StudyBoxAppliance {
   private readonly meetingSupervisorIntervalMs = Number(process.env.STUDYBOX_ZOOM_SUPERVISOR_INTERVAL_MS ?? 3_000);
   private readonly meetingReconnectGraceMs = Number(process.env.STUDYBOX_ZOOM_RECONNECT_GRACE_MS ?? 30_000);
   private readonly meetingReconnectMaxDelayMs = Number(process.env.STUDYBOX_ZOOM_RECONNECT_MAX_DELAY_MS ?? 60_000);
-  private readonly meetingTerminalRecoveryAttempts = Math.max(2, Number(process.env.STUDYBOX_ZOOM_RECONNECT_TERMINAL_ATTEMPTS ?? 5));
+  // While the study is meant to be live, never give up: keep retrying at most a
+  // minute apart. (Nov 14 gave up after 5 quick crashes and lost track of a
+  // meeting it then joined anyway.) Set the env var to restore a limit.
+  private readonly meetingTerminalRecoveryAttempts = Math.max(2, Number(process.env.STUDYBOX_ZOOM_RECONNECT_TERMINAL_ATTEMPTS ?? Infinity));
+  /** A join still progressing in Zoom gets this long before StudyBox restarts it. */
+  private readonly meetingJoinProgressGraceMs = Number(process.env.STUDYBOX_ZOOM_JOIN_PROGRESS_GRACE_MS ?? 120_000);
+  private meetingJoiningSince = 0;
   private readonly meetingInitialConnectGraceMs = Number(process.env.STUDYBOX_ZOOM_INITIAL_CONNECT_GRACE_MS ?? 30_000);
   private readonly meetingIntentMaxAgeMs = Number(process.env.STUDYBOX_ZOOM_INTENT_MAX_AGE_MS ?? 12 * 60 * 60 * 1000);
   private readonly sessionWrapupStore = new SessionWrapupStore(
@@ -371,6 +380,11 @@ export class StudyBoxAppliance {
     const previous = this.meeting.getState();
     const current = await this.meeting.syncState();
     this.meetingSyncAt = Date.now();
+    if (current.status === "live" && current.participants.length > 0) {
+      await this.attendance.observe(current.participants, current.meetingId).catch((error: unknown) => {
+        console.error("StudyBox attendance record failed", error);
+      });
+    }
     const urgentBefore = previous.waitingRoom.length > 0 || previous.raisedHands.length > 0;
     const urgentNow = current.waitingRoom.length > 0 || current.raisedHands.length > 0;
     const stateChanged = previous.status !== current.status
@@ -611,6 +625,7 @@ export class StudyBoxAppliance {
       }
       this.meetingRecoveryAttempt = 0;
       this.meetingRecoveryActive = false;
+      this.meetingJoiningSince = 0;
       this.meetingNonLiveSince = 0;
       this.meetingNextRecoveryAt = 0;
       return;
@@ -623,6 +638,15 @@ export class StudyBoxAppliance {
     }
     if (current.status === "starting" && now - this.meetingNonLiveSince < this.meetingReconnectGraceMs) {
       return;
+    }
+    // Zoom is visibly working on the join (connecting, waiting for host, in the
+    // waiting room): restarting the runner now would only throw that progress away.
+    const joining = current.status === "starting" && ["connecting", "waiting-for-host", "waiting-room", "reconnecting", "in-meeting"].includes(current.sdkStatus ?? "");
+    if (joining) {
+      if (!this.meetingJoiningSince) this.meetingJoiningSince = now;
+      if (now - this.meetingJoiningSince < this.meetingJoinProgressGraceMs) return;
+    } else {
+      this.meetingJoiningSince = 0;
     }
     if (now < this.meetingNextRecoveryAt) return;
 
@@ -1255,6 +1279,11 @@ export class StudyBoxAppliance {
     });
   }
 
+  /** Everyone seen in Zoom for a study date (default: the most recent study). */
+  async getAttendance(date?: string): Promise<AttendanceRecord | undefined> {
+    return this.attendance.get(date);
+  }
+
   async recordAudit(context: AuditContext & { source: LogSource; level: LogLevel; message: string; result?: LogResult }): Promise<StudyBoxSnapshot> {
     await this.log(context);
     return this.snapshot();
@@ -1519,7 +1548,19 @@ export class StudyBoxAppliance {
    * step 3 once the page is open -> connecting -> connected, or back to the steps
    * with the reason it failed.
    */
+  /** Recording finished but still being joined into its final file(s) or backed up. */
+  private isWrappingUp(): boolean {
+    return this.podcast.getState().status === "stopping"
+      || this.backup.getState().bundles.some((bundle) => bundle.status === "zipping" || bundle.status === "uploading" || bundle.status === "promoting");
+  }
+
   private async refreshWifiOled(): Promise<void> {
+    // Re-sync the lights whenever wrap-up starts or ends (the 2 s Wi-Fi tick doubles as its watcher).
+    const wrapping = this.isWrappingUp();
+    if (wrapping !== this.ledWrappingUp) {
+      this.ledWrappingUp = wrapping;
+      await this.syncLeds();
+    }
     const wifi = getWifiSetupState();
     const active = wifi.wifiMode === "searching" || wifi.wifiMode === "setup" || wifi.wifiMode === "trying";
     const signature = active
@@ -1673,6 +1714,10 @@ export class StudyBoxAppliance {
       return;
     }
     await this.leds.setWifiSetup?.("off");
+    if (this.leds.setWrappingUp && this.isWrappingUp()) {
+      await this.leds.setWrappingUp(true);
+      return;
+    }
     const status = this.getSystemStatus();
     await this.leds.setSystem(status === "ready" ? "green" : status === "meeting-live" ? "blue" : status === "attention" ? "yellow" : "red");
 
@@ -1711,7 +1756,9 @@ export class StudyBoxAppliance {
   }
 
   private isWithinInitialZoomConnectGrace(now = Date.now()): boolean {
-    if (!this.meetingDesiredLive || this.meetingWasLiveForIntent) return false;
+    // Live ends the "still connecting" grace at once, so the Zoom light turns blue
+    // immediately (it stayed white until something else re-synced the lights).
+    if (!this.meetingDesiredLive || this.meetingWasLiveForIntent || this.meeting.getState().status === "live") return false;
     const requestedAtMs = Date.parse(this.meetingIntentRequestedAt ?? "");
     return Number.isFinite(requestedAtMs)
       && now >= requestedAtMs

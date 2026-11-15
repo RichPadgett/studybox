@@ -29,7 +29,8 @@ export class MockMeetingService implements MeetingService {
     const participant: Participant = {
       id: `web-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       displayName: normalizedName,
-      status: "waiting"
+      status: "waiting",
+      requestedAt: new Date().toISOString()
     };
 
     this.state = {
@@ -277,7 +278,8 @@ export class ZoomMeetingService implements MeetingService {
     const participant: Participant = {
       id: `web-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       displayName: normalizedName,
-      status: "waiting"
+      status: "waiting",
+      requestedAt: new Date().toISOString()
     };
 
     this.state = {
@@ -420,12 +422,11 @@ export class ZoomMeetingService implements MeetingService {
   }
 
   private async refreshState(): Promise<MeetingState> {
-    const currentLobbyRequests = this.state.lobbyRequests;
     const runnerState = await this.runner.getState();
     this.state = {
       ...runnerState,
       reconnectAttempt: runnerState.status === "live" ? undefined : this.state.reconnectAttempt,
-      lobbyRequests: currentLobbyRequests
+      lobbyRequests: pruneLobbyRequests(this.state.lobbyRequests, runnerState.participants)
     };
     this.consecutiveIdleSyncFailures = 0;
     return this.state;
@@ -503,4 +504,34 @@ export class MissingZoomRunnerClient implements ZoomMeetingRunnerClient {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/** How long a "sent to Zoom join link" entry stays if no matching Zoom participant appears. */
+export const LOBBY_REQUEST_TTL_MS = Number(process.env.STUDYBOX_LOBBY_REQUEST_TTL_MS ?? 10 * 60 * 1000);
+
+function nameKey(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+/** True when a Zoom participant looks like the person who asked for the join link. */
+export function lobbyNameMatches(requested: string, zoomName: string): boolean {
+  const a = nameKey(requested);
+  const b = nameKey(zoomName);
+  if (!a || !b) return false;
+  if (a === b || b.startsWith(`${a} `) || a.startsWith(`${b} `)) return true;
+  // Phones often add a suffix ("Mary's iPhone") or only show a first name.
+  const first = a.split(" ")[0];
+  return first.length >= 3 && b.split(" ").includes(first);
+}
+
+/**
+ * Drops StudyBox lobby entries once that person shows up in Zoom, and any entry
+ * older than LOBBY_REQUEST_TTL_MS, so "sent to Zoom join link" stays current.
+ */
+export function pruneLobbyRequests(requests: Participant[], zoomParticipants: Participant[], nowMs = Date.now()): Participant[] {
+  return requests.filter((request) => {
+    const requestedAt = request.requestedAt ? Date.parse(request.requestedAt) : NaN;
+    if (Number.isFinite(requestedAt) && nowMs - requestedAt > LOBBY_REQUEST_TTL_MS) return false;
+    return !zoomParticipants.some((participant) => lobbyNameMatches(request.displayName, participant.displayName));
+  });
 }

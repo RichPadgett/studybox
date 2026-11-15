@@ -83,3 +83,29 @@ function baseState(status: MeetingState["status"]): MeetingState {
     lastEvent: `State ${status}`
   };
 }
+
+test("lobby entries clear when that person shows up in Zoom", async () => {
+  const { pruneLobbyRequests, lobbyNameMatches } = await import("./index.js");
+  const now = Date.parse("2026-11-21T17:05:00Z");
+  const requested = (name: string, minutesAgo = 1) => ({ id: name, displayName: name, status: "waiting" as const, requestedAt: new Date(now - minutesAgo * 60_000).toISOString() });
+  const zoom = (name: string) => ({ id: `z-${name}`, displayName: name, status: "joined" as const });
+
+  assert.equal(lobbyNameMatches("Mary Smith", "mary smith"), true);
+  assert.equal(lobbyNameMatches("Mary", "Mary Smith"), true);
+  assert.equal(lobbyNameMatches("Mary Smith", "Mary's iPhone"), true);
+  assert.equal(lobbyNameMatches("Mary Smith", "John Doe"), false);
+  assert.equal(lobbyNameMatches("Tanner", "Tanner's iPhone"), true);
+  assert.equal(lobbyNameMatches("Al", "Alice Jones"), false);
+
+  const kept = pruneLobbyRequests([requested("Mary Smith"), requested("Tanner"), requested("Joe")], [zoom("Mary Smith"), zoom("Tanner's iPhone")], now);
+  assert.deepEqual(kept.map((p) => p.displayName), ["Joe"]);
+});
+
+test("lobby entries expire after 10 minutes even if no match appears", async () => {
+  const { pruneLobbyRequests } = await import("./index.js");
+  const now = Date.parse("2026-11-21T17:05:00Z");
+  const entry = (minutesAgo: number) => ({ id: String(minutesAgo), displayName: `Guest ${minutesAgo}`, status: "waiting" as const, requestedAt: new Date(now - minutesAgo * 60_000).toISOString() });
+  assert.deepEqual(pruneLobbyRequests([entry(2), entry(11)], [], now).map((p) => p.id), ["2"]);
+  // Entries saved before this change have no timestamp; they still clear on a name match.
+  assert.equal(pruneLobbyRequests([{ id: "old", displayName: "Old", status: "waiting" }], [], now).length, 1);
+});

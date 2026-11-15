@@ -22,6 +22,8 @@ export interface Participant {
   includedInPodcast?: boolean;
   trustedSpeaker?: boolean;
   joinedAt?: string;
+  /** When this person asked for the Zoom link on the StudyBox join page. */
+  requestedAt?: string;
 }
 
 export interface MeetingState {
@@ -39,7 +41,8 @@ export interface MeetingState {
   reconnectAttempt?: number;
   sdkStatus?: string;
   sdkResult?: number;
-  screenSharePolicy?: "all-participants" | "error" | "unknown";
+  /** "pending-host": joined but host is still held elsewhere; StudyBox is reclaiming it. */
+  screenSharePolicy?: "all-participants" | "pending-host" | "error" | "unknown";
   lastEvent?: string;
 }
 
@@ -586,6 +589,8 @@ export interface LedController {
   setWifiSetup?(mode: "searching" | "waiting" | "connecting" | "off"): Promise<void>;
   /** Wi-Fi joined after setup: a short "it worked" flash on both buttons. */
   flashWifiConnected?(): Promise<void>;
+  /** After Finish: both buttons fade purple until the audio is joined and backed up. */
+  setWrappingUp?(on: boolean): Promise<void>;
 }
 
 export interface AudioDevice {

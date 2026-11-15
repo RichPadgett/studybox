@@ -836,6 +836,15 @@ function isSetupHotspotClient(request: express.Request): boolean {
   return client.startsWith(subnet);
 }
 
+app.get("/api/meeting/attendance", requireAdmin, async (request, response, next) => {
+  try {
+    const date = typeof request.query.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(request.query.date) ? request.query.date : undefined;
+    response.json((await appliance.getAttendance(date)) ?? { people: [] });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.get("/api/network/wifi", requireAdminOrSetupHotspot, async (_request, response, next) => {
   try {
     const { stdout } = await execFileAsync("sudo", ["-n", "/opt/studybox/scripts/studybox-wifi-scan.py"], { timeout: 12_000 });

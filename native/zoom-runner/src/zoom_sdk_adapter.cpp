@@ -363,7 +363,12 @@ public:
       throw std::runtime_error(sdkErrorMessage("Start meeting", error));
     }
 
-    applyAutomaticMeetingPolicies();
+    // Host-only policies (waiting room, mute on entry, sharing) are applied by
+    // syncState once StudyBox actually holds host. If the meeting was already
+    // started on another device, StudyBox joins as a participant first and
+    // reclaims host; calling host-only controls before that is unsafe.
+    hostPoliciesApplied_ = false;
+    lastHostClaimAttempt_ = std::chrono::steady_clock::time_point{};
 
     MeetingState state = current;
     state.status = "starting";
@@ -544,6 +549,30 @@ public:
       return state;
     }
 
+    if (!ensureHost(state)) {
+      // Not host yet (meeting started on another device): keep reporting who is
+      // in the meeting, but leave host-only controls alone until host is ours.
+      state.screenSharePolicy = "pending-host";
+      state.participants = meetingParticipants();
+      state.waitingRoom.clear();
+      state.raisedHands.clear();
+      for (const Participant& participant : state.participants) {
+        if (participant.status == "raised-hand") {
+          state.raisedHands.push_back(participant);
+        }
+      }
+      return state;
+    }
+
+    if (!hostPoliciesApplied_) {
+      try {
+        applyAutomaticMeetingPolicies();
+      } catch (const std::exception&) {
+        // Best effort: sharing and admitting below matter more.
+      }
+      hostPoliciesApplied_ = true;
+    }
+
     try {
       applyParticipantScreenSharePolicy();
       state.screenSharePolicy = "all-participants";
@@ -575,6 +604,50 @@ public:
       }
     }
     return state;
+  }
+
+  /**
+   * True when StudyBox holds host. Otherwise asks Zoom for host back, at most
+   * every 10 seconds: first as the meeting's original host (StudyBox starts
+   * with the host account's ZAK), then with STUDYBOX_ZOOM_HOST_KEY if set.
+   */
+  bool ensureHost(MeetingState& state) {
+    auto* participants = meetingService_->GetMeetingParticipantsController();
+    if (!participants) return false;
+    IUserInfo* self = participants->GetMySelfUser();
+    if (self && self->IsHost()) {
+      if (hostClaimPending_) {
+        hostClaimPending_ = false;
+        state.lastEvent = "StudyBox took host in Zoom";
+      }
+      return true;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    if (now - lastHostClaimAttempt_ < std::chrono::seconds(10)) return false;
+    lastHostClaimAttempt_ = now;
+    hostClaimPending_ = true;
+
+    bool canReclaim = false;
+    if (participants->CanReclaimHost(canReclaim) == SDKERR_SUCCESS && canReclaim) {
+      const SDKError reclaimError = participants->ReclaimHost();
+      if (reclaimError == SDKERR_SUCCESS) {
+        state.lastEvent = "Zoom connected; StudyBox is reclaiming host";
+        return false;
+      }
+      state.lastEvent = sdkErrorMessage("Reclaim host", reclaimError);
+    } else {
+      state.lastEvent = "Zoom connected; StudyBox is not host and cannot reclaim it as the original host";
+    }
+
+    const char* hostKey = std::getenv("STUDYBOX_ZOOM_HOST_KEY");
+    if (hostKey && *hostKey) {
+      const SDKError keyError = participants->ReclaimHostByHostKey(hostKey);
+      state.lastEvent = keyError == SDKERR_SUCCESS
+        ? "Zoom connected; StudyBox is claiming host with the host key"
+        : sdkErrorMessage("Claim host with host key", keyError);
+    }
+    return false;
   }
 
   void applyAutomaticMeetingPolicies() {
@@ -714,6 +787,9 @@ private:
   unsigned int shareSourceId_ = 0;
   bool shareActive_ = false;
   bool zoomRecordingActive_ = false;
+  bool hostPoliciesApplied_ = false;
+  bool hostClaimPending_ = false;
+  std::chrono::steady_clock::time_point lastHostClaimAttempt_{};
 
   void subscribeToShare(unsigned int sourceId) {
     if (!sourceId) {
