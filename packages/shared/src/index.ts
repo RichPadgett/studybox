@@ -136,6 +136,8 @@ export interface SystemMetrics {
   wifiSetupPhoneJoined?: boolean;
   /** A phone has opened the setup page (screen moves to step 3). */
   wifiSetupPageOpened?: boolean;
+  /** Scheduled study shown on the OLED home page, e.g. "SAT 12:00 PM". */
+  nextMeeting?: string;
   temperatureC: number;
 }
 

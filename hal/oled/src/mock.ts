@@ -82,7 +82,7 @@ export class MockOledDisplay implements OledDisplay {
       {
         id: "home",
         title: "Church of the Word",
-        lines: ["STUDYBOX", "NEXT MEETING", "SATURDAY 11:00", "", homeCondition]
+        lines: ["STUDYBOX", "NEXT MEETING", metrics.nextMeeting ?? "", "", homeCondition]
       },
       {
         id: "meeting",
@@ -91,11 +91,13 @@ export class MockOledDisplay implements OledDisplay {
           zoomAuthRequired ? "ZOOM AUTH REQUIRED" : meetingStatus,
           recordingStatus,
           podcast.activeRecording ? `TIME ${formatDuration(podcast.elapsedSeconds)}` : podcast.audioReady === true ? "MIC READY" : "MIC NOT READY",
+          "",
+          // Bottom line: who is in the meeting (share problems still surface here).
           meeting.screenSharePolicy === "error"
             ? "SHARE SETTING ERROR"
-            : meeting.screenSharePolicy === "all-participants"
-              ? `SHARE ALL  ${meeting.participants.length} JOINED`
-              : `${meeting.participants.length} PARTICIPANTS`
+            : meeting.status === "idle"
+              ? ""
+              : `${meeting.participants.filter((person) => !/^studybox\b/i.test(person.displayName.trim())).length} JOINED`
         ]
       }
     ];

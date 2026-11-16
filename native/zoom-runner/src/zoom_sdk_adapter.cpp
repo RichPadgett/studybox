@@ -18,6 +18,8 @@
 #include <atomic>
 #include <cerrno>
 #include <chrono>
+#include <cctype>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
@@ -26,6 +28,7 @@
 #include <sys/wait.h>
 #include <sstream>
 #include <stdexcept>
+#include <string>
 #include <thread>
 #include <unistd.h>
 #include <vector>
@@ -549,6 +552,7 @@ public:
       return state;
     }
 
+    ensureSelfAudioLive();
     if (!ensureHost(state)) {
       // Not host yet (meeting started on another device): keep reporting who is
       // in the meeting, but leave host-only controls alone until host is ours.
@@ -572,7 +576,6 @@ public:
       }
       hostPoliciesApplied_ = true;
     }
-    ensureSelfAudioLive();
 
     try {
       applyParticipantScreenSharePolicy();
@@ -657,6 +660,7 @@ public:
    * source (host policy, another device on the account) is undone.
    */
   void ensureSelfAudioLive() {
+    ensureRoomMicSelected();
     auto* participants = meetingService_->GetMeetingParticipantsController();
     auto* audio = meetingService_->GetMeetingAudioController();
     if (!participants || !audio) return;
@@ -668,6 +672,41 @@ public:
     }
     if (self->IsAudioMuted()) {
       audio->UnMuteAudio(self->GetUserID());
+    }
+  }
+
+  /**
+   * Zoom picks a microphone when it joins audio and keeps it. If the DJI
+   * receiver is plugged in after the meeting started (still in its case at the
+   * scheduled start), Zoom would stay on the silent placeholder input. Look for
+   * it every few seconds and switch to it as soon as it appears.
+   */
+  void ensureRoomMicSelected() {
+    const auto now = std::chrono::steady_clock::now();
+    if (now - lastMicCheck_ < std::chrono::seconds(3)) return;
+    lastMicCheck_ = now;
+    if (!settingService_) return;
+    IAudioSettingContext* audioSettings = settingService_->GetAudioSettings();
+    if (!audioSettings) return;
+    IList<IMicInfo*>* mics = audioSettings->GetMicList();
+    if (!mics) return;
+
+    const char* configured = std::getenv("STUDYBOX_ZOOM_MIC_PATTERN");
+    std::string pattern = configured && *configured ? configured : "DJI";
+    for (char& c : pattern) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+
+    for (int index = 0; index < mics->GetCount(); ++index) {
+      IMicInfo* mic = mics->GetItem(index);
+      if (!mic || !mic->GetDeviceName() || !mic->GetDeviceId()) continue;
+      std::string name = mic->GetDeviceName();
+      std::string lowered = name;
+      for (char& c : lowered) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+      if (lowered.find(pattern) == std::string::npos) continue;
+      if (!mic->IsSelectedDevice()) {
+        const SDKError selectError = audioSettings->SelectMic(mic->GetDeviceId(), mic->GetDeviceName());
+        std::fprintf(stderr, "studybox-zoom-runner: switching Zoom microphone to %s (%d)\n", name.c_str(), static_cast<int>(selectError));
+      }
+      return;
     }
   }
 
@@ -796,6 +835,7 @@ private:
   IAuthService* authService_ = nullptr;
   IMeetingService* meetingService_ = nullptr;
   ISettingService* settingService_ = nullptr;
+  std::chrono::steady_clock::time_point lastMicCheck_{};
   AuthEvents authEvents_;
   MeetingEvents meetingEvents_;
   RecordingEvents recordingEvents_;

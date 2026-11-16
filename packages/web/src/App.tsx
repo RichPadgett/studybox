@@ -1186,7 +1186,9 @@ function SettingsView({ snapshot, saving, save, adminUnlocked, lockAdmin }: { sn
     <div className="stack">
       <Panel title="Schedule">
         <div className="formGrid">
-          <label>Day<input value={draft.schedule.dayOfWeek} onChange={(e) => update({ ...draft, schedule: { ...draft.schedule, dayOfWeek: e.target.value as StudyBoxSettings["schedule"]["dayOfWeek"] } })} /></label>
+          <label>Day<select value={draft.schedule.dayOfWeek} onChange={(e) => update({ ...draft, schedule: { ...draft.schedule, dayOfWeek: e.target.value as StudyBoxSettings["schedule"]["dayOfWeek"] } })}>
+            {(["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] as const).map((day) => <option key={day} value={day}>{day}</option>)}
+          </select></label>
           <label>Time<input type="time" value={draft.schedule.time} onChange={(e) => update({ ...draft, schedule: { ...draft.schedule, time: e.target.value } })} /></label>
           <label>Timezone<input value={draft.schedule.timezone} onChange={(e) => update({ ...draft, schedule: { ...draft.schedule, timezone: e.target.value } })} /></label>
         </div>

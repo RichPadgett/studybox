@@ -412,6 +412,9 @@ export class StudyBoxAppliance {
     }
     if (urgentNow || urgentBefore !== urgentNow) {
       await this.oled.showPage("home");
+    } else if (previous.status !== current.status && current.status !== "idle") {
+      // Zoom starting (button, schedule or web): show Study Status, whatever page was up.
+      await this.showStudyStatus();
     } else if (stateChanged) {
       await this.renderCurrentOledPage();
     }
@@ -763,6 +766,10 @@ export class StudyBoxAppliance {
       }
     });
     await this.scheduler.updateSchedule(saved.schedule);
+    // The home screen shows the scheduled day and time: redraw it with the new schedule.
+    if (this.oled.getCurrentPage().id === "home") {
+      await this.oled.showPage("home").catch((error: unknown) => console.error("StudyBox OLED refresh after settings save failed", error));
+    }
     await this.log({
       source: context.source ?? "web",
       actor: context.actor,
@@ -1023,6 +1030,7 @@ export class StudyBoxAppliance {
       await this.meeting.startZoomRecording(dirname(podcast.activeRecording.filePath));
     }
     const captureStarted = podcast.status === "recording";
+    await this.showStudyStatus();
     await this.logAction(
       captureStarted ? "podcast.recording.start" : "podcast.recording.waitingForAudio",
       captureStarted ? "Recording started" : "Recording requested; waiting for DJI audio",
@@ -1403,6 +1411,7 @@ export class StudyBoxAppliance {
       ssdPercent: getRootDiskPercent(),
       wifiConnected: getWifiConnected(),
       ...getWifiSetupState(),
+      nextMeeting: formatNextMeeting(this.settingsStore.get().schedule),
       temperatureC: getTemperatureC()
     };
   }
@@ -1654,6 +1663,11 @@ export class StudyBoxAppliance {
       && recordingIdle
       && backupIdle
       && !isNearScheduledMeeting(new Date(), this.settingsStore.get().schedule, this.oledScheduleGuardMinutes);
+  }
+
+  private async showStudyStatus(): Promise<void> {
+    await this.wakeOled();
+    await this.oled.showPage("meeting").catch((error: unknown) => console.error("StudyBox OLED Study Status render failed", error));
   }
 
   private async wakeOled(): Promise<void> {
@@ -1945,6 +1959,15 @@ function getRootDiskPercent(): number {
 }
 
 /** Reads the Wi-Fi supervisor's status (scripts/studybox-wifi-fallback.sh) and setup progress. */
+/** "Saturday" + "20:00" -> "SAT 8:00 PM" (fits one OLED line). */
+function formatNextMeeting(schedule: MeetingSchedule): string {
+  const [hour, minute] = schedule.time.split(":").map(Number);
+  const day = schedule.dayOfWeek.slice(0, 3).toUpperCase();
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return day;
+  const hour12 = hour % 12 === 0 ? 12 : hour % 12;
+  return `${day} ${hour12}:${String(minute).padStart(2, "0")} ${hour < 12 ? "AM" : "PM"}`;
+}
+
 function getWifiSetupState(): Pick<SystemMetrics, "wifiMode" | "wifiSetupMode" | "wifiSsid" | "wifiSetupError" | "wifiSetupPhoneJoined" | "wifiSetupPageOpened"> {
   let status: { mode?: string; ssid?: string; error?: string } = {};
   try {

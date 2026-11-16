@@ -209,7 +209,9 @@ export class RaspberryPiOledDisplay implements OledDisplay {
       const width = line.toUpperCase().slice(0, 18).length * 6;
       const homeRows = [1, 3, 4, 5, 6];
       const systemRows = [1, 3, 4, 5, 6];
-      const row = page.id === "home" ? homeRows[index] : page.id === "system" ? systemRows[index] : index + 2;
+      // Study Status: statuses on rows 2-4, "N JOINED" on the bottom row.
+      const meetingRows = [2, 3, 4, 5, 7];
+      const row = page.id === "home" ? homeRows[index] : page.id === "system" ? systemRows[index] : page.id === "meeting" ? meetingRows[index] : index + 2;
       this.drawTextToFrame(frame, centered ? Math.max(0, Math.floor((128 - width) / 2) - 1) : 0, row, line);
     });
     if (page.id === "system") {
