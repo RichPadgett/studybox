@@ -26,6 +26,7 @@ import { createZoomSdkJwt } from "./zoomSdkJwt.js";
 import { ZoomZakService } from "./zoomZakService.js";
 import { matchZoomRecording } from "./zoomRecordingMatcher.js";
 import { AttendanceStore, type AttendanceRecord } from "./attendance.js";
+import { CalendarEventsSender, getCalendarEventsConfig } from "./calendarEvents.js";
 import { AutoStartStore, decideAutoStart, findScheduledOccurrence } from "./meetingAutoStart.js";
 
 const execFileAsync = promisify(execFile);
@@ -124,6 +125,12 @@ export class StudyBoxAppliance {
   /** "startup" until the first Wi-Fi check, so a connection made during boot still gets its success signal. */
   private oledWifiSignature = "startup";
   private oledWifiDoneUntil?: number;
+  /** Signed meeting/schedule events for the church calendar (off unless STUDYBOX_CALENDAR_EVENTS_SECRET is set). */
+  private readonly calendarEvents = new CalendarEventsSender({
+    config: getCalendarEventsConfig(),
+    getState: () => ({ meeting: this.meeting.getState(), settings: this.settingsStore.get() }),
+    log: (input) => this.log({ source: "calendar-events", ...input })
+  });
   private readonly attendance = new AttendanceStore(() => this.settingsStore.get().schedule.timezone);
   private ledFlashUntil = 0;
   private ledWrappingUp = false;
@@ -253,6 +260,7 @@ export class StudyBoxAppliance {
     this.startMeetingSupervisor();
     await this.autoStartStore.load();
     this.startAutoStart();
+    await this.calendarEvents.start().catch((error: unknown) => console.error("StudyBox calendar events failed to start", error));
     this.oledScreensaverTimer = setInterval(() => {
       void this.updateOledScreensaver().catch((error: unknown) => {
         console.error("StudyBox OLED screensaver update failed", error);
@@ -380,6 +388,8 @@ export class StudyBoxAppliance {
     const previous = this.meeting.getState();
     const current = await this.meeting.syncState();
     this.meetingSyncAt = Date.now();
+    // Tell the calendar right away on a real status change (it never throws or waits on the network).
+    this.calendarEvents.noteMeeting(current);
     if (current.status === "live" && current.participants.length > 0) {
       await this.attendance.observe(current.participants, current.meetingId).catch((error: unknown) => {
         console.error("StudyBox attendance record failed", error);
@@ -766,6 +776,7 @@ export class StudyBoxAppliance {
       }
     });
     await this.scheduler.updateSchedule(saved.schedule);
+    this.calendarEvents.observe();
     // The home screen shows the scheduled day and time: redraw it with the new schedule.
     if (this.oled.getCurrentPage().id === "home") {
       await this.oled.showPage("home").catch((error: unknown) => console.error("StudyBox OLED refresh after settings save failed", error));

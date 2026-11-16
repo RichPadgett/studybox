@@ -271,7 +271,7 @@ export interface StudyBoxSettings {
   oled: OledSettings;
 }
 
-export type LogSource = "system" | "web" | "button" | "meeting" | "podcast" | "backup" | "hal" | "scheduler" | "zoom-webhook" | "zoom-runner";
+export type LogSource = "system" | "web" | "button" | "meeting" | "podcast" | "backup" | "hal" | "scheduler" | "zoom-webhook" | "zoom-runner" | "calendar-events";
 export type LogLevel = "info" | "warn" | "error";
 export type LogResult = "success" | "failure";
 

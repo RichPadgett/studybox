@@ -53,7 +53,7 @@ export function getZoomRuntimeStatus(config = getZoomConfig()): ZoomRuntimeStatu
   };
 }
 
-function readEnv(key: string): string | undefined {
+export function readEnv(key: string): string | undefined {
   const value = process.env[key]?.trim();
   return value ? value : undefined;
 }
@@ -72,7 +72,7 @@ function parseArgs(value: string | undefined): string[] {
 
 let envLoaded = false;
 
-function loadDotEnv(): void {
+export function loadDotEnv(): void {
   if (envLoaded) {
     return;
   }
