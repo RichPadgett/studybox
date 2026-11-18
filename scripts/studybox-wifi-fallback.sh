@@ -76,7 +76,7 @@ ap_active() { [[ -f "$setup_dir/hostapd.pid" ]] && kill -0 "$(cat "$setup_dir/ho
 refresh_scan_cache() {
   mkdir -p "$status_dir"
   local output
-  if output="$(timeout 40 python3 "$script_dir/studybox-wifi-scan.py" --live 2>/dev/null)" && [[ "$output" == \[* ]]; then
+  if output="$(timeout 90 python3 "$script_dir/studybox-wifi-scan.py" --live 2>/dev/null)" && [[ "$output" == \[* ]]; then
     printf '%s\n' "$output" > "$scan_cache.tmp" && chmod 644 "$scan_cache.tmp" && mv "$scan_cache.tmp" "$scan_cache"
   fi
 }
